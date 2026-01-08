@@ -1,7 +1,7 @@
 # Laravel
 backend/vendor/
 backend/node_modules/
-backend/.env
+#backend/.env
 backend/.env.backup
 backend/.env.production
 backend/storage/*.key

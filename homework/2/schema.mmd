@@ -1,0 +1,323 @@
+erDiagram
+  CREDIT_TRANSACTIONS {
+    bigint id PK "Primary key for the credit transaction."
+    bigint user_id FK "The user who earned or redeemed the credits."
+    decimal amount "The amount of credits transacted. Positive for earning, negative for redeeming."
+    enum type "The type of transaction (e.g., EARNED, REDEEMED, ADJUSTMENT)."
+    text description "A description of the transaction, e.g., 'Earned from creating video #123'."
+    bigint related_purchase_id FK "Links a redemption transaction to the specific purchase it was applied to."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  GALLERY_VIDEOS {
+    bigint id PK "Primary key for the gallery video entry."
+    bigint user_id FK "The user who created and published the video."
+    bigint video_id FK "The processed video being published. A video can only be in the gallery once."
+    string title "The user-provided title for the video in the gallery."
+    boolean is_public "Controls the visibility of the video in the public gallery. Indexed for efficient querying of public content."
+    json tags "User-provided tags for categorization and search in the gallery."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  PURCHASES {
+    bigint id PK "Primary key for the purchase record."
+    bigint user_id FK "The user who made the purchase."
+    bigint package_id FK "The package or product that was purchased."
+    decimal original_amount "The original price of the package before any discounts."
+    decimal applied_discount_amount "The amount of loyalty credits or discount code value applied to this purchase."
+    decimal total_amount "The final amount paid by the user after all discounts."
+    string status "The status of the purchase (e.g., pending, completed, failed, refunded)."
+    string external_transaction_id UK "The unique transaction ID from the external payment processor (e.g., Stripe)."
+    timestamp processed_at "Timestamp of when the payment was successfully processed."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  USERS {
+    bigint id PK "Primary key for the user."
+    string name "The user's display name."
+    string email UK "The user's unique email address, used for login and communication."
+    string password_hash_or_social_id "Stores the hashed password for email-based login or the unique ID from a social provider."
+    string social_provider "Indicates the social login provider (e.g., 'google', 'tiktok') if used."
+    string authentication_token UK "API token for authenticating stateless requests."
+    decimal discount_balance "The user's current balance of loyalty credits, which can be redeemed for discounts."
+    string remember_token "Standard Laravel field for 'remember me' functionality."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  DISCOUNTS {
+    bigint id PK "Primary key for the discount."
+    string code UK "The unique, case-insensitive code that users enter to receive a discount."
+    enum type "The type of discount (e.g., PERCENTAGE, FIXED_AMOUNT)."
+    decimal value "The value of the discount (e.g., 20.00 for a percentage, or 5.00 for a fixed amount)."
+    timestamp expires_at "The date and time when the discount code expires."
+    int max_uses "The maximum number of times this code can be used in total. Null for unlimited."
+    int uses "The current number of times this code has been used."
+    boolean is_active "A flag to manually enable or disable the discount code."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  CATEGORIES {
+    bigint id PK "Primary key for the category."
+    string name UK "The display name of the category."
+    string slug UK "A URL-friendly version of the category name."
+    text description "A brief description of the category's content."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  TIERS {
+    bigint id PK "Primary key for the tier."
+    string name UK "The display name of the subscription tier (e.g., 'Pro Monthly')."
+    text description "A description of the tier and its benefits."
+    decimal price_monthly "The monthly price for this tier."
+    decimal price_yearly "The yearly price for this tier."
+    json features "A JSON object detailing the features and limits of the tier (e.g., resolution, export count)."
+    boolean is_active "Indicates if the tier is currently available for purchase."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  ALGORITHMS {
+    bigint id PK "Primary key for the algorithm."
+    string name UK "The internal name of the AI algorithm."
+    string version "The version of the algorithm (e.g., 'v1.2.0')."
+    text description "A technical description of the algorithm's function."
+    string provider_name "The name of the external service provider for the AI model."
+    json parameters "Default parameters or configuration required by the algorithm."
+    boolean is_active "Indicates if the algorithm is currently enabled for use."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  PAYMENTS {
+    bigint id PK "Primary key for the payment."
+    bigint user_id FK "The user who made the payment."
+    bigint purchase_id FK "The purchase record this payment is for."
+    string transaction_id UK "The unique transaction identifier from the payment gateway."
+    string status "The status of the payment (e.g., pending, completed, failed, refunded)."
+    decimal amount "The total amount paid."
+    string currency "The ISO currency code (e.g., USD)."
+    string payment_gateway "The payment gateway used for the transaction (e.g., 'Stripe')."
+    timestamp processed_at "Timestamp of when the payment was successfully processed."
+    json metadata "Additional data from the payment gateway."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  FILTERS {
+    bigint id PK "Primary key for the filter."
+    string name UK "The display name of the filter."
+    text description "A brief description of the filter's visual effect."
+    bigint category_id FK "The category this filter belongs to."
+    json parameters "JSON object containing the filter's settings (e.g., contrast, saturation)."
+    string thumbnail_url "URL for a preview image of the filter."
+    boolean is_premium "Indicates if this filter requires a premium subscription."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  VIDEOS {
+    bigint id PK "Primary key for the video record."
+    bigint user_id FK "Foreign key linking to the user who owns the video."
+    bigint effect_id FK "Foreign key linking to the AI effect applied to the video."
+    bigint original_file_id FK "Foreign key linking to the original video file uploaded by the user."
+    bigint processed_file_id FK "Foreign key linking to the processed video file after the AI effect was applied."
+    string title "User-defined title for the video, used in the public gallery."
+    string status "Processing status of the video (e.g., pending, processing, completed, failed)."
+    boolean is_public "Flag indicating if the video is published to the public 'Explore' gallery."
+    json processing_details "Stores metadata about the AI processing job, such as job ID or error messages."
+    timestamp expires_at "Timestamp for when the processed video file will be automatically cleaned up for free-tier users."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  MODELS {
+    bigint id PK "Primary key for the AI model."
+    string name UK "The internal name of the AI model."
+    text description "A description of the model's capabilities and purpose."
+    string version "The version identifier for the model."
+    string provider "The external service or provider of the AI model (e.g., RunwayML, OpenAI)."
+    string external_model_id "The identifier for the model within the external provider's system."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  EXPORTS {
+    bigint id PK "Primary key for the export record."
+    bigint user_id FK "Foreign key linking to the user who initiated the export."
+    bigint video_id FK "Foreign key linking to the video being exported."
+    string status "The status of the export job (e.g., pending, processing, completed, failed)."
+    json settings "JSON object containing export settings like resolution, format, and quality."
+    boolean watermark_removed "Flag indicating if this was a premium export with the watermark removed."
+    bigint exported_file_id FK "Foreign key linking to the final exported file, available for download."
+    timestamp expires_at "Timestamp when the exported file link or record will expire."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  STYLES {
+    bigint id PK "Primary key for the style."
+    bigint effect_id FK "Optional foreign key if this style is specific to one effect."
+    string name UK "The display name of the style."
+    text description "A brief description of the style."
+    string thumbnail_url "URL for a preview thumbnail image of the style."
+    json configuration "JSON object containing the specific parameters and settings for this style."
+    boolean is_premium "Flag indicating if this style requires a premium subscription to use."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  EFFECTS {
+    bigint id PK "Primary key for the effect."
+    string name UK "The public display name of the effect."
+    string slug UK "A URL-friendly slug for the effect's detail page."
+    text description "A detailed description of what the effect does and its ideal use cases."
+    bigint category_id FK "Foreign key linking to the effect's category for organization."
+    bigint model_id FK "Foreign key linking to the underlying AI model that powers this effect."
+    string thumbnail_url "URL for the effect's preview thumbnail image."
+    string preview_video_url "URL for a short video demonstrating the effect."
+    boolean is_premium "Flag indicating if this effect requires a premium subscription."
+    boolean is_active "A soft-delete or feature flag to enable/disable the effect for users."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  PACKAGES {
+    bigint id PK "Primary key for the package."
+    string name UK "The public display name of the package (e.g., 'Pro Monthly', '10 Export Credits')."
+    text description "A detailed description of the package's benefits and features."
+    decimal price "The price of the package."
+    string currency "ISO 4217 currency code for the price."
+    string type "Type of package, e.g., 'SUBSCRIPTION', 'CREDIT_PACK', 'ONE_TIME'."
+    bigint tier_id FK "Foreign key to the tiers table, if this package grants a subscription tier."
+    int credits_granted "Number of credits granted upon purchase of this package."
+    boolean is_active "Indicates if the package is currently available for purchase."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  REWARDS {
+    bigint id PK "Primary key for the reward."
+    bigint user_id FK "The user who earned this reward."
+    string type "Type of reward, e.g., 'DISCOUNT_CREDIT', 'FREE_EXPORT', 'PRO_TRIAL'."
+    decimal value "The monetary value of the reward if applicable (e.g., discount amount)."
+    string description "User-facing description of how the reward was earned."
+    string source_action "The action that triggered the reward, e.g., 'VIDEO_CREATION', 'REFERRAL'."
+    timestamp expires_at "Timestamp for when the reward expires and can no longer be used."
+    timestamp redeemed_at "Timestamp for when the reward was redeemed."
+    bigint purchase_id FK "The purchase where this reward was applied."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  TAGS {
+    bigint id PK "Primary key for the tag."
+    string name UK "The display name of the tag."
+    string slug UK "A URL-friendly version of the tag name."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  SUBSCRIPTIONS {
+    bigint id PK "Primary key for the subscription."
+    bigint user_id FK "The user who owns this subscription."
+    bigint package_id FK "The package this subscription is for."
+    bigint tier_id FK "The feature tier granted by this subscription."
+    string external_id UK "The subscription ID from the external payment provider (e.g., Stripe)."
+    string status "Current status of the subscription (e.g., 'ACTIVE', 'CANCELLED', 'PAUSED', 'TRIALING', 'EXPIRED')."
+    timestamp trial_ends_at "Timestamp for when the trial period ends."
+    timestamp period_start "Start of the current billing period."
+    timestamp period_end "End of the current billing period."
+    timestamp cancelled_at "Timestamp for when the subscription was cancelled by the user."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  OVERLAYS {
+    bigint id PK "Primary key for the overlay."
+    string name UK "The public display name of the overlay."
+    text description "A description of the overlay's appearance or style."
+    string type "Type of overlay, e.g., 'WATERMARK', 'FRAME'."
+    boolean is_premium "Indicates if this overlay requires a premium subscription to use."
+    boolean is_animated "Indicates if the overlay has animation."
+    bigint file_id FK "Reference to the file containing the overlay asset (e.g., SVG, Lottie JSON)."
+    string preview_url "URL to a preview image or GIF of the overlay."
+    boolean is_active "Indicates if the overlay is currently available for use in the editor."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  WATERMARKS {
+    bigint id PK "Primary key for the watermark."
+    string name UK "The unique, user-friendly name of the watermark design (e.g., 'Neon Glow Frame')."
+    text description "A short description of the watermark's style and intended use."
+    string type "The type of watermark, e.g., FRAME, LOGO, BANNER."
+    boolean is_premium "Flag indicating if this watermark requires a premium subscription to use."
+    string asset_url "URL to the animated asset file (e.g., Lottie JSON, MP4, WebM)."
+    string preview_url "URL to a static or animated preview image/GIF for display in galleries."
+    json customization_options "Defines customizable parameters like default opacity, editable text areas, color palettes, etc."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  FILES {
+    bigint id PK "Primary key for the file record."
+    bigint user_id FK "The user who owns this file."
+    string url "Publicly accessible URL for the file in cloud storage (e.g., S3)."
+    string path UK "The unique, relative path of the file within its storage disk."
+    string disk "The storage disk where the file is located (e.g., 's3', 'local')."
+    string mime_type "The MIME type of the file (e.g., 'video/mp4')."
+    bigint size "File size in bytes."
+    string original_filename "The original filename as uploaded by the user. Can contain PII."
+    string file_hash "SHA256 hash of the file content to detect duplicates."
+    json metadata "Stores additional file metadata like video duration, resolution, codec, etc."
+    timestamp created_at
+    timestamp updated_at
+    timestamp deleted_at
+  }
+
+  CREDIT_TRANSACTIONS ||--o{ USERS : "belongsTo"
+  CREDIT_TRANSACTIONS ||--|| PURCHASES : "belongsTo"
+  GALLERY_VIDEOS ||--o{ USERS : "belongsTo"
+  PURCHASES ||--o{ USERS : "belongsTo"
+  USERS }o--o{ DISCOUNTS : "belongsToMany"
+  CATEGORIES }o--o{ EFFECTS : "belongsToMany"
+  TIERS ||--o{ SUBSCRIPTIONS : "hasMany"
+  ALGORITHMS }o--o{ EFFECTS : "belongsToMany"
+  PAYMENTS ||--o{ USERS : "belongsTo"
+  PAYMENTS ||--|| PURCHASES : "belongsTo"
+  FILTERS ||--o{ CATEGORIES : "belongsTo"
+  VIDEOS ||--o{ USERS : "belongsTo"
+  VIDEOS ||--o{ EFFECTS : "belongsTo"
+  VIDEOS ||--|| FILES : "belongsTo"
+  VIDEOS ||--o{ EXPORTS : "hasMany"
+  MODELS ||--o{ EFFECTS : "hasMany"
+  EXPORTS ||--o{ USERS : "belongsTo"
+  EXPORTS ||--|| FILES : "belongsTo"
+  STYLES ||--o{ EFFECTS : "belongsTo"
+  PACKAGES ||--o{ TIERS : "belongsTo"
+  REWARDS ||--o{ USERS : "belongsTo"
+  REWARDS ||--|| PURCHASES : "belongsTo"
+  SUBSCRIPTIONS ||--o{ USERS : "belongsTo"
+  SUBSCRIPTIONS ||--o{ PACKAGES : "belongsTo"
+  OVERLAYS ||--|| FILES : "belongsTo"
+  FILES ||--o{ USERS : "belongsTo"
+  OVERLAYS ||--o{ TAGS : "morphToMany"
+  WATERMARKS ||--o{ TAGS : "morphToMany"

@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         - NODE_ENV=production
-    container_name: lms_frontend_prod
+    container_name: bp_frontend_prod
     restart: unless-stopped
     ports:
       - "3002:3000"
@@ -18,8 +18,8 @@ services:
       - ./logs:/app/logs
 
     networks:
-      - lms_backend
-      - lms_frontend
+      - bp_backend
+      - bp_frontend
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1"]
       interval: 30s
@@ -35,7 +35,7 @@ services:
   # Nginx reverse proxy for production
   nginx:
     image: nginx:alpine
-    container_name: lms_nginx_frontend
+    container_name: bp_nginx_frontend
     restart: unless-stopped
     ports:
       - "82:80"
@@ -46,11 +46,11 @@ services:
     depends_on:
       - frontend
     networks:
-      - lms_backend
-      - lms_frontend
+      - bp_backend
+      - bp_frontend
 
 networks:
-  lms_backend:
+  bp_backend:
     external: true
-  lms_frontend:
+  bp_frontend:
     external: true 

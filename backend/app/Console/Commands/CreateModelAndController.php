@@ -108,9 +108,9 @@ class CreateModelAndController extends Command
         }
 
         // Generate translations if any component was created
-//        if ($createComponents['translations']) {
-//            Artisan::call('translations:scan');
-//        }
+        if ($createComponents['translations']) {
+            Artisan::call('translations:scan');
+        }
 
         // Add route if specified
         if ($createComponents['route']) {

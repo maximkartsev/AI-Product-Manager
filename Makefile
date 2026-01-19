@@ -1,5 +1,12 @@
 .PHONY: init check-submodules setup-env build-containers create-database install-backend migrate install-frontend
 
+# Prerequisites
+# docker --version
+# ocker compose version
+# git --version
+# make --version
+# pnpm --version
+
 # Default target
 .DEFAULT_GOAL := init
 
@@ -49,7 +56,19 @@ setup-env:
 	else \
 		echo "COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME)" >> $(LARADOCK_DIR)/.env; \
 	fi
+	
+	# Setup APP_CODE_PATH_HOST=../backend
 	@echo "✅ Environment files configured"
+	@echo "🔧 Setting APP_CODE_PATH_HOST=../backend in $(LARADOCK_DIR)/.env..."
+	@if grep -q "^APP_CODE_PATH_HOST=" $(LARADOCK_DIR)/.env; then \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			sed -i '' "s|^APP_CODE_PATH_HOST=.*|APP_CODE_PATH_HOST=../backend|" $(LARADOCK_DIR)/.env; \
+		else \
+			sed -i "s|^APP_CODE_PATH_HOST=.*|APP_CODE_PATH_HOST=../backend|" $(LARADOCK_DIR)/.env; \
+		fi; \
+	else \
+		echo "APP_CODE_PATH_HOST=../backend" >> $(LARADOCK_DIR)/.env; \
+	fi
 
 build-containers:
 	@echo "🏗️  Building Docker containers..."

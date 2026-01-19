@@ -11,14 +11,14 @@ class Test extends Command
      *
      * @var string
      */
-    protected $signature = 'app:test';
+    protected $signature = 'test:me';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Test Command description';
 
     /**
      * Execute the console command.

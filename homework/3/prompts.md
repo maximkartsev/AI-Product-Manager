@@ -16,6 +16,9 @@ Follow their structure and philosophy in the current project (inheritances, defa
 
 The documentation folder: C:\Projects\AI-Product-Management\AI-Product-Manager\homework\2
 
+Tip (v2 workflow): discover the project’s AI-safe automation entry points via:
+- `php artisan ai:commands --json`
+
 -------------------------
 
 # Run migration
@@ -25,3 +28,6 @@ Run artisan migration by using:
 2. php artisan migrate
 
 If there will be any issues fix them and rerun migrations
+
+If sharding is enabled and multiple DB connections are configured, prefer:
+- `php artisan sharding:migrate`

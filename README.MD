@@ -122,6 +122,22 @@ This command performs:
 
 ---
 
+## 5.1 AI OS workflow checks (recommended before “release”)
+
+After you’ve made changes, use the local enforcement gates:
+
+```bash
+make preflight
+make release-check
+```
+
+Notes:
+
+- `make preflight` runs docs checks, backend migrations/tests, and frontend lint/build.
+- `make release-check` validates that the latest CycleRecord in `docs/ai-supported/cycles/` is complete and marked `status: ready` (or `released`).
+
+---
+
 ## 6. Container Management
 
 ### Stop containers

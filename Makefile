@@ -1,4 +1,4 @@
-.PHONY: init check-submodules setup-env build-containers create-database install-backend migrate install-frontend
+.PHONY: init check-submodules setup-env build-containers create-database install-backend generate-key migrate install-frontend
 
 # Prerequisites
 # docker --version
@@ -19,7 +19,7 @@ DB_NAME := bp
 DB_USER := root
 DB_PASSWORD := root
 
-init: check-submodules setup-env build-containers create-database install-backend migrate install-frontend
+init: check-submodules setup-env build-containers create-database install-backend generate-key migrate install-frontend
 	@echo "✅ Initialization complete!"
 
 check-submodules:
@@ -102,13 +102,25 @@ install-backend:
 	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && composer install"
 	@echo "✅ Backend dependencies installed"
 
+generate-key:
+	@echo "🔑 Generating application encryption key..."
+	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && php artisan key:generate --force" || echo "⚠️  Key generation skipped (key may already exist or containers not ready)"
+	@echo "✅ Application key generated"
+
 migrate:
 	@echo "🔄 Running database migrations..."
 	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && php artisan migrate"
 	@echo "✅ Migrations completed"
 
 install-frontend:
-	@echo "📦 Installing frontend dependencies..."
-	@cd $(FRONTEND_DIR) && pnpm install
-	@echo "✅ Frontend dependencies installed"
+	@echo "📦 Checking frontend dependencies..."
+	@if [ ! -d "$(FRONTEND_DIR)/node_modules" ]; then \
+		echo "📥 Installing frontend dependencies (first time)..."; \
+		cd $(FRONTEND_DIR) && pnpm install; \
+	else \
+		echo "✅ Frontend dependencies already installed, skipping..."; \
+		echo "💡 To reinstall, run: cd $(FRONTEND_DIR) && pnpm install"; \
+	fi
 
+# AI OS tooling (do not remove; added by bootstrap)
+include aios/v1/tools/make/ai-os.mk

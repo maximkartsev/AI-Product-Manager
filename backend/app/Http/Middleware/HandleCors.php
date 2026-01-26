@@ -17,53 +17,65 @@ class HandleCors
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $config = config('cors');
+        /** @var array $config */
+        $config = config('cors', []);
+
+        $paths = (array) ($config['paths'] ?? []);
+        $matchesPath = !empty($paths) ? $request->is(...$paths) : false;
+
+        $allowedMethods = (array) ($config['allowed_methods'] ?? ['*']);
+        $allowedHeaders = (array) ($config['allowed_headers'] ?? ['*']);
+        $exposedHeaders = (array) ($config['exposed_headers'] ?? []);
+        $supportsCredentials = (bool) ($config['supports_credentials'] ?? false);
+        $maxAge = $config['max_age'] ?? 0;
         
         // Handle preflight OPTIONS request
-        if ($request->isMethod('OPTIONS')) {
+        if ($request->isMethod('OPTIONS') && $matchesPath) {
             $origin = $request->header('Origin');
             
             // Check if origin is allowed
             if ($origin && $this->isOriginAllowed($origin, $config)) {
-                $methods = $config['allowed_methods'] === ['*'] 
+                $methods = $allowedMethods === ['*']
                     ? 'GET, POST, PUT, DELETE, PATCH, OPTIONS' 
-                    : implode(', ', $config['allowed_methods']);
+                    : implode(', ', $allowedMethods);
                 
-                $headers = $config['allowed_headers'] === ['*']
-                    ? 'Content-Type, Authorization, X-Requested-With, Accept, Origin'
-                    : implode(', ', $config['allowed_headers']);
+                $headers = $allowedHeaders === ['*']
+                    ? 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN'
+                    : implode(', ', $allowedHeaders);
                 
                 return response('', 200)
+                    ->header('Vary', 'Origin')
                     ->header('Access-Control-Allow-Origin', $origin)
                     ->header('Access-Control-Allow-Methods', $methods)
                     ->header('Access-Control-Allow-Headers', $headers)
-                    ->header('Access-Control-Allow-Credentials', $config['supports_credentials'] ? 'true' : 'false')
-                    ->header('Access-Control-Max-Age', (string) $config['max_age']);
+                    ->header('Access-Control-Allow-Credentials', $supportsCredentials ? 'true' : 'false')
+                    ->header('Access-Control-Max-Age', (string) $maxAge);
             }
         }
 
         $response = $next($request);
 
         // Add CORS headers to the response for API routes
-        if ($request->is($config['paths'])) {
+        if ($matchesPath) {
             $origin = $request->header('Origin');
             
             if ($origin && $this->isOriginAllowed($origin, $config)) {
-                $methods = $config['allowed_methods'] === ['*'] 
+                $methods = $allowedMethods === ['*']
                     ? 'GET, POST, PUT, DELETE, PATCH, OPTIONS' 
-                    : implode(', ', $config['allowed_methods']);
+                    : implode(', ', $allowedMethods);
                 
-                $headers = $config['allowed_headers'] === ['*']
-                    ? 'Content-Type, Authorization, X-Requested-With, Accept, Origin'
-                    : implode(', ', $config['allowed_headers']);
+                $headers = $allowedHeaders === ['*']
+                    ? 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN'
+                    : implode(', ', $allowedHeaders);
                 
+                $response->headers->set('Vary', 'Origin');
                 $response->headers->set('Access-Control-Allow-Origin', $origin);
-                $response->headers->set('Access-Control-Allow-Credentials', $config['supports_credentials'] ? 'true' : 'false');
+                $response->headers->set('Access-Control-Allow-Credentials', $supportsCredentials ? 'true' : 'false');
                 $response->headers->set('Access-Control-Allow-Methods', $methods);
                 $response->headers->set('Access-Control-Allow-Headers', $headers);
                 
-                if (!empty($config['exposed_headers'])) {
-                    $response->headers->set('Access-Control-Expose-Headers', implode(', ', $config['exposed_headers']));
+                if (!empty($exposedHeaders)) {
+                    $response->headers->set('Access-Control-Expose-Headers', implode(', ', $exposedHeaders));
                 }
             }
         }
@@ -77,12 +89,12 @@ class HandleCors
     private function isOriginAllowed(string $origin, array $config): bool
     {
         // Check exact matches
-        if (in_array($origin, $config['allowed_origins'])) {
+        if (in_array($origin, (array) ($config['allowed_origins'] ?? []), true)) {
             return true;
         }
 
         // Check patterns
-        foreach ($config['allowed_origins_patterns'] as $pattern) {
+        foreach ((array) ($config['allowed_origins_patterns'] ?? []) as $pattern) {
             if (preg_match($pattern, $origin)) {
                 return true;
             }

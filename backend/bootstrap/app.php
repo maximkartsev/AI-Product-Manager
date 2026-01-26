@@ -13,8 +13,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Force JSON for all API routes so unauthenticated returns JSON, not redirect
+        // API middleware ordering matters:
+        // - CORS must be handled in the API stack for browser integration.
+        // - ForceJsonResponse ensures Laravel treats API requests as JSON.
         $middleware->api(prepend: [
+            \App\Http\Middleware\HandleCors::class,
             \App\Http\Middleware\ForceJsonResponse::class,
         ]);
     })

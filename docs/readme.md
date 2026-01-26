@@ -1,223 +1,70 @@
-# Project Boilerplate Documentation
+# Documentation Guide (How to work with docs)
 
-## Table of Contents
-- [Project Initialization](#project-initialization)
-- [Creating Models, Controllers, and Resources](#creating-models-controllers-and-resources)
+This repo uses a **two-layer documentation system** designed for AI-assisted, repeatable development:
 
-## Project Initialization
+- **Seed docs (entrypoint inputs)**: `docs/init/*` (provided/maintained by the user)
+- **Operational docs (implementation-ready)**: `docs/ai-supported/*` (derived and maintained by the AI agent)
 
-### Prerequisites
-- Git
-- Docker and Docker Compose
-- Make (usually pre-installed on macOS/Linux)
-- pnpm (for frontend dependencies)
+Additionally, the repo includes a reusable cross-project **AI Operating System**:
 
-### Step 1: Clone the Repository with Submodules
+- **AI OS v1**: `aios/v1/*`
 
-This project uses Git submodules (specifically Laradock). When cloning, you need to initialize the submodules:
+## 1) The three entrypoint files (seed docs)
 
-```bash
-git clone <repository-url>
-cd project-boilerplate
-git submodule update --init --recursive
-```
+These are required in every project and must exist in `docs/init/`:
 
-Alternatively, you can clone with submodules in one command:
+- `docs/init/project_concept.md`
+- `docs/init/project_pages.md`
+- `docs/init/user-journeys.md`
+- `docs/init/database.md`
 
-```bash
-git clone --recurse-submodules <repository-url>
-cd project-boilerplate
-```
+**How to use them**
 
-### Step 2: Initialize the Project
+- Treat them as **stable inputs** (product intent + UX intent + journeys).
+- Do not bloat them with implementation details (routes, migrations, code snippets).
+- When the product direction changes, update the seed docs and then regenerate/adjust the operational docs via the AI workflow.
 
-The project includes a Makefile that automates the entire initialization process. Simply run:
+See also: `docs/init/README.md`
 
-```bash
-make init
-```
+## 2) AI OS (cross-project development system)
 
-This command will:
-1. **Check submodules** - Verify that Laradock submodule is initialized
-2. **Setup environment files** - Create `.env` files for backend and Laradock if they don't exist
-3. **Build containers** - Build Docker containers (workspace, php-fpm, redis, mariadb, nginx)
-4. **Start containers** - Start all required Docker services
-5. **Create database** - Create the database (`bp` by default) with proper character set
-6. **Install backend dependencies** - Run `composer install` in the workspace container
-7. **Run migrations** - Execute Laravel database migrations
-8. **Install frontend dependencies** - Run `pnpm install` for frontend packages
+The AI OS defines the “how we build” rules and prompts.
+It is intended to be portable across projects.
 
-### Manual Steps (if needed)
+- Entry: `aios/v1/README.md`
+- Philosophy/constitution: `aios/v1/level1_philosophy.md`
+- Doc taxonomy rules: `aios/v1/level1_doc_taxonomy.md`
+- Prompt catalog (Level 2): `aios/v1/level2_prompts/index.md`
+- Porting guide: `aios/v1/PORTING.md`
 
-If you prefer to run steps manually or if `make init` fails:
+## 3) Operational project docs (derived from seeds)
 
-```bash
-# 1. Initialize submodules
-git submodule update --init --recursive
+This folder is what AI agents should primarily read during implementation:
 
-# 2. Setup environment files
-cp backend/.env.example backend/.env
-cp laradock/.env.example laradock/.env
+- `docs/ai-supported/README.md` (index + “active AI OS version”)
+- `docs/ai-supported/concept/*` (small, implementable concept chunks)
+- `docs/ai-supported/ux/pages/*` and `docs/ai-supported/ux/journeys/*`
+- `docs/ai-supported/data/*`
+- `docs/ai-supported/adr/*`
+- `docs/ai-supported/requirements/*` and `docs/ai-supported/cycles/*`
 
-# 3. Build and start containers
-cd laradock
-docker compose build workspace php-fpm redis mariadb nginx
-docker compose up -d workspace php-fpm redis mariadb nginx
+## 4) Daily workflow (docs-first)
 
-# 4. Wait for services to be ready, then create database
-docker compose exec mariadb mariadb -uroot -proot -e "CREATE DATABASE IF NOT EXISTS bp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+For any new change:
 
-# 5. Install backend dependencies
-docker compose exec workspace bash -c "cd /var/www && composer install"
+1. Update/confirm seed intent (`docs/init/*`) only if the product intent changed.
+2. Update operational docs first (`docs/ai-supported/*`).
+3. Apply schema changes (migrations), then generate code (generators), then implement custom logic.
+4. Record the work in a CycleRecord (`docs/ai-supported/cycles/*`).
 
-# 6. Run migrations
-docker compose exec workspace bash -c "cd /var/www && php artisan migrate"
+## 5) Checks (production-ready local gates)
 
-# 7. Install frontend dependencies
-cd ../frontend
-pnpm install
-```
+These commands are the local enforcement gates (WSL/Laradock):
 
-## Creating Models, Controllers, and Resources
+- `make preflight` — docs checks + backend migrate/tests + frontend lint/build
+- `make release-check` — validates latest CycleRecord is complete and marked ready
 
-The project includes a custom Artisan command that automatically generates Models, Controllers, Resources, Routes, and Postman documentation based on your database table structure.
+## 6) Historical docs
 
-### Command Syntax
-
-```bash
-php artisan create:model-controller {table} {entity} [--only=components]
-```
-
-### Parameters
-
-- **`table`** (required): The name of the database table
-- **`entity`** (required): The entity name (used for model/controller naming)
-- **`--only`** (optional): Comma-separated list of components to create. If omitted, all components are created.
-
-### Available Components
-
-- `model` - Creates an Eloquent model extending `BaseModel`
-- `controller` - Creates a RESTful controller extending `BaseController`
-- `resource` - Creates a JSON API resource
-- `route` - Adds resource routes to `routes/api.php`
-- `doc` - Generates Postman collection documentation
-- `translations` - (Currently commented out) Generates translation files
-
-### Examples
-
-#### Create All Components (Default)
-
-```bash
-php artisan create:model-controller users user
-```
-
-This will create:
-- `App\Models\User` model with fillable fields, casts, validation rules, and `belongsTo` relationships
-- `App\Http\Controllers\UserController` with full CRUD operations
-- `App\Http\Resources\User` resource
-- Resource routes in `routes/api.php`
-- Postman documentation (if API keys are configured)
-
-#### Create Only Model and Controller
-
-```bash
-php artisan create:model-controller products product --only=model,controller
-```
-
-#### Create Only Routes
-
-```bash
-php artisan create:model-controller orders order --only=route
-```
-
-#### Create Model, Controller, and Resource (without routes and docs)
-
-```bash
-php artisan create:model-controller categories category --only=model,controller,resource
-```
-
-### What Gets Generated
-
-#### Model Features
-
-- **Fillable fields**: Automatically extracted from table columns (excludes `id`, `created_at`, `updated_at`)
-- **Casts**: Automatically generated for integer, float, double, and decimal columns
-- **Validation rules**: Generated `getRules()` static method with:
-  - Type validation (numeric, boolean, date, datetime, string)
-  - Nullable/required rules based on database schema
-  - Foreign key validation using `exists` rule
-- **Relationships**: Automatically generates `belongsTo` relationships for columns ending with `_id`
-
-#### Controller Features
-
-- **Full CRUD operations**:
-  - `index()` - List with pagination, search, filtering, and sorting
-  - `store()` - Create new resource
-  - `show($id)` - Get single resource
-  - `create()` - Get form data for creating
-  - `update($id)` - Update existing resource
-  - `destroy($id)` - Delete resource
-- **Automatic relationship loading**: Eager loads related models if foreign keys are detected
-- **Search functionality**: Searchable fields automatically configured
-- **Filtering**: Advanced filtering support through `BaseController`
-
-#### Resource Features
-
-- Basic JSON resource structure ready for customization
-- Extends `Illuminate\Http\Resources\Json\JsonResource`
-
-#### Route Features
-
-- Adds resource routes to `routes/api.php`
-- Uses `auth:sanctum` middleware
-- Excludes `edit` route (not needed for API)
-- Automatically adds `use` statement for the controller
-
-#### Postman Documentation
-
-- Generates Postman collection with all CRUD endpoints
-- Requires `POSTMAN_COLLECTION_ID` and `POSTMAN_API_KEY` in `.env`
-- Creates a folder in your Postman collection with sample requests
-
-### Running the Command in Docker
-
-Since the project runs in Docker containers, execute the command inside the workspace container:
-
-```bash
-cd laradock
-docker compose exec workspace bash -c "cd /var/www && php artisan create:model-controller {table} {entity} [--only=components]"
-```
-
-Or if you're already in the laradock directory:
-
-```bash
-docker compose exec workspace bash -c "cd /var/www && php artisan create:model-controller {table} {entity} [--only=components]"
-```
-
-### Example Workflow
-
-1. **Create a migration** for your new table:
-   ```bash
-   php artisan make:migration create_products_table
-   ```
-
-2. **Run the migration**:
-   ```bash
-   php artisan migrate
-   ```
-
-3. **Generate model, controller, and routes**:
-   ```bash
-   php artisan create:model-controller products product
-   ```
-
-4. **Customize the generated files** as needed (especially the Resource class for API responses)
-
-### Notes
-
-- The command analyzes your database table structure to generate appropriate code
-- Foreign key columns (ending with `_id`) automatically generate `belongsTo` relationships
-- The command uses `BaseModel` and `BaseController` which provide additional functionality
-- Generated controllers include comprehensive error handling and validation
-- Routes are automatically added to `routes/api.php` with proper middleware
+Historical docs are intentionally removed to keep the working set small and unambiguous.
 

@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Relations\MorphToMany;
+use Illuminate\Database\Eloquent\Model;
 
 class Tag extends BaseModel
 {
+
+
     protected $fillable = [
         'name',
     ];
@@ -19,14 +21,7 @@ class Tag extends BaseModel
             'name' => 'string|required',
         ];
     }
-
-    public function overlays(): MorphToMany
-    {
-        return $this->morphedByMany(Overlay::class, 'taggable', 'taggables')->withTimestamps();
-    }
-
-    public function watermarks(): MorphToMany
-    {
-        return $this->morphedByMany(Watermark::class, 'taggable', 'taggables')->withTimestamps();
-    }
+    //
 }
+
+

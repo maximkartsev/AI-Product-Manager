@@ -23,7 +23,10 @@ class ReviewController extends BaseController
 
         $query->select($fieldsToSelect);
 
-        $this->addSearchCriteria($searchStr, $query, ['rating', 'comment', 'user>email']);
+        // In pooled-DB tenancy, `users` live in the central DB and cannot be queried
+        // from tenant DB queries (no cross-DB whereHas). Reviews are tenant-private,
+        // so searching by user email isn't needed.
+        $this->addSearchCriteria($searchStr, $query, ['rating', 'comment']);
 
         $orderStr = $request->get('order', 'id:asc');
 

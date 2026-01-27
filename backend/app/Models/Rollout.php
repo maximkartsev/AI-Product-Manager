@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class Rollout extends BaseModel
+class Rollout extends TenantModel
 {
 
 

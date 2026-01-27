@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class RecordTag extends BaseModel
+class RecordTag extends TenantModel
 {
 
 
@@ -18,9 +18,17 @@ class RecordTag extends BaseModel
 
     public static function getRules($id = null)
     {
+        $tenantId = tenant('id');
+        $tagExists = $tenantId
+            ? 'exists:tenant.tags,id,tenant_id,' . $tenantId
+            : 'exists:tenant.tags,id';
+        $recordExists = $tenantId
+            ? 'exists:tenant.records,id,tenant_id,' . $tenantId
+            : 'exists:tenant.records,id';
+
         return [
-            'tag_id' => 'numeric|required|exists:tags,id',
-            'record_id' => 'numeric|required|exists:records,id',
+            'tag_id' => 'numeric|required|' . $tagExists,
+            'record_id' => 'numeric|required|' . $recordExists,
         ];
     }
 

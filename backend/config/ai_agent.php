@@ -24,7 +24,26 @@ return [
             'usage' => 'php artisan migrate {--force}',
             'notes' => [
                 'Use --force for non-interactive execution in automated environments.',
-                'If you install an architecture module that adds specialized migration tooling, prefer that module’s command.',
+                'This project uses pooled tenant DBs. Prefer running: `php artisan tenancy:pools-migrate`.',
+            ],
+        ],
+        [
+            'name' => 'tenancy:install',
+            'category' => 'db',
+            'purpose' => 'Install tenancy scaffolding (config, migrations, provider, tenant routes).',
+            'usage' => 'php artisan tenancy:install',
+            'notes' => [
+                'Run once when adding stancl/tenancy to a project.',
+                'In pooled-DB mode, disable per-tenant DB creation jobs and use a custom DB-pool bootstrapper.',
+            ],
+        ],
+        [
+            'name' => 'tenants:list',
+            'category' => 'verification',
+            'purpose' => 'List tenants and their domains.',
+            'usage' => 'php artisan tenants:list',
+            'notes' => [
+                'Useful to verify domain → tenant mapping exists.',
             ],
         ],
         [

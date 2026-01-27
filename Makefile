@@ -1,4 +1,4 @@
-.PHONY: init check-submodules setup-env build-containers create-database install-backend generate-key migrate install-frontend
+.PHONY: init check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate install-frontend
 
 # Prerequisites
 # docker --version
@@ -19,7 +19,7 @@ DB_NAME := bp
 DB_USER := root
 DB_PASSWORD := root
 
-init: check-submodules setup-env build-containers create-database install-backend generate-key migrate install-frontend
+init: check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate install-frontend
 	@echo "✅ Initialization complete!"
 
 check-submodules:
@@ -97,6 +97,14 @@ create-database:
 		exit 1; \
 	fi
 
+create-tenant-pools:
+	@echo "🗄️  Creating tenant pool databases..."
+	@cd $(LARADOCK_DIR) && \
+	for db in tenant_pool_1 tenant_pool_2; do \
+		docker compose exec -T mariadb mariadb -uroot -proot -e "CREATE DATABASE IF NOT EXISTS $$db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || exit 1; \
+		echo "✅ Database $$db created"; \
+	done
+
 install-backend:
 	@echo "📦 Installing backend dependencies..."
 	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && composer install"
@@ -109,7 +117,7 @@ generate-key:
 
 migrate:
 	@echo "🔄 Running database migrations..."
-	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && php artisan migrate"
+	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && php artisan tenancy:pools-migrate"
 	@echo "✅ Migrations completed"
 
 install-frontend:

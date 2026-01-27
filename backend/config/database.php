@@ -2,6 +2,15 @@
 
 use Illuminate\Support\Str;
 
+$centralDriver = env('CENTRAL_DB_DRIVER', 'mysql');
+$centralDatabase = env('CENTRAL_DB_DATABASE', env('DB_DATABASE', 'laravel'));
+
+$tenantPool1Driver = env('TENANT_POOL_1_DB_DRIVER', $centralDriver);
+$tenantPool1Database = env('TENANT_POOL_1_DB_DATABASE', 'tenant_pool_1');
+
+$tenantPool2Driver = env('TENANT_POOL_2_DB_DRIVER', $centralDriver);
+$tenantPool2Database = env('TENANT_POOL_2_DB_DATABASE', 'tenant_pool_2');
+
 return [
 
     /*
@@ -16,7 +25,8 @@ return [
     |
     */
 
-    'default' => env('DB_CONNECTION', 'sqlite'),
+    // Default connection should be `central` in this project.
+    'default' => env('DB_CONNECTION', 'central'),
 
     /*
     |--------------------------------------------------------------------------
@@ -36,11 +46,117 @@ return [
             'url' => env('DB_URL'),
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
-            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
+            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),  
+        ],
+
+        /**
+         * Central connection (shared DB, no tenant initialization required).
+         *
+         * This is intentionally separate from the stock Laravel `mysql` connection so that
+         * application code can force central queries using a stable name (`central`), regardless
+         * of which driver is used underneath.
+         */
+        'central' => [
+            'driver' => $centralDriver,
+            'url' => env('CENTRAL_DB_URL', env('DB_URL')),
+
+            // MySQL/MariaDB options:
+            'host' => env('CENTRAL_DB_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('CENTRAL_DB_PORT', env('DB_PORT', '3306')),
+            'database' => $centralDatabase,
+            'username' => env('CENTRAL_DB_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('CENTRAL_DB_PASSWORD', env('DB_PASSWORD', '')),
+            'unix_socket' => env('CENTRAL_DB_SOCKET', env('DB_SOCKET', '')),
+            'charset' => env('CENTRAL_DB_CHARSET', env('DB_CHARSET', 'utf8mb4')),
+            'collation' => env('CENTRAL_DB_COLLATION', env('DB_COLLATION', 'utf8mb4_unicode_ci')),
+            'prefix' => env('CENTRAL_DB_PREFIX', ''),
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+
+            // SQLite options (ignored by mysql):
+            'foreign_key_constraints' => env('CENTRAL_DB_FOREIGN_KEYS', env('DB_FOREIGN_KEYS', true)),
             'busy_timeout' => null,
             'journal_mode' => null,
             'synchronous' => null,
             'transaction_mode' => 'DEFERRED',
+        ],
+
+        /**
+         * Tenant pools (physical databases). Tenants are horizontally sharded across these DBs.
+         *
+         * NOTE: Tenant-aware models use the `tenant` connection name. At runtime, a tenancy
+         * bootstrapper will point `database.connections.tenant` at one of these pool connections
+         * based on `tenants.db_pool`.
+         */
+        'tenant_pool_1' => [
+            'driver' => $tenantPool1Driver,
+            'url' => env('TENANT_POOL_1_DB_URL'),
+            'host' => env('TENANT_POOL_1_DB_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('TENANT_POOL_1_DB_PORT', env('DB_PORT', '3306')),
+            'database' => $tenantPool1Database,
+            'username' => env('TENANT_POOL_1_DB_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('TENANT_POOL_1_DB_PASSWORD', env('DB_PASSWORD', '')),
+            'unix_socket' => env('TENANT_POOL_1_DB_SOCKET', env('DB_SOCKET', '')),
+            'charset' => env('TENANT_POOL_1_DB_CHARSET', env('DB_CHARSET', 'utf8mb4')),
+            'collation' => env('TENANT_POOL_1_DB_COLLATION', env('DB_COLLATION', 'utf8mb4_unicode_ci')),
+            'prefix' => env('TENANT_POOL_1_DB_PREFIX', ''),
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+            'foreign_key_constraints' => env('TENANT_POOL_1_DB_FOREIGN_KEYS', env('DB_FOREIGN_KEYS', true)),
+        ],
+
+        'tenant_pool_2' => [
+            'driver' => $tenantPool2Driver,
+            'url' => env('TENANT_POOL_2_DB_URL'),
+            'host' => env('TENANT_POOL_2_DB_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('TENANT_POOL_2_DB_PORT', env('DB_PORT', '3306')),
+            'database' => $tenantPool2Database,
+            'username' => env('TENANT_POOL_2_DB_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('TENANT_POOL_2_DB_PASSWORD', env('DB_PASSWORD', '')),
+            'unix_socket' => env('TENANT_POOL_2_DB_SOCKET', env('DB_SOCKET', '')),
+            'charset' => env('TENANT_POOL_2_DB_CHARSET', env('DB_CHARSET', 'utf8mb4')),
+            'collation' => env('TENANT_POOL_2_DB_COLLATION', env('DB_COLLATION', 'utf8mb4_unicode_ci')),
+            'prefix' => env('TENANT_POOL_2_DB_PREFIX', ''),
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+            'foreign_key_constraints' => env('TENANT_POOL_2_DB_FOREIGN_KEYS', env('DB_FOREIGN_KEYS', true)),
+        ],
+
+        /**
+         * Tenant connection alias (logical). This is what tenant-private models use.
+         * A tenancy bootstrapper will overwrite this configuration at runtime.
+         */
+        'tenant' => [
+            'driver' => env('TENANT_DB_DRIVER', $tenantPool1Driver),
+            'url' => env('TENANT_DB_URL'),
+            'host' => env('TENANT_DB_HOST', env('TENANT_POOL_1_DB_HOST', env('DB_HOST', '127.0.0.1'))),
+            'port' => env('TENANT_DB_PORT', env('TENANT_POOL_1_DB_PORT', env('DB_PORT', '3306'))),
+            'database' => env('TENANT_DB_DATABASE', $tenantPool1Database),
+            'username' => env('TENANT_DB_USERNAME', env('TENANT_POOL_1_DB_USERNAME', env('DB_USERNAME', 'root'))),
+            'password' => env('TENANT_DB_PASSWORD', env('TENANT_POOL_1_DB_PASSWORD', env('DB_PASSWORD', ''))),
+            'unix_socket' => env('TENANT_DB_SOCKET', env('TENANT_POOL_1_DB_SOCKET', env('DB_SOCKET', ''))),
+            'charset' => env('TENANT_DB_CHARSET', env('TENANT_POOL_1_DB_CHARSET', env('DB_CHARSET', 'utf8mb4'))),
+            'collation' => env('TENANT_DB_COLLATION', env('TENANT_POOL_1_DB_COLLATION', env('DB_COLLATION', 'utf8mb4_unicode_ci'))),
+            'prefix' => env('TENANT_DB_PREFIX', ''),
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+            'foreign_key_constraints' => env('TENANT_DB_FOREIGN_KEYS', env('DB_FOREIGN_KEYS', true)),
         ],
 
         'mysql' => [

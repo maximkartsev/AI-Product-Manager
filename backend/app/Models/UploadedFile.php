@@ -36,7 +36,7 @@ use Illuminate\Support\Facades\Storage;
  * @method static \Illuminate\Database\Eloquent\Builder|UploadedFile whereUpdatedAt($value)
  * @mixin \Eloquent
  */
-class UploadedFile extends BaseModel
+class UploadedFile extends TenantModel
 {
     use HasFactory;
 

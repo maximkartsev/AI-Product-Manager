@@ -2,14 +2,33 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Foundation\Testing\WithFaker;
 use Illuminate\Routing\Route;
 use Tests\TestCase;
 
 class ApiTest extends TestCase
 {
-    use DatabaseTransactions;
+    protected static bool $prepared = false;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        if (!static::$prepared) {
+            // Ensure tenant pool DBs exist for pooled tenancy tests.
+            try {
+                DB::connection('central')->statement('CREATE DATABASE IF NOT EXISTS tenant_pool_1 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
+                DB::connection('central')->statement('CREATE DATABASE IF NOT EXISTS tenant_pool_2 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
+            } catch (\Throwable $e) {
+                // ignore (may not be supported in some test environments)
+            }
+
+            Artisan::call('tenancy:pools-migrate');
+            static::$prepared = true;
+        }
+    }
 
     /**
      * A basic feature test example.
@@ -34,27 +53,31 @@ class ApiTest extends TestCase
         });
 
 
-        $loginEndpoint = '/api/login';
+        $registerEndpoint = '/api/register';
 
-        $email = env('TEST_LOGIN_EMAIL', 'test@test.com');
-        $password = env('TEST_LOGIN_PASSWORD', '123456');
+        $email = 'test+' . uniqid() . '@test.com';
+        $password = '123456';
 
-        $loginResponse = $this->post($loginEndpoint, [
+        $registerResponse = $this->post($registerEndpoint, [
+            'name' => 'Test User',
             'email' => $email,
             'password' => $password,
+            'c_password' => $password,
         ]);
 
         // assert the response status is 200
-        $loginResponse->assertStatus(200);
+        $registerResponse->assertStatus(200);
 
         // assert the response has a token
 
-        $loginResponse->assertJsonStructure([
-            'data' => ['token'],
+        $registerResponse->assertJsonStructure([
+            'data' => ['token', 'tenant' => ['domain']],
         ]);
 
         // get the token from the response
-        $token = $loginResponse->json('data.token');
+        $token = $registerResponse->json('data.token');
+        $tenantDomain = $registerResponse->json('data.tenant.domain');
+        $this->assertNotEmpty($tenantDomain);
 
         $failedUrls = [];
         $succeedUrls = [];
@@ -85,15 +108,16 @@ class ApiTest extends TestCase
             }
 
             try {
-                $uri = url($route->uri());
+                $uri = '/' . ltrim($route->uri(), '/');
                 if (!empty($parameters)) {
                     $uri = route($route->getName(), $parameters, false); // false: don't make full URL
                 }
+                $uri = '/' . ltrim($uri, '/');
 
                 echo "\n\t Testing URL: \t".$uri."\t";
 
                 $response = $this->withHeaders($requestHeaders)
-                    ->get($uri);
+                    ->get("http://{$tenantDomain}{$uri}");
 
                 $response->assertStatus(200);
 
@@ -111,18 +135,19 @@ class ApiTest extends TestCase
             echo "\t index with search parameter: \t".$route->uri ."\t";
 
             try {
-                $uri = url($route->uri());
+                $uri = '/' . ltrim($route->uri(), '/');
 
                 $parameters['search'] = 1; // Add search parameter
 
                 if (!empty($parameters)) {
                     $uri = route($route->getName(), $parameters, false); // false: don't make full URL
                 }
+                $uri = '/' . ltrim($uri, '/');
 
                 echo "\n\t Testing URL: \t".$uri."\t";
 
                 $response = $this->withHeaders($requestHeaders)
-                    ->get($uri);
+                    ->get("http://{$tenantDomain}{$uri}");
 
                 $response->assertStatus(200);
 

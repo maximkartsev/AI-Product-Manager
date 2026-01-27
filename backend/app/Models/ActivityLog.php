@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class ActivityLog extends BaseModel
+class ActivityLog extends TenantModel
 {
 
     protected $table = 'activity_log';

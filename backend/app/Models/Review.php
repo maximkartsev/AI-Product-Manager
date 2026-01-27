@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class Review extends BaseModel
+class Review extends TenantModel
 {
 
 
@@ -20,10 +20,15 @@ class Review extends BaseModel
 
     public static function getRules($id = null)
     {
+        $tenantId = tenant('id');
+        $recordExists = $tenantId
+            ? 'exists:tenant.records,id,tenant_id,' . $tenantId
+            : 'exists:tenant.records,id';
+
         return [
             'user_id' => 'numeric|required|exists:users,id',
-            'record_id' => 'numeric|nullable',
-            'rating' => 'string|nullable',
+            'record_id' => 'numeric|nullable|' . $recordExists,
+            'rating' => 'integer|nullable|min:1|max:5',
             'comment' => 'string|nullable',
         ];
     }

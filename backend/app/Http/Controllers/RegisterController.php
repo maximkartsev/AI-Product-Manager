@@ -10,9 +10,52 @@ use App\Models\Role;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator as Validator;
 use Illuminate\Support\Facades\Hash;
+use App\Models\Tenant;
+use Illuminate\Support\Str;
 
 class RegisterController extends BaseController
 {
+    private function ensureTenantForUser(User $user): Tenant
+    {
+        $existing = Tenant::query()->where('user_id', $user->id)->first();
+        if ($existing) {
+            return $existing;
+        }
+
+        $base = Str::slug((string) $user->name);
+        if ($base === '') {
+            $base = 'user';
+        }
+
+        $suffix = 1;
+        $tenantId = $base . $suffix;
+        while (Tenant::query()->whereKey($tenantId)->exists()) {
+            $suffix++;
+            $tenantId = $base . $suffix;
+            if ($suffix > 999999) {
+                throw new \RuntimeException('Unable to allocate a unique tenant id.');
+            }
+        }
+
+        $dbPool = (string) config('tenant_pools.default', 'tenant_pool_1');
+
+        /** @var Tenant $tenant */
+        $tenant = Tenant::create([
+            'id' => $tenantId,
+            'user_id' => $user->id,
+            'db_pool' => $dbPool,
+        ]);
+
+        $baseDomain = (string) env('TENANCY_BASE_DOMAIN', 'localhost');
+        $tenantDomain = "{$tenantId}.{$baseDomain}";
+
+        // Domains are stored centrally and used for domain-based tenant identification.
+        $tenant->domains()->firstOrCreate([
+            'domain' => $tenantDomain,
+        ]);
+
+        return $tenant;
+    }
     /**
      * Parse User-Agent string to extract device and browser info
      *
@@ -81,6 +124,7 @@ class RegisterController extends BaseController
         $input['password'] = bcrypt($input['password']);
         $user = User::create($input);
 
+        $tenant = $this->ensureTenantForUser($user);
 
         // Parse device info from User-Agent
         $userAgent = $request->header('User-Agent', '');
@@ -104,6 +148,11 @@ class RegisterController extends BaseController
 
         $success['token'] = $token->plainTextToken;
         $success['name'] = $user->name;
+        $success['tenant'] = [
+            'id' => $tenant->id,
+            'domain' => $tenant->domains()->first()?->domain,
+            'db_pool' => $tenant->db_pool,
+        ];
 
         return $this->sendResponse($success, trans('User register successfully'));
     }
@@ -147,6 +196,14 @@ class RegisterController extends BaseController
 
         $success['token'] = $token->plainTextToken;
         $success['name'] = $user->name;
+        $tenant = Tenant::query()->where('user_id', $user->id)->first();
+        if ($tenant) {
+            $success['tenant'] = [
+                'id' => $tenant->id,
+                'domain' => $tenant->domains()->first()?->domain,
+                'db_pool' => $tenant->db_pool,
+            ];
+        }
         return $this->sendResponse($success, trans('User login successfully'));
     }
 }

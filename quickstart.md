@@ -68,6 +68,8 @@ cd /mnt/c/Projects/AI-Product-Management/AI-Product-Manager/frontend
 # Create .env.local
 echo "NEXT_PUBLIC_API_BASE_URL=http://<your-tenant-subdomain>.localhost:80/api" > .env.local
 
+# Optional alias (same meaning): NEXT_PUBLIC_API_URL=http://<your-tenant-subdomain>.localhost:80/api
+
 # Start dev server (recommended on WSL when the repo is under /mnt/c)
 # - Next.js 16 uses Turbopack by default, but file watching on /mnt/c can be unreliable.
 # - Webpack + polling makes hot reload reliable on WSL-mounted Windows filesystems.

@@ -174,6 +174,16 @@ class ValidationCheck extends Command implements AgentCommandDefinitionProvider
                 continue;
             }
 
+            // Skip abstract base classes like CentralModel/TenantModel.
+            try {
+                $ref = new \ReflectionClass($class);
+                if ($ref->isAbstract()) {
+                    continue;
+                }
+            } catch (\Throwable $e) {
+                continue;
+            }
+
             // Skip base infra models that are not validated via getRules().
             if (in_array($class, [
                 \App\Models\BaseModel::class,

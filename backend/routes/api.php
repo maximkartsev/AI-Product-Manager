@@ -17,6 +17,7 @@ use \App\Http\Controllers\RegisterController as RegisterController;
 use \App\Http\Controllers\PasswordController as PasswordController;
 use \App\Http\Controllers\ReviewController as ReviewController;
 use \App\Http\Controllers\MeController as MeController;
+use \App\Http\Controllers\EffectController as EffectController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -25,6 +26,10 @@ Route::post('login', [RegisterController::class,'login']);
 Route::post('register', [RegisterController::class,'register']);
 Route::post('password/reset', [PasswordController::class,'sendResetLink']);
 Route::post('password/reset/confirm', [PasswordController::class,'reset']);
+
+// Public catalog endpoints (no tenant init required).
+Route::get('effects', [EffectController::class,'index']);
+Route::get('effects/{slugOrId}', [EffectController::class,'show']);
 
 // Central-domain webhooks that still require tenant context (initialized from request data).
 Route::post('webhooks/payments', [PaymentWebhookController::class, 'handle'])

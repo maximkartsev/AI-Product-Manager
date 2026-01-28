@@ -13,8 +13,19 @@ Understand an effect and start an upload to apply it.
 
 ## Backend needs
 
-- Read effect by slug/id
+- Read effect by `slug` (preferred) or `id`
 - Return effect metadata (name, description, preview URL, premium flag)
+
+### Route
+
+- `/effects/[slug]`
+
+### API contract
+
+- `GET /api/effects/{slugOrId}`
+  - **Auth**: none (public)
+  - **Response envelope**: `{ success: true, data: Effect, message?: string }`
+  - **Not found**: `success: false` with a 404
 
 ## Acceptance
 

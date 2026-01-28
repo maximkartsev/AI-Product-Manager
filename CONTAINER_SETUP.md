@@ -114,6 +114,8 @@ export NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
 pnpm dev
 ```
 
+You can also use `NEXT_PUBLIC_API_URL` as an alias (same value, including `/api`).
+
 Or create a `.env.local` file in the `frontend` directory:
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api

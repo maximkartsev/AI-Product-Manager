@@ -1,12 +1,90 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { ApiError, getEffects, type ApiEffect } from "@/lib/api";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import AuthModal from "./AuthModal";
-import { brand, features, hero, popularEffects, publicGallery, trustBadges, type Effect, type GalleryItem } from "./landingData";
+import { brand, features, hero, publicGallery, trustBadges, type Effect, type GalleryItem } from "./landingData";
 import { IconArrowRight, IconBolt, IconGallery, IconPlay, IconSparkles, IconWand } from "./icons";
 
 function gradientClass(from: string, to: string) {
   return `${from} ${to}`;
+}
+
+type LandingEffect = Effect & { slug: string };
+
+type EffectsState =
+  | { status: "loading" }
+  | { status: "success"; data: LandingEffect[] }
+  | { status: "empty" }
+  | { status: "error"; message: string };
+
+const EFFECT_GRADIENTS = [
+  { from: "from-fuchsia-500", to: "to-cyan-400" },
+  { from: "from-amber-400", to: "to-pink-500" },
+  { from: "from-sky-400", to: "to-indigo-500" },
+  { from: "from-lime-400", to: "to-emerald-500" },
+  { from: "from-cyan-400", to: "to-blue-500" },
+  { from: "from-fuchsia-500", to: "to-violet-500" },
+] as const;
+
+function hashString(value: string): number {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) {
+    h = (h * 31 + value.charCodeAt(i)) | 0;
+  }
+  return h;
+}
+
+function gradientForSlug(slug: string) {
+  const idx = Math.abs(hashString(slug)) % EFFECT_GRADIENTS.length;
+  return EFFECT_GRADIENTS[idx]!;
+}
+
+function taglineForDescription(description?: string | null): string {
+  const d = (description ?? "").trim();
+  if (!d) return "One‑click AI video effect";
+
+  // Prefer the first sentence/line for compact cards.
+  const firstSentence = d.split(/\r?\n/)[0]?.split(/(?<=[.!?])\s/)[0] ?? d;
+  return firstSentence.trim() || "One‑click AI video effect";
+}
+
+function toLandingEffect(effect: ApiEffect): LandingEffect {
+  return {
+    id: effect.slug,
+    slug: effect.slug,
+    name: effect.name,
+    tagline: taglineForDescription(effect.description),
+    badge: effect.is_premium ? "Premium" : undefined,
+    stats: { uses: effect.is_premium ? "Premium" : "Free" },
+    gradient: gradientForSlug(effect.slug),
+  };
+}
+
+function EffectCardSkeleton({ gradient }: { gradient: { from: string; to: string } }) {
+  const g = gradientClass(gradient.from, gradient.to);
+
+  return (
+    <div className="snap-start animate-pulse">
+      <div className="w-44 overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+        <div className={`relative aspect-[9/12] bg-gradient-to-br ${g}`}>
+          <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
+          <div className="absolute bottom-3 left-3 right-3">
+            <div className="h-3 w-24 rounded bg-white/15" />
+            <div className="mt-2 h-3 w-32 rounded bg-white/10" />
+          </div>
+        </div>
+        <div className="p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="h-3 w-20 rounded bg-white/10" />
+            <div className="h-7 w-16 rounded-full bg-white/15" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AvatarStack() {
@@ -167,17 +245,60 @@ function FeatureRow({
 }
 
 export default function LandingHome() {
+  const router = useRouter();
   const [authOpen, setAuthOpen] = useState(false);
+  const [effectsState, setEffectsState] = useState<EffectsState>({ status: "loading" });
+  const [effectsReload, setEffectsReload] = useState(0);
 
   const openAuth = () => setAuthOpen(true);
   const closeAuth = () => setAuthOpen(false);
+
+  const goToEffect = (slug: string) => {
+    router.push(`/effects/${encodeURIComponent(slug)}`);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      setEffectsState({ status: "loading" });
+
+      try {
+        const data = await getEffects();
+        if (cancelled) return;
+
+        const items = (data ?? []).filter((e) => e && e.is_active).map(toLandingEffect);
+        if (items.length === 0) {
+          setEffectsState({ status: "empty" });
+          return;
+        }
+
+        setEffectsState({ status: "success", data: items });
+      } catch (err) {
+        if (cancelled) return;
+
+        if (err instanceof ApiError) {
+          setEffectsState({ status: "error", message: err.message });
+          return;
+        }
+
+        setEffectsState({ status: "error", message: "Unexpected error while loading effects." });
+      }
+    }
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectsReload]);
 
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <div className="relative mx-auto w-full max-w-md sm:max-w-xl lg:max-w-4xl">
         <header className="absolute inset-x-0 top-0 z-20 px-4 pt-4">
           <div className="flex items-center justify-between">
-            <a
+            <Link
               href="/"
               className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-white"
               aria-label={`${brand.name} home`}
@@ -186,7 +307,7 @@ export default function LandingHome() {
                 <IconSparkles className="h-4 w-4 text-fuchsia-200" />
               </span>
               <span className="uppercase">{brand.name}</span>
-            </a>
+            </Link>
 
             <PillButton onClick={openAuth} ariaLabel="Sign in">
               Sign In
@@ -259,15 +380,39 @@ export default function LandingHome() {
               </div>
             </div>
 
-            <div className="mt-4 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4">
-              <div className="flex gap-3">
-                {popularEffects.map((effect) => (
-                  <EffectCard key={effect.id} effect={effect} onTry={openAuth} />
-                ))}
+            {effectsState.status === "error" ? (
+              <div className="mt-4 rounded-3xl border border-red-500/25 bg-red-500/10 p-4">
+                <div className="text-sm font-semibold text-red-100">Couldn&apos;t load effects</div>
+                <div className="mt-1 text-xs text-red-100/70">{effectsState.message}</div>
+                <button
+                  type="button"
+                  onClick={() => setEffectsReload((v) => v + 1)}
+                  className="mt-3 inline-flex h-10 items-center justify-center rounded-2xl bg-white px-4 text-xs font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                >
+                  Retry
+                </button>
               </div>
-            </div>
+            ) : null}
 
-            <p className="mt-3 text-center text-xs text-white/40">Swipe to explore more effects →</p>
+            {effectsState.status === "empty" ? (
+              <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4 text-center text-sm text-white/60">
+                No effects yet.
+              </div>
+            ) : (
+              <div className="mt-4 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4">
+                <div className="flex gap-3">
+                  {effectsState.status === "success"
+                    ? effectsState.data.map((effect) => (
+                        <EffectCard key={effect.slug} effect={effect} onTry={() => goToEffect(effect.slug)} />
+                      ))
+                    : EFFECT_GRADIENTS.slice(0, 4).map((g, idx) => <EffectCardSkeleton key={idx} gradient={g} />)}
+                </div>
+              </div>
+            )}
+
+            {effectsState.status === "success" && effectsState.data.length > 1 ? (
+              <p className="mt-3 text-center text-xs text-white/40">Swipe to explore more effects →</p>
+            ) : null}
           </section>
 
           <section className="mt-12 px-4">

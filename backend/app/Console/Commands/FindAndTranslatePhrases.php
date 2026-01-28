@@ -10,12 +10,14 @@ use Stichoza\GoogleTranslate\GoogleTranslate;
 
 class FindAndTranslatePhrases extends Command
 {
-    protected $signature = 'translations:scan';
+    protected $signature = 'translations:scan {--check : Exit non-zero if new phrases are detected (no writes)}';
     protected $description = 'Scan all files under app folder and extract all unique phrases used in trans() function';
 
 
-    public function handle()
+    public function handle(): int
     {
+        $checkOnly = (bool) $this->option('check');
+
         $uaJsonFile = base_path('resources/lang/uk.json');
         $uaTranslations = json_decode(File::get($uaJsonFile), true);
 
@@ -56,6 +58,15 @@ class FindAndTranslatePhrases extends Command
 
             if(!is_subclass_of($modelClassName,'App\Models\BaseModel')) continue;
 
+            try {
+                $ref = new \ReflectionClass($modelClassName);
+                if ($ref->isAbstract()) {
+                    continue;
+                }
+            } catch (\Throwable $e) {
+                continue;
+            }
+
             $model = new $modelClassName();
 
             $newColumns = [];
@@ -88,6 +99,10 @@ class FindAndTranslatePhrases extends Command
 
         foreach ($translatablePhrases as $phrase) {
             if (!isset($uaTranslations[$phrase])) {
+                if ($checkOnly) {
+                    $newTranslations[$phrase] = null;
+                    continue;
+                }
 
                 //$translation = $this->translateWithChatGPT($phrase,'uk','en');
                 $translation = $this->translateWithGoogle($phrase,'uk','en');
@@ -99,12 +114,22 @@ class FindAndTranslatePhrases extends Command
         }
 
         if (!empty($newTranslations)) {
+            if ($checkOnly) {
+                $this->error(count($newTranslations) . ' new translation keys detected (check mode).');
+                foreach (array_keys($newTranslations) as $phrase) {
+                    $this->line("- " . $phrase);
+                }
+                return self::FAILURE;
+            }
+
             $uaTranslations = array_merge($uaTranslations, $newTranslations);
             File::put($uaJsonFile, json_encode($uaTranslations, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
             $this->info(count($newTranslations) . ' new translations added to ua.json!');
         } else {
             $this->info('No new translations added.');
         }
+
+        return self::SUCCESS;
     }
 
     private function translateWithGoogle(string $text, string $targetLanguage,$sourceLanguage = 'en')

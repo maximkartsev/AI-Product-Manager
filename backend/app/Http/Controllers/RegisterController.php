@@ -27,12 +27,14 @@ class RegisterController extends BaseController
             $base = 'user';
         }
 
-        $suffix = 1;
-        $tenantId = $base . $suffix;
+        // Make tenant IDs deterministic and race-safe under concurrent registrations by
+        // incorporating the already-unique user id.
+        $tenantId = $base . '-' . $user->id;
+        $attempts = 0;
         while (Tenant::query()->whereKey($tenantId)->exists()) {
-            $suffix++;
-            $tenantId = $base . $suffix;
-            if ($suffix > 999999) {
+            $attempts++;
+            $tenantId = $base . '-' . $user->id . '-' . Str::lower(Str::random(6));
+            if ($attempts > 10) {
                 throw new \RuntimeException('Unable to allocate a unique tenant id.');
             }
         }

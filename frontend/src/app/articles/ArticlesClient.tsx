@@ -1,29 +1,15 @@
 "use client";
 
-import { apiGet } from "@/lib/api/client";
-import { clearAccessToken, getAccessToken, setAccessToken } from "@/lib/api/auth";
-import { ApiError } from "@/lib/api/errors";
+import {
+  ApiError,
+  clearAccessToken,
+  getAccessToken,
+  getArticles,
+  setAccessToken,
+  type ArticleIndexData,
+} from "@/lib/api";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-
-type Article = {
-  id: number;
-  title: string;
-  sub_title?: string | null;
-  state: string;
-  content?: string | null;
-  published_at?: string | null;
-};
-
-type ArticleIndexData = {
-  items: Article[];
-  totalItems: number;
-  totalPages: number;
-  page: number;
-  perPage: number;
-  order: string;
-  search: string | null;
-};
 
 type LoadState =
   | { status: "idle" }
@@ -64,7 +50,7 @@ export default function ArticlesClient() {
       setState({ status: "loading" });
 
       try {
-        const data = await apiGet<ArticleIndexData>("/articles", query, token);
+        const data = await getArticles(query, token);
 
         if (cancelled) return;
 

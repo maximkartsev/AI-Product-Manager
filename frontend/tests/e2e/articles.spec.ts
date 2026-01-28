@@ -3,6 +3,9 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 type RegisterResponse = {
   token: string;
   name: string;
+  tenant: {
+    domain: string;
+  };
 };
 
 type MeResponse = {
@@ -22,12 +25,17 @@ function requireApiBaseUrl(): string {
 }
 
 function apiUrl(path: string): string {
-  const base = requireApiBaseUrl();
-  const normalized = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${normalized}`;
+  return apiUrlOnBase(requireApiBaseUrl(), path);
 }
 
-async function registerUser(request: APIRequestContext): Promise<{ token: string; me: MeResponse }> {
+function apiUrlOnBase(baseUrl: string, path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${baseUrl.replace(/\/$/, "")}${normalized}`;
+}
+
+async function registerUser(
+  request: APIRequestContext,
+): Promise<{ token: string; tenantDomain: string; me: MeResponse }> {
   const email = `e2e+${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
   const password = "12345678";
 
@@ -41,7 +49,10 @@ async function registerUser(request: APIRequestContext): Promise<{ token: string
     headers: { Accept: "application/json" },
   });
 
-  expect(registerRes.ok()).toBeTruthy();
+  if (!registerRes.ok()) {
+    const body = await registerRes.text();
+    throw new Error(`register failed: ${registerRes.url()} HTTP ${registerRes.status()} ${body}`);
+  }
 
   const registerJson = (await registerRes.json()) as {
     success: boolean;
@@ -53,11 +64,13 @@ async function registerUser(request: APIRequestContext): Promise<{ token: string
   expect(registerJson.data?.token).toBeTruthy();
 
   const token = registerJson.data!.token;
+  const tenantDomain = registerJson.data!.tenant.domain;
 
   const meRes = await request.get(apiUrl("/me"), {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
+      Host: tenantDomain,
     },
   });
 
@@ -66,11 +79,12 @@ async function registerUser(request: APIRequestContext): Promise<{ token: string
   expect(meJson.success).toBeTruthy();
   expect(meJson.data?.id).toBeTruthy();
 
-  return { token, me: meJson.data! };
+  return { token, tenantDomain, me: meJson.data! };
 }
 
 async function createArticle(
   request: APIRequestContext,
+  tenantDomain: string,
   token: string,
   userId: number,
   title: string,
@@ -84,6 +98,7 @@ async function createArticle(
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
+      Host: tenantDomain,
     },
   });
 
@@ -95,10 +110,15 @@ async function delay(ms: number) {
 }
 
 test.describe("UI integration gate: /articles", () => {
-  test("shows controlled error state when unauthenticated (401)", async ({ page }) => {
+  test("shows controlled error state when unauthenticated (401)", async ({ page, request }) => {
+    const { tenantDomain } = await registerUser(request);
+
     await page.addInitScript(() => {
       window.localStorage.removeItem("auth_token");
     });
+    await page.addInitScript((domain: string) => {
+      window.localStorage.setItem("tenant_domain", domain);
+    }, tenantDomain);
 
     // Ensure the Loading state is observable (delay the real request).
     await page.route("**/api/articles*", async (route) => {
@@ -109,16 +129,20 @@ test.describe("UI integration gate: /articles", () => {
     await page.goto("/articles");
 
     await expect(page.getByText("Loading…")).toBeVisible();
-    await expect(page.getByText("Error")).toBeVisible();
+    await expect(page.getByText("Error", { exact: true })).toBeVisible();
     await expect(page.getByText(/HTTP 401/)).toBeVisible();
   });
 
   test("shows empty state when search yields no results", async ({ page, request }) => {
-    const { token } = await registerUser(request);
+    const { token, tenantDomain } = await registerUser(request);
 
-    await page.addInitScript((t: string) => {
+    await page.addInitScript(
+      ({ t, domain }: { t: string; domain: string }) => {
       window.localStorage.setItem("auth_token", t);
-    }, token);
+      window.localStorage.setItem("tenant_domain", domain);
+      },
+      { t: token, domain: tenantDomain },
+    );
 
     await page.route("**/api/articles*", async (route) => {
       await delay(300);
@@ -133,14 +157,18 @@ test.describe("UI integration gate: /articles", () => {
   });
 
   test("shows success state and renders created article", async ({ page, request }) => {
-    const { token, me } = await registerUser(request);
+    const { token, tenantDomain, me } = await registerUser(request);
     const title = `E2E Article ${Date.now()}`;
 
-    await createArticle(request, token, me.id, title);
+    await createArticle(request, tenantDomain, token, me.id, title);
 
-    await page.addInitScript((t: string) => {
+    await page.addInitScript(
+      ({ t, domain }: { t: string; domain: string }) => {
       window.localStorage.setItem("auth_token", t);
-    }, token);
+      window.localStorage.setItem("tenant_domain", domain);
+      },
+      { t: token, domain: tenantDomain },
+    );
 
     await page.route("**/api/articles*", async (route) => {
       await delay(300);

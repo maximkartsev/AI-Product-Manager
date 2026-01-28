@@ -16,7 +16,7 @@ use Mockery\Exception;
 
 class CreateModelAndController extends Command
 {
-    protected $signature = 'create:model-controller {table : Table name} {entity : Entity name} {--only= : Specify what to create: model,controller,resource,doc,route}';
+    protected $signature = 'create:model-controller {table : Table name} {entity : Entity name} {--only= : Specify what to create: model,controller,resource,doc,route} {--scope=auto : Scope: auto|tenant|central (default auto)}';
 
     protected $description = 'Create model and controller based on given table structure';
 
@@ -25,19 +25,37 @@ class CreateModelAndController extends Command
         $table = $this->argument('table');
         $entity = $this->argument('entity');
         $only = $this->option('only');
+        $scopeOpt = strtolower(trim((string) ($this->option('scope') ?? 'auto')));
+        if ($scopeOpt === '') {
+            $scopeOpt = 'auto';
+        }
+
+        if (!in_array($scopeOpt, ['auto', 'tenant', 'central'], true)) {
+            $this->warn("Invalid --scope value '{$scopeOpt}'. Valid: auto|tenant|central. Falling back to auto.");
+            $scopeOpt = 'auto';
+        }
 
         // Parse the --only option
         $createComponents = $this->parseOnlyOption($only);
 
+        [$schemaConnection, $isTenantScoped] = $this->resolveSchemaConnectionAndScope($table, $scopeOpt);
+
         $model = ucwords(Str::camel(Str::singular($entity)));
         $controllerName = $model . 'Controller';
 
-        $fillable = $this->getColumns($table)->reject(function ($column) {
-            return in_array($column, ['id', 'created_at', 'updated_at']);
+        $fillable = $this->getColumns($schemaConnection, $table)->reject(function ($column) use ($isTenantScoped) {
+            if (in_array($column, ['id', 'created_at', 'updated_at', 'deleted_at'], true)) {
+                return true;
+            }
+            if ($isTenantScoped && $column === 'tenant_id') {
+                return true;
+            }
+            return false;
         })->toArray();
 
         $relations = $this->getRelationsByFillable($fillable);
         $hasRelations = !empty($relations);
+        $hasSlug = Schema::connection($schemaConnection)->hasColumn($table, 'slug');
 
         $controller = $model . 'Controller';
         $resource = $model;
@@ -55,6 +73,9 @@ class CreateModelAndController extends Command
 
         // Create model if specified
         if ($createComponents['model']) {
+            $baseModel = $isTenantScoped ? 'TenantModel' : 'CentralModel';
+            $hasSoftDeletes = Schema::connection($schemaConnection)->hasColumn($table, 'deleted_at');
+
             // Generate model file
             Artisan::call('make:model', [
                 'name' => $model,
@@ -64,22 +85,47 @@ class CreateModelAndController extends Command
 
             $fillableContent = "\n\n protected ".'$fillable=['."\n'".implode("',\n'",$fillable)."\n\n". "\n".'];'."\n\n";
 
-            $castsContent = $this->generateCasts($table);
+            $castsContent = $this->generateCasts($schemaConnection, $table, $isTenantScoped);
 
-            $rulesContent = $this->generateGetRulesFunction($table);
+            $rulesContent = $this->generateGetRulesFunction($schemaConnection, $table, $isTenantScoped);
 
             $belongsToRelations = collect($fillable)->filter(function ($column) {
-                return Str::endsWith($column, '_id');
+                return Str::endsWith($column, '_id') && $column !== 'tenant_id';
             })->map(function ($column) {
-                return ucfirst(Str::camel(str_replace('_id', '', Str::snake($column))));
-            })->map(function ($relatedModel) {
+                $relatedModel = ucfirst(Str::camel(str_replace('_id', '', Str::snake($column))));
                 $methodName = lcfirst($relatedModel);
-                return "public function {$methodName}() {\n    return \$this->belongsTo(\\App\\Models\\{$relatedModel}::class);\n}";
+                $fqcn = "\\App\\Models\\{$relatedModel}";
+
+                if (class_exists($fqcn)) {
+                    return "public function {$methodName}() {\n    return \$this->belongsTo({$fqcn}::class);\n}";
+                }
+
+                return "// public function {$methodName}() {\n//     return \$this->belongsTo({$fqcn}::class);\n// }\n// TODO: Generate {$fqcn} to enable {$methodName}() relation.";
             })->implode("\n\n");
 
-            $modelContent = str_replace('extends Model', 'extends BaseModel', $modelContent);
+            $modelContent = str_replace('extends Model', "extends {$baseModel}", $modelContent);
 
-            $modelContent = str_replace("extends BaseModel\n{", "extends BaseModel\n{\n\n" . $fillableContent . $castsContent . $rulesContent . $belongsToRelations, $modelContent);
+            if ($hasSoftDeletes && !str_contains($modelContent, 'Illuminate\\Database\\Eloquent\\SoftDeletes')) {
+                $modelContent = str_replace(
+                    "namespace App\\Models;\n\n",
+                    "namespace App\\Models;\n\nuse Illuminate\\Database\\Eloquent\\SoftDeletes;\n\n",
+                    $modelContent,
+                );
+            }
+
+            $classPreamble = '';
+            if ($hasSoftDeletes) {
+                $classPreamble .= "use SoftDeletes;\n\n";
+            }
+            if (!$isTenantScoped) {
+                $classPreamble .= "public bool \$enableLoggingModelsEvents = false;\n\n";
+            }
+
+            $modelContent = str_replace(
+                "extends {$baseModel}\n{",
+                "extends {$baseModel}\n{\n\n" . $classPreamble . $fillableContent . $castsContent . $rulesContent . $belongsToRelations,
+                $modelContent,
+            );
 
             $modelContent = preg_replace_callback('/(protected \$fillable\s*=\s*\[)(.*?)(\];)/sm', function ($matches) use ($fillable) {
                 $fillables = collect($fillable)->map(function ($column) {
@@ -102,7 +148,7 @@ class CreateModelAndController extends Command
 
         // Create controller if specified
         if ($createComponents['controller']) {
-            $controllerContent = $this->generateControllerContent($model, $fillable, $hasRelations);
+            $controllerContent = $this->generateControllerContent($model, $fillable, $hasRelations, $hasSlug);
             file_put_contents($controllerPath, $controllerContent);
             $this->info("Controller {$controller} created successfully.");
         }
@@ -114,7 +160,7 @@ class CreateModelAndController extends Command
 
         // Add route if specified
         if ($createComponents['route']) {
-            $this->appendResourceRoute($controller);
+            $this->appendResourceRoute($controller, $isTenantScoped);
             $this->info("Route for {$controller} added successfully.");
         }
 
@@ -168,6 +214,47 @@ class CreateModelAndController extends Command
         return $components;
     }
 
+    /**
+     * Resolve which DB connection to inspect for the table and whether the table is tenant-scoped.
+     *
+     * @return array{0: string, 1: bool} [schemaConnection, isTenantScoped]
+     */
+    private function resolveSchemaConnectionAndScope(string $table, string $scopeOpt): array
+    {
+        $centralHas = Schema::connection('central')->hasTable($table);
+        $tenantHas = Schema::connection('tenant')->hasTable($table);
+
+        if ($scopeOpt === 'central') {
+            if (!$centralHas) {
+                $this->error("Table '{$table}' not found on central connection.");
+                throw new \RuntimeException('Table not found on central connection.');
+            }
+            return ['central', false];
+        }
+
+        if ($scopeOpt === 'tenant') {
+            if (!$tenantHas) {
+                $this->error("Table '{$table}' not found on tenant connection.");
+                throw new \RuntimeException('Table not found on tenant connection.');
+            }
+            return ['tenant', true];
+        }
+
+        // auto: pick the connection where the table exists (prefer central if present).
+        if ($centralHas) {
+            $conn = 'central';
+        } elseif ($tenantHas) {
+            $conn = 'tenant';
+        } else {
+            $this->error("Table '{$table}' not found on central or tenant connections.");
+            throw new \RuntimeException('Table not found on configured connections.');
+        }
+
+        $isTenantScoped = Schema::connection($conn)->hasColumn($table, 'tenant_id');
+
+        return [$conn, $isTenantScoped];
+    }
+
     private function generateResourceContent(string $modelName): string
     {
 
@@ -193,66 +280,87 @@ class CreateModelAndController extends Command
         return $resource;
     }
 
-    protected function checkIfColumnIsNullable($dbName,$tableName,$columnName){
-        $results = DB::select(
-            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE table_schema = ? AND table_name = ? AND COLUMN_NAME = ?",
-            [$dbName, $tableName, $columnName]
-        );
-
-
-        if (!empty($results)) {
-            $columnInfo = $results[0]; // Get the first (and in this case, only) result
-
-            // Check if the column is nullable
-            $isNullable = $columnInfo->IS_NULLABLE === 'YES';
-
-            // Print whether the column is nullable
-            return $isNullable;
-        } else {
-            throw new Exception('Column information not found');
+    private function getDatabaseNameForConnection(string $connection): string
+    {
+        $db = (string) (config("database.connections.{$connection}.database") ?? '');
+        if ($db !== '') {
+            return $db;
         }
+
+        // Fallbacks (useful in some CLI contexts)
+        return (string) (env('DB_DATABASE') ?? '');
     }
 
-    protected function generateGetRulesFunction($tableName)
+    /**
+     * @return array<int, object{COLUMN_NAME:string,DATA_TYPE:string,COLUMN_TYPE:string,IS_NULLABLE:string,CHARACTER_MAXIMUM_LENGTH:?int,COLUMN_KEY:string}>
+     */
+    private function getTableColumnsInfo(string $connection, string $tableName): array
+    {
+        $dbName = $this->getDatabaseNameForConnection($connection);
+        if ($dbName === '') {
+            throw new \RuntimeException("Unable to resolve database name for connection '{$connection}'.");
+        }
+
+        /** @var array<int, object> $rows */
+        $rows = DB::connection($connection)->select(
+            "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, COLUMN_KEY
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+             ORDER BY ORDINAL_POSITION",
+            [$dbName, $tableName],
+        );
+
+        return $rows;
+    }
+
+    protected function generateGetRulesFunction(string $connection, string $tableName, bool $isTenantScoped)
     {
         $rules = collect();
 
-        // get Doctrine Schema Manager
+        $columnsInfo = $this->getTableColumnsInfo($connection, $tableName);
+        $dbName = $this->getDatabaseNameForConnection($connection);
+        $foreignKeys = $this->getTableForeignKeys($connection, $dbName, $tableName);
 
+        foreach ($columnsInfo as $col) {
+            $columnName = (string) $col->COLUMN_NAME;
 
-        $columns = Schema::getColumnListing($tableName);
-        $primaryKey = $columns[0];
-
-        $connection = DB::connection();
-
-
-
-        foreach ($columns as $column) {
-            if (in_array($column,['created_at','updated_at',$primaryKey])) {
+            // Skip system-managed fields
+            if (in_array($columnName, ['created_at', 'updated_at'], true)) {
+                continue;
+            }
+            if ((string) $col->COLUMN_KEY === 'PRI') {
+                continue;
+            }
+            if ($columnName === 'deleted_at') {
+                continue;
+            }
+            if ($isTenantScoped && $columnName === 'tenant_id') {
                 continue;
             }
 
-            $columnName = $column;
-            $columnType =  Schema::getColumnType($tableName, $columnName);
-
-
-
-            $nullable =  $this->checkIfColumnIsNullable(getenv('DB_DATABASE'),$tableName,$columnName);
+            $dataType = strtolower((string) $col->DATA_TYPE);
+            $columnType = strtolower((string) $col->COLUMN_TYPE);
+            $maxLen = $col->CHARACTER_MAXIMUM_LENGTH !== null ? (int) $col->CHARACTER_MAXIMUM_LENGTH : null;
+            $nullable = strtoupper((string) $col->IS_NULLABLE) === 'YES';
 
             $columnRules = collect();
 
-            if ($columnType === 'integer' || $columnType === 'float' || $columnType === 'double' || $columnType == 'bigint' || $columnType == 'decimal') {
-                $columnRules->push('numeric');
-            } elseif ($columnType === 'boolean') {
+            // Type mapping (MySQL via INFORMATION_SCHEMA)
+            if (($dataType === 'tinyint' && $columnType === 'tinyint(1)') || $dataType === 'boolean') {
                 $columnRules->push('boolean');
-            } elseif ($columnType === 'date') {
+            } elseif (in_array($dataType, ['int', 'integer', 'bigint', 'smallint', 'mediumint', 'tinyint'], true)) {
+                $columnRules->push('numeric');
+            } elseif (in_array($dataType, ['decimal', 'numeric', 'float', 'double', 'real'], true)) {
+                $columnRules->push('numeric');
+            } elseif ($dataType === 'date') {
                 $columnRules->push('date');
-            } elseif ($columnType === 'datetime' || $columnType === 'timestamp') {
+            } elseif (in_array($dataType, ['datetime', 'timestamp'], true)) {
                 $columnRules->push('date_format:Y-m-d H:i:s');
             } else {
                 $columnRules->push('string');
+                if ($maxLen !== null && in_array($dataType, ['varchar', 'char'], true)) {
+                    $columnRules->push('max:' . $maxLen);
+                }
             }
 
             if ($nullable) {
@@ -262,19 +370,15 @@ class CreateModelAndController extends Command
             }
 
             // If column is a foreign key, add an 'exists' validation rule
-            $foreignKeys = $this->getTableForeignKeys($tableName);
-            foreach ($foreignKeys as $localColumn => $foreignKey) {
-                if ($localColumn === $columnName) {
-                    $relatedTable = $foreignKey['table'];
-                    $relatedColumn = $foreignKey['column'];
-                    $columnRules->push("exists:$relatedTable,id");
-                }
+            if (array_key_exists($columnName, $foreignKeys)) {
+                $relatedTable = $foreignKeys[$columnName]['table'];
+                $columnRules->push("exists:$relatedTable,id");
             }
 
             $rules->put($columnName, $columnRules->implode('|'));
         }
 
-        $function = "public static function getRules(\$id=null)\n{\n    return [\n";
+        $function = "public static function getRules(\$id = null)\n{\n    return [\n";
 
         foreach ($rules as $column => $rule) {
             $function .= "        '{$column}' => '{$rule}',\n";
@@ -285,40 +389,48 @@ class CreateModelAndController extends Command
         return $function;
     }
 
-    protected function generateCasts($tableName)
+    protected function generateCasts(string $connection, string $tableName, bool $isTenantScoped)
     {
-        $rules = collect();
-
-        $columns = Schema::getColumnListing($tableName);
-        $primaryKey = $columns[0];
-
         $casts = [];
 
-        foreach ($columns as $column) {
-            if (in_array($column,['created_at','updated_at',$primaryKey])) {
+        $columnsInfo = $this->getTableColumnsInfo($connection, $tableName);
+
+        foreach ($columnsInfo as $col) {
+            $columnName = (string) $col->COLUMN_NAME;
+
+            if (in_array($columnName, ['created_at', 'updated_at'], true)) {
+                continue;
+            }
+            if ((string) $col->COLUMN_KEY === 'PRI') {
+                continue;
+            }
+            if ($columnName === 'deleted_at') {
+                continue;
+            }
+            if ($isTenantScoped && $columnName === 'tenant_id') {
                 continue;
             }
 
-            if(str_ends_with($column, '_id')){
+            if (str_ends_with($columnName, '_id')) {
                 continue;
             }
 
-            $columnName = $column;
+            $dataType = strtolower((string) $col->DATA_TYPE);
+            $columnType = strtolower((string) $col->COLUMN_TYPE);
 
-            // get column type
-            $columnType = Schema::getColumnType($tableName, $columnName);
+            if (($dataType === 'tinyint' && $columnType === 'tinyint(1)') || $dataType === 'boolean') {
+                $casts[$columnName] = 'boolean';
+                continue;
+            }
 
-            switch($columnType){
-                case 'integer':
-                    $casts[$columnName] = 'int';
-                    break;
-                case 'float':
-                case 'double':
-                case 'decimal':
-                    $casts[$columnName] = 'float';
-                    break;
-                default:
-                    break;
+            if (in_array($dataType, ['int', 'integer', 'bigint', 'smallint', 'mediumint', 'tinyint'], true)) {
+                $casts[$columnName] = 'int';
+                continue;
+            }
+
+            if (in_array($dataType, ['decimal', 'numeric', 'float', 'double', 'real'], true)) {
+                $casts[$columnName] = 'float';
+                continue;
             }
         }
 
@@ -333,11 +445,11 @@ class CreateModelAndController extends Command
         return $content."\n";
     }
 
-    private function getColumns($table)
+    private function getColumns(string $connection, string $table)
     {
         $fields = new Collection();
 
-        $columns = DB::select("SHOW COLUMNS FROM $table");
+        $columns = DB::connection($connection)->select("SHOW COLUMNS FROM $table");
 
         foreach ($columns as $column) {
             if ($column->Extra != 'auto_increment') {
@@ -360,6 +472,74 @@ class CreateModelAndController extends Command
         return $relations;
     }
 
+    /**
+     * @param array<int, string> $fillable
+     * @return array{valid: array<int, string>, missing: array<int, array{method: string, fqcn: string}>}
+     */
+    private function getRelationsInfoByFillable(array $fillable): array
+    {
+        $valid = [];
+        $missing = [];
+
+        foreach ($fillable as $column) {
+            if (!Str::endsWith($column, '_id') || $column === 'tenant_id') {
+                continue;
+            }
+
+            $relatedModel = ucfirst(Str::camel(str_replace('_id', '', Str::snake($column))));
+            $methodName = lcfirst($relatedModel);
+            $fqcn = "\\App\\Models\\{$relatedModel}";
+
+            if (class_exists($fqcn)) {
+                $valid[] = $methodName;
+            } else {
+                $missing[] = [
+                    'method' => $methodName,
+                    'fqcn' => $fqcn,
+                ];
+            }
+        }
+
+        return [
+            'valid' => $valid,
+            'missing' => $missing,
+        ];
+    }
+
+    /**
+     * Build an eager-load snippet that is safe by default:
+     * - loads only valid relations
+     * - emits commented lines for missing relations
+     *
+     * The returned string is designed to be inserted inside a heredoc where the first line is already indented.
+     *
+     * @param string $varName Example: '$item' or '$items'
+     * @param array<int, string> $validRelations
+     * @param array<int, array{method: string, fqcn: string}> $missingRelations
+     */
+    private function buildLoadSnippet(string $varName, array $validRelations, array $missingRelations): string
+    {
+        $indent = '        ';
+        $lines = [];
+
+        if (!empty($validRelations)) {
+            $relationsStr = "'" . implode("','", $validRelations) . "'";
+            $lines[] = "{$varName}->load([{$relationsStr}]);";
+        }
+
+        foreach ($missingRelations as $rel) {
+            $method = $rel['method'];
+            $fqcn = $rel['fqcn'];
+            $lines[] = "// {$varName}->load(['{$method}']); // TODO: Generate {$fqcn} to enable this relation.";
+        }
+
+        if (empty($lines)) {
+            return '';
+        }
+
+        return implode("\n{$indent}", $lines) . "\n\n{$indent}";
+    }
+
     private function getFillableWithoutRelations($fillable)
     {
         return collect($fillable)->filter(function ($column) {
@@ -367,16 +547,16 @@ class CreateModelAndController extends Command
         })->toArray();
     }
 
-    private function getTableForeignKeys($tableName)
+    private function getTableForeignKeys(string $connection, string $dbName, string $tableName): array
     {
 
 
         // Execute a raw query to get the foreign keys for a table
-        $foreignKeys = DB::select(
+        $foreignKeys = DB::connection($connection)->select(
             "SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_COLUMN_NAME IS NOT NULL",
-            [env('DB_DATABASE'), $tableName]
+            [$dbName, $tableName]
         );
 
         $result = [];
@@ -391,25 +571,30 @@ class CreateModelAndController extends Command
         return $result;
     }
 
-    private function generateControllerContent($modelName,$fillable,$hasRelations){
+    private function generateControllerContent($modelName, $fillable, $hasRelations, bool $hasSlug = false){
 
         $humanName = ucwords(str_replace('_',' ',Str::snake($modelName)));
         $humanNamePlural = Str::plural($humanName);
 
-        $relations = $this->getRelationsByFillable($fillable);
-
-        $relationsStr = "'".implode("','",$relations)."'";
+        $relationsInfo = $this->getRelationsInfoByFillable($fillable);
+        $validRelations = $relationsInfo['valid'];
+        $missingRelations = $relationsInfo['missing'];
 
         $filtersFields = $this->getFillableWithoutRelations($fillable);
 
         $filtersFieldsStr = "'".implode("','",$filtersFields)."'";
 
         // Generate load statements conditionally
-        $indexLoadStatement = $hasRelations ? "\$items->load([{$relationsStr}]);\n\n        " : '';
-        $storeLoadStatement = $hasRelations ? "\$item->load([{$relationsStr}]);\n\n        " : '';
-        $showLoadStatement = $hasRelations ? "\$item->load([{$relationsStr}]);\n\n        " : '';
-        $createLoadStatement = $hasRelations ? "\$item->load([{$relationsStr}]);\n\n        " : '';
-        $updateLoadStatement = $hasRelations ? "\$item->load([{$relationsStr}]);\n\n        " : '';
+        $indexLoadStatement = $this->buildLoadSnippet('$items', $validRelations, $missingRelations);
+        $storeLoadStatement = $this->buildLoadSnippet('$item', $validRelations, $missingRelations);
+        $showLoadStatement = $this->buildLoadSnippet('$item', $validRelations, $missingRelations);
+        $createLoadStatement = $this->buildLoadSnippet('$item', $validRelations, $missingRelations);
+        $updateLoadStatement = $this->buildLoadSnippet('$item', $validRelations, $missingRelations);
+
+        $showParam = $hasSlug ? '$slugOrId' : '$id';
+        $showFindStatement = $hasSlug
+            ? "\$item = is_numeric(\$slugOrId)\n            ? {$modelName}::whereKey(\$slugOrId)->first()\n            : {$modelName}::where('slug', \$slugOrId)->first();"
+            : "\$item = {$modelName}::find(\$id);";
 
         $content = <<<EOT
 <?php
@@ -494,9 +679,9 @@ class ${modelName}Controller extends BaseController
      * @param \$id
      * @return JsonResponse
      */
-    public function show(\$id): JsonResponse
+    public function show(${showParam}): JsonResponse
     {
-        \$item = ${modelName}::find(\$id);
+        ${showFindStatement}
 
         if(is_null(\$item)){
             return \$this->sendError(trans('${humanName} not found'));
@@ -601,22 +786,57 @@ EOT;
     }
 
     /**
-     * Append a resource route with auth:sanctum middleware for the given controller to the API routes file.
-     *
-     * @param string $controller
-     * @return void
+     * Insert a resource route for the given controller into the API routes file.
+     * - tenant-scoped routes go inside the tenancy middleware group
+     * - central-scoped routes go in the central/public section (outside the tenant group)
      */
-    protected function appendResourceRoute($controller)
+    protected function appendResourceRoute(string $controller, bool $isTenantScoped = false): void
     {
+        $routesFile = base_path('routes/api.php');
+
         $this->addUseStatement($controller);
 
-        $middlewares = "['auth:sanctum']"; // will add 'role-access' later
+        $fileContents = file_get_contents($routesFile);
+        if ($fileContents === false) {
+            throw new \RuntimeException('Unable to read routes/api.php');
+        }
 
+        $resourcePath = $this->getResourcePathName($controller);
 
-        $routeContent = PHP_EOL . "Route::middleware(".$middlewares.")->resource('" . $this->getResourcePathName($controller) . "', {$controller}::class)->except(['edit']);";
+        // Avoid duplicates
+        if (str_contains($fileContents, "resource('{$resourcePath}'") || str_contains($fileContents, "resource(\"{$resourcePath}\"")) {
+            return;
+        }
 
-        $routesFile = base_path('routes/api.php');
-        file_put_contents($routesFile, $routeContent, FILE_APPEND);
+        $routeStatement = $isTenantScoped
+            ? "Route::resource('{$resourcePath}', {$controller}::class)->except(['edit']);"
+            : "Route::middleware(['auth:sanctum'])->resource('{$resourcePath}', {$controller}::class)->except(['edit']);";
+
+        if ($isTenantScoped) {
+            $groupEndPos = strrpos($fileContents, "});");
+            if ($groupEndPos === false) {
+                // Fallback: append at end.
+                $fileContents .= PHP_EOL . $routeStatement . PHP_EOL;
+            } else {
+                $insertion = '    ' . $routeStatement . PHP_EOL;
+                $fileContents = substr_replace($fileContents, $insertion, $groupEndPos, 0);
+            }
+        } else {
+            $insertPos = strpos($fileContents, "// Central-domain webhooks");
+            if ($insertPos === false) {
+                $insertPos = strpos($fileContents, "Route::middleware([");
+            }
+
+            $insertion = $routeStatement . PHP_EOL . PHP_EOL;
+
+            if ($insertPos === false) {
+                $fileContents .= PHP_EOL . $insertion;
+            } else {
+                $fileContents = substr_replace($fileContents, $insertion, $insertPos, 0);
+            }
+        }
+
+        file_put_contents($routesFile, $fileContents);
     }
 
     protected function getResourcePathName($controller)
@@ -640,6 +860,18 @@ EOT;
 
         $routesFile = base_path('routes/api.php');
         $fileContents = file_get_contents($routesFile);
+        if ($fileContents === false) {
+            throw new \RuntimeException('Unable to read routes/api.php');
+        }
+
+        // Avoid duplicates (support both aliased and non-aliased imports)
+        if (
+            str_contains($fileContents, "\\App\\Http\\Controllers\\{$controller}") ||
+            str_contains($fileContents, "use App\\Http\\Controllers\\{$controller}")
+        ) {
+            return;
+        }
+
         $lastUseStatementPosition = strrpos($fileContents, 'use ');
 
         if ($lastUseStatementPosition !== false) {

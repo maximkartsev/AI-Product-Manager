@@ -153,11 +153,11 @@ SELECT id, name, description, price_monthly, price_yearly, features FROM tiers W
 #### Step 3: The user selects a subscription tier or a one-time purchase package from the modal.
 
 - **Operation:** CREATE on `purchases`
-- **Fields:** `user_id`, `package_id`, `total_amount`, `status`
+- **Fields:** `tenant_id`, `user_id`, `package_id`, `total_amount`, `status`
 - **Status:** ✅ Verified against schema
 
 ```sql
-INSERT INTO purchases (user_id, package_id, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', NOW(), NOW());
+INSERT INTO purchases (tenant_id, user_id, package_id, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', NOW(), NOW());
 ```
 
 #### Step 4: The user is redirected to a third-party payment processor (e.g., Stripe) to enter payment details.
@@ -167,20 +167,32 @@ INSERT INTO purchases (user_id, package_id, total_amount, status, created_at, up
 - **Status:** ✅ Verified against schema
 
 ```sql
-SELECT id FROM purchases WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1;
+SELECT id FROM purchases WHERE user_id = ? AND tenant_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1;
 ```
 
 #### Step 5: After successful payment, the processor sends a confirmation webhook to the application's backend.
 
 - **Operation:** CREATE on `payments`
-- **Fields:** `user_id`, `purchase_id`, `transaction_id`, `status`, `amount`, `currency`, `payment_gateway`
+- **Fields:** `purchase_id`, `transaction_id`, `status`, `amount`, `currency`, `payment_gateway`
 - **Status:** ✅ Verified against schema
 
 ```sql
-INSERT INTO payments (user_id, purchase_id, transaction_id, status, amount, currency, payment_gateway, processed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW());
+INSERT INTO payments (purchase_id, transaction_id, status, amount, currency, payment_gateway, processed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW());
 ```
 
-#### Step 6: The system processes the webhook, creates a Subscription or Purchase record, and updates the User's account status to premium.
+#### Step 6: The system credits tokens in the tenant DB (idempotent).
+
+- **Operation:** UPDATE/INSERT on `token_wallets`, `token_transactions`
+- **Fields:** `tenant_id`, `user_id`, `amount`, `provider_transaction_id`, `type`
+- **Status:** ✅ Verified against schema
+
+```sql
+UPDATE token_wallets SET balance = balance + :amount WHERE tenant_id = :tenant_id;
+INSERT INTO token_transactions (tenant_id, user_id, amount, type, provider_transaction_id, created_at, updated_at)
+VALUES (:tenant_id, :user_id, :amount, 'PAYMENT_CREDIT', :provider_transaction_id, NOW(), NOW());
+```
+
+#### Step 7: The system processes the webhook, creates a Subscription record, and updates the User's account status to premium.
 
 - **Operation:** CREATE on `subscriptions`
 - **Fields:** `user_id`, `tier_id`, `package_id`, `external_id`, `status`, `period_start`, `period_end`
@@ -190,7 +202,7 @@ INSERT INTO payments (user_id, purchase_id, transaction_id, status, amount, curr
 INSERT INTO subscriptions (user_id, tier_id, package_id, external_id, status, period_start, period_end, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, NOW(), NOW());
 ```
 
-#### Step 7: The user is redirected back to the Result Page, where premium features are now unlocked.
+#### Step 8: The user is redirected back to the Result Page, where premium features are now unlocked.
 
 - **Operation:** READ on `subscriptions`
 - **Fields:** `user_id`, `status`, `period_end`
@@ -200,7 +212,7 @@ INSERT INTO subscriptions (user_id, tier_id, package_id, external_id, status, pe
 SELECT status FROM subscriptions WHERE user_id = ? AND status = 'active' AND period_end > NOW() ORDER BY created_at DESC LIMIT 1;
 ```
 
-#### Step 8: The user removes the watermark completely and clicks 'Download'.
+#### Step 9: The user removes the watermark completely and clicks 'Download'.
 
 - **Operation:** CREATE on `exports`
 - **Fields:** `user_id`, `video_id`, `status`, `settings`, `watermark_removed`
@@ -210,7 +222,7 @@ SELECT status FROM subscriptions WHERE user_id = ? AND status = 'active' AND per
 INSERT INTO exports (user_id, video_id, status, settings, watermark_removed, created_at, updated_at) VALUES (?, ?, 'pending', ?, TRUE, NOW(), NOW());
 ```
 
-#### Step 9: The system provides the high-resolution, watermark-free video file for download.
+#### Step 10: The system provides the high-resolution, watermark-free video file for download.
 
 - **Operation:** UPDATE on `exports`
 - **Fields:** `id`, `status`, `exported_file_id`
@@ -230,6 +242,8 @@ UPDATE exports SET status = 'completed', exported_file_id = ? WHERE id = ?;
 - **Subscription**
 - **Purchase**
 - **Payment**
+- **TokenWallet**
+- **TokenTransaction**
 
 ### Required Fields
 
@@ -239,12 +253,14 @@ UPDATE exports SET status = 'completed', exported_file_id = ? WHERE id = ?;
 - `Package.id`
 - `Payment.transaction_id`
 - `Payment.status`
-- `Payment.user_id`
+- `Payment.purchase_id`
 - `Subscription.user_id`
 - `Subscription.tier_id`
 - `Subscription.status`
+- `Purchase.tenant_id`
 - `Purchase.user_id`
 - `Purchase.package_id`
+- `TokenTransaction.provider_transaction_id`
 
 ---
 
@@ -401,11 +417,11 @@ SELECT discount_balance FROM users WHERE id = ?;
 #### Step 7: The user completes the payment for the remaining balance.
 
 - **Operation:** CREATE on `purchases`
-- **Fields:** `user_id`, `package_id`, `original_amount`, `applied_discount_amount`, `total_amount`, `status`, `created_at`, `updated_at`
+- **Fields:** `tenant_id`, `user_id`, `package_id`, `original_amount`, `applied_discount_amount`, `total_amount`, `status`, `created_at`, `updated_at`
 - **Status:** ✅ Verified against schema
 
 ```sql
-INSERT INTO purchases (user_id, package_id, original_amount, applied_discount_amount, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', NOW(), NOW());
+INSERT INTO purchases (tenant_id, user_id, package_id, original_amount, applied_discount_amount, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW());
 ```
 
 #### Step 8: The system records the 'Purchase' and creates a new 'CreditTransaction' to debit the redeemed credits from the user's balance.
@@ -436,6 +452,7 @@ UPDATE purchases SET status = 'completed', external_transaction_id = ?, processe
 - `CreditTransaction.amount`
 - `CreditTransaction.type`
 - `Package.id`
+- `Purchase.tenant_id`
 - `Purchase.user_id`
 - `Purchase.package_id`
 - `Purchase.applied_discount_amount`

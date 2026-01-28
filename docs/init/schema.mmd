@@ -10,6 +10,30 @@ erDiagram
     timestamp updated_at
   }
 
+  TOKEN_WALLETS {
+    bigint id PK "Primary key for the token wallet."
+    string tenant_id "Tenant routing key for pooled tenant DBs."
+    bigint user_id FK "The user who owns this wallet."
+    bigint balance "Current token balance."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  TOKEN_TRANSACTIONS {
+    bigint id PK "Primary key for the token transaction."
+    string tenant_id "Tenant routing key for pooled tenant DBs."
+    bigint user_id FK "The user whose balance changed."
+    bigint amount "Token delta (positive = credit, negative = debit)."
+    string type "Transaction type (e.g., PAYMENT_CREDIT, REDEEMED, ADJUSTMENT)."
+    bigint purchase_id FK "Central purchase id associated with this credit."
+    bigint payment_id FK "Central payment id associated with this credit."
+    string provider_transaction_id "Provider transaction id for idempotency."
+    text description
+    json metadata
+    timestamp created_at
+    timestamp updated_at
+  }
+
   GALLERY_VIDEOS {
     bigint id PK "Primary key for the gallery video entry."
     bigint user_id FK "The user who created and published the video."
@@ -24,6 +48,7 @@ erDiagram
 
   PURCHASES {
     bigint id PK "Primary key for the purchase record."
+    string tenant_id "Tenant routing key for pooled tenant DBs."
     bigint user_id FK "The user who made the purchase."
     bigint package_id FK "The package or product that was purchased."
     decimal original_amount "The original price of the package before any discounts."
@@ -101,7 +126,6 @@ erDiagram
 
   PAYMENTS {
     bigint id PK "Primary key for the payment."
-    bigint user_id FK "The user who made the payment."
     bigint purchase_id FK "The purchase record this payment is for."
     string transaction_id UK "The unique transaction identifier from the payment gateway."
     string status "The status of the payment (e.g., pending, completed, failed, refunded)."
@@ -295,13 +319,14 @@ erDiagram
 
   CREDIT_TRANSACTIONS ||--o{ USERS : "belongsTo"
   CREDIT_TRANSACTIONS ||--|| PURCHASES : "belongsTo"
+  TOKEN_WALLETS ||--|| USERS : "belongsTo"
+  TOKEN_TRANSACTIONS ||--o{ USERS : "belongsTo"
   GALLERY_VIDEOS ||--o{ USERS : "belongsTo"
   PURCHASES ||--o{ USERS : "belongsTo"
   USERS }o--o{ DISCOUNTS : "belongsToMany"
   CATEGORIES }o--o{ EFFECTS : "belongsToMany"
   TIERS ||--o{ SUBSCRIPTIONS : "hasMany"
   ALGORITHMS }o--o{ EFFECTS : "belongsToMany"
-  PAYMENTS ||--o{ USERS : "belongsTo"
   PAYMENTS ||--|| PURCHASES : "belongsTo"
   FILTERS ||--o{ CATEGORIES : "belongsTo"
   VIDEOS ||--o{ USERS : "belongsTo"

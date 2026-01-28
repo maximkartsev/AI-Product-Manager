@@ -7,15 +7,17 @@ A user attempts a premium action (remove watermark / premium export), pays, gain
 ## Entities
 
 - Tier/Package (GLOBAL)
-- Purchase (USER_PRIVATE)
-- Payment (USER_PRIVATE)
-- Subscription (USER_PRIVATE)
+- Purchase (CENTRAL)
+- Payment (CENTRAL)
+- Subscription (CENTRAL)
+- TokenWallet/TokenTransaction (TENANT)
 - Export (USER_PRIVATE)
 
 ## Backend contracts
 
 - Premium action triggers upgrade flow
-- Webhooks update purchase/payment/subscription states
+- Webhooks update purchase/payment/subscription states in the central DB
+- On payment success, webhook credits tokens in the tenant DB (idempotent)
 - Export checks entitlement (subscription/credits) before producing clean output
 
 ## Seed reference

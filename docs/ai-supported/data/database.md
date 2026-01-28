@@ -11,10 +11,14 @@ This file adds **implementation rules** for the project’s multi-DB tenancy arc
 ## Persistence zones (authoritative)
 
 This project uses **subdomain-based multi-tenancy**, where **each user is a tenant**.
+Many tenants share the same **pooled tenant DB**; isolation is enforced by `tenant_id` in each
+tenant table and Stancl’s `BelongsToTenant` scoping.
 
 - **Central DB (shared; no tenant init required)**
   - Hosts **GLOBAL** + **USER_SHARED** product data and the public “Explore/Gallery”.
   - Hosts tenancy metadata (`tenants`, `domains`) and auth (`users`, `personal_access_tokens`).
+  - Hosts **payment/billing** entities (`purchases`, `payments`, `subscriptions`) for global
+    settlement and webhook safety.
   - Hosts infra tables like `jobs`/`failed_jobs`/`cache` (so queues & cache stay stable regardless of tenant DB routing).
 
 - **Tenant pool DBs (sharded; tenant init required)**
@@ -64,6 +68,9 @@ This project uses **subdomain-based multi-tenancy**, where **each user is a tena
 | `overlays` | GLOBAL | central | Public/catalog. |
 | `watermarks` | GLOBAL | central | Public/catalog. |
 | `gallery_videos` | USER_SHARED | central | **Denormalized** public content. Must be readable without tenant init; no cross-DB joins. |
+| `purchases` | USER_PRIVATE | central | Central billing record; includes `tenant_id` + `user_id`. |
+| `payments` | USER_PRIVATE | central | Linked to `purchase_id` only; no `user_id`. Token credit happens in tenant DB after success. |
+| `subscriptions` | USER_PRIVATE | central | Subscription state is centralized for billing + renewals. |
 
 ### Tenant pool DB tables
 
@@ -75,12 +82,11 @@ All tenant-pool tables MUST include:
 | Table | Scope | Placement | Required rules |
 |------|-------|-----------|----------------|
 | `credit_transactions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. `user_id` must match the tenant’s central `user_id`. |
-| `purchases` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. External IDs must be globally unique across pools. |
-| `payments` | TENANT | tenant-pool | Requires `tenant_id`. Webhooks must initialize tenancy from request data (not subdomain). |
+| `token_wallets` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. One wallet per tenant; `user_id` matches the tenant’s central user. |
+| `token_transactions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. Append-only ledger; idempotent by provider transaction id. |
 | `videos` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. `effect_id` references central catalog (no FK). |
 | `exports` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. |
 | `rewards` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. |
-| `subscriptions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. |
 | `files` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. Store S3 metadata; public URLs are denormalized into `gallery_videos` on publish. |
 
 ## Cross-DB denormalization (public gallery)

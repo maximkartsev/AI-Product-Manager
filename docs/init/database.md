@@ -9,6 +9,8 @@
 1. [Coverage Summary](#coverage-summary)
 2. [Entity Definitions](#entity-definitions)
    - [CreditTransaction](#credittransaction)
+   - [TokenWallet](#tokenwallet)
+   - [TokenTransaction](#tokentransaction)
    - [GalleryVideo](#galleryvideo)
    - [Purchase](#purchase)
    - [User](#user)
@@ -43,6 +45,8 @@
 | Entity | Table | Coverage Type | Plugin/Package | Migration Action |
 |--------|-------|---------------|----------------|------------------|
 | CreditTransaction | `credit_transactions` | CUSTOM | `N/A` | **create** |
+| TokenWallet | `token_wallets` | CUSTOM | `N/A` | **create** |
+| TokenTransaction | `token_transactions` | CUSTOM | `N/A` | **create** |
 | GalleryVideo | `gallery_videos` | CUSTOM | `N/A` | **create** |
 | Purchase | `purchases` | CUSTOM | `N/A` | **create** |
 | User | `users` | CUSTOM | `N/A` | **create** |
@@ -95,7 +99,7 @@
 | `amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The amount of credits transacted. Positive for earning, negative for redeeming. |
 | `type` | ENUM | enum | NOT NULL, INDEXED | The type of transaction (e.g., EARNED, REDEEMED, ADJUSTMENT). |
 | `description` | TEXT | text | - | A description of the transaction, e.g., 'Earned from creating video #123'. |
-| `related_purchase_id` | BIGINT | foreign_id | **FK** → `purchases.id`, INDEXED | Links a redemption transaction to the specific purchase it was applied to. |
+| `related_purchase_id` | BIGINT | foreign_id | **REF** → `purchases.id`, INDEXED | Links a redemption transaction to the central purchase (no cross-DB FK). |
 | `created_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
 | `updated_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
 
@@ -107,6 +111,76 @@
 
 - **belongsTo()**: One-to-Many (hasMany/belongsTo) → `User`
 - **belongsTo()**: One-to-One (hasOne/belongsTo) → `Purchase`
+
+---
+
+### TokenWallet
+
+> Tracks the token balance for a tenant (1 user = 1 tenant). Stored in pooled tenant DBs and scoped by `tenant_id`.
+
+**Table:** `token_wallets`  
+**Scope:** USER_PRIVATE  
+**Storage Class:** SOURCE_OF_TRUTH  
+**Lifecycle:** PERSISTENT  
+**Owner Entity:** User  
+
+#### Fields
+
+| Field | Type | Laravel Type | Constraints | Description |
+|-------|------|--------------|-------------|-------------|
+| `id` | BIGINT | id | **PK**, NOT NULL, INDEXED | Primary key for the token wallet. |
+| `tenant_id` | STRING | string | UNIQUE, NOT NULL, INDEXED | Tenant routing key for pooled tenant DBs. |
+| `user_id` | BIGINT | foreign_id | NOT NULL, INDEXED | The user who owns this wallet (central `users.id`, no cross-DB FK). |
+| `balance` | BIGINT | unsigned_big_integer | NOT NULL, DEFAULT `0` | Current token balance. |
+| `created_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+| `updated_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+
+#### Indexes
+
+- **token_wallets_tenant_id_unique** (UNIQUE): `tenant_id`
+- **token_wallets_tenant_id_user_id_index**: `tenant_id, user_id`
+
+#### Eloquent Relationships
+
+- **belongsTo()**: One-to-Many (hasMany/belongsTo) → `User`
+
+---
+
+### TokenTransaction
+
+> Append-only ledger of token changes (earn, redeem, adjust). Used for auditability and idempotent webhook crediting.
+
+**Table:** `token_transactions`  
+**Scope:** USER_PRIVATE  
+**Storage Class:** EVENT_LOG  
+**Lifecycle:** PERSISTENT  
+**Owner Entity:** User  
+
+#### Fields
+
+| Field | Type | Laravel Type | Constraints | Description |
+|-------|------|--------------|-------------|-------------|
+| `id` | BIGINT | id | **PK**, NOT NULL, INDEXED | Primary key for the token transaction. |
+| `tenant_id` | STRING | string | NOT NULL, INDEXED | Tenant routing key for pooled tenant DBs. |
+| `user_id` | BIGINT | foreign_id | NOT NULL, INDEXED | The user whose balance changed (central `users.id`, no cross-DB FK). |
+| `amount` | BIGINT | bigInteger | NOT NULL | Token delta (positive = credit, negative = debit). |
+| `type` | STRING | string(50) | NOT NULL, INDEXED | Transaction type (e.g., PAYMENT_CREDIT, REDEEMED, ADJUSTMENT). |
+| `purchase_id` | BIGINT | foreign_id | NULLABLE, INDEXED | Central `purchases.id` associated with this credit (no cross-DB FK). |
+| `payment_id` | BIGINT | foreign_id | NULLABLE, INDEXED | Central `payments.id` associated with this credit (no cross-DB FK). |
+| `provider_transaction_id` | STRING | string | NOT NULL, INDEXED | Provider transaction id for idempotency. |
+| `description` | TEXT | text | NULLABLE | Human-readable description. |
+| `metadata` | JSON | json | NULLABLE | Provider payload snapshot or extra context. |
+| `created_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+| `updated_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+
+#### Indexes
+
+- **token_transactions_tenant_provider_unique** (UNIQUE): `tenant_id, provider_transaction_id`
+- **token_transactions_tenant_user_index**: `tenant_id, user_id`
+
+#### Eloquent Relationships
+
+- **belongsTo()**: One-to-Many (hasMany/belongsTo) → `User`
 
 ---
 
@@ -160,7 +234,8 @@
 | Field | Type | Laravel Type | Constraints | Description |
 |-------|------|--------------|-------------|-------------|
 | `id` | BIGINT | id | **PK**, NOT NULL, INDEXED | Primary key for the purchase record. |
-| `user_id` | BIGINT | foreign_id_constrained | **FK** → `users.id`, NOT NULL, INDEXED | The user who made the purchase. |
+| `tenant_id` | STRING | string | NOT NULL, INDEXED | Tenant routing key for pooled tenant DBs (matches `tenants.id`). |
+| `user_id` | BIGINT | foreign_id_constrained | **FK** → `users.id`, NOT NULL, INDEXED | The user who made the purchase (used for token credit routing). |
 | `package_id` | BIGINT | foreign_id_constrained | **FK** → `packages.id`, NOT NULL, INDEXED | The package or product that was purchased. |
 | `original_amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The original price of the package before any discounts. |
 | `applied_discount_amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The amount of loyalty credits or discount code value applied to this purchase. |
@@ -173,7 +248,8 @@
 
 #### Eloquent Relationships
 
-- **hasOne()**: One-to-One (hasOne/belongsTo) → `CreditTransaction`
+- **hasOne()**: One-to-One (hasOne/belongsTo) → `CreditTransaction` (cross-DB, no FK)
+- **hasOne()**: One-to-One (hasOne/belongsTo) → `Payment`
 - **belongsTo()**: One-to-Many (hasMany/belongsTo) → `User`
 
 ---
@@ -360,17 +436,16 @@
 > Records a financial transaction for a purchase or subscription, tracking status and payment provider details.
 
 **Table:** `payments`  
-**Scope:** TENANT  
+**Scope:** USER_PRIVATE  
 **Storage Class:** SOURCE_OF_TRUTH  
 **Lifecycle:** PERSISTENT  
-**Owner Entity:** User  
+**Owner Entity:** Purchase  
 
 #### Fields
 
 | Field | Type | Laravel Type | Constraints | Description |
 |-------|------|--------------|-------------|-------------|
 | `id` | BIGINT | id | **PK**, UNIQUE, NOT NULL, INDEXED | Primary key for the payment. |
-| `user_id` | BIGINT | foreign_id_constrained | **FK** → `users.id`, NOT NULL, INDEXED | The user who made the payment. |
 | `purchase_id` | BIGINT | foreign_id_constrained | **FK** → `purchases.id`, NOT NULL, INDEXED | The purchase record this payment is for. |
 | `transaction_id` | STRING | string | UNIQUE, NOT NULL, INDEXED | The unique transaction identifier from the payment gateway. |
 | `status` | STRING | string(50) | NOT NULL, DEFAULT `pending`, INDEXED | The status of the payment (e.g., pending, completed, failed, refunded). |
@@ -388,7 +463,6 @@
 
 #### Eloquent Relationships
 
-- **belongsTo()**: One-to-Many (hasMany/belongsTo) → `User`
 - **belongsTo()**: One-to-One (hasOne/belongsTo) → `Purchase`
 
 ---
@@ -884,6 +958,13 @@
   FK: `user_id`  
   ⚠️ CASCADE DELETE
 
+- **TokenTransaction**::belongsTo() → **User** (through ``)  
+  FK: `user_id`
+
+- **User**::hasMany() → **TokenTransaction** (through ``)  
+  FK: `user_id`  
+  ⚠️ CASCADE DELETE
+
 - **GalleryVideo**::belongsTo() → **User** (through ``)  
   FK: `user_id`
 
@@ -900,9 +981,6 @@
 
 - **Tier**::hasMany() → **Subscription** (through ``)  
   FK: `tier_id`
-
-- **Payment**::belongsTo() → **User** (through `null`)  
-  FK: `user_id`
 
 - **Filter**::belongsTo() → **Category** (through `null`)  
   FK: `category_id`
@@ -992,6 +1070,12 @@
 
 ### One-to-One (hasOne/belongsTo)
 
+- **TokenWallet**::belongsTo() → **User** (through ``)  
+  FK: `user_id`
+
+- **User**::hasOne() → **TokenWallet** (through ``)  
+  FK: `user_id`
+
 - **CreditTransaction**::belongsTo() → **Purchase** (through ``)  
   FK: `related_purchase_id`
 
@@ -1000,6 +1084,9 @@
   ⚠️ CASCADE DELETE
 
 - **Payment**::belongsTo() → **Purchase** (through `null`)  
+  FK: `purchase_id`
+
+- **Purchase**::hasOne() → **Payment** (through `null`)  
   FK: `purchase_id`
 
 - **Video**::belongsTo() → **File** (through `null`)  
@@ -1037,6 +1124,23 @@
 - Field index on `id`
 - Field index on `type`
 
+#### token_wallets
+
+- `token_wallets_tenant_id_unique` **UNIQUE**: tenant_id (BTREE)
+- `token_wallets_tenant_id_user_id_index`: tenant_id, user_id (BTREE)
+- Field index on `id`
+- Field index on `tenant_id`
+- Field index on `user_id`
+
+#### token_transactions
+
+- `token_transactions_tenant_provider_unique` **UNIQUE**: tenant_id, provider_transaction_id (BTREE)
+- `token_transactions_tenant_user_index`: tenant_id, user_id (BTREE)
+- Field index on `id`
+- Field index on `tenant_id`
+- Field index on `user_id`
+- Field index on `type`
+
 #### gallery_videos
 
 - `gallery_videos_is_public_created_at_index`: is_public, created_at (BTREE)
@@ -1047,6 +1151,8 @@
 #### purchases
 
 - Field index on `id`
+- Field index on `tenant_id`
+- Field index on `user_id`
 - Field index on `status`
 - Field index on `external_transaction_id`
 
@@ -1210,12 +1316,13 @@
 ## Schema Remarks
 
 - Schema generated from PCD analysis
-- Total entities: 22
-- Total relationships: 43
-- Coverage mapped: 22 entities
+- Total entities: 24
+- Total relationships: 45
+- Coverage mapped: 24 entities
 - The system distinguishes between two types of discounts: user-specific loyalty credits stored in `users.discount_balance` and tracked via `credit_transactions`, and global promotional codes managed in the `discounts` table. Purchases can apply amounts from either or both sources.
+- Token balances are stored in tenant DBs (`token_wallets`) with an append-only ledger (`token_transactions`) and are credited after payment success (idempotent).
 - Foreign key constraints assume the existence of `videos` and `packages` tables, which were not part of this request but are required for the defined relationships to be valid.
-- The 'Payment' entity assumes the existence of a 'users' table and a 'purchases' table for foreign key constraints.
+- The 'Payment' entity assumes the existence of a 'purchases' table; user linkage is derived from the purchase record (no `payments.user_id`).
 - Monetary values are stored using DECIMAL(10, 2) for precision.
 - All entities requiring it have soft deletes enabled to preserve data integrity upon deletion.
 - The 'Model' entity has been named 'AiModel' with a table name of 'models' to avoid conflicts with the reserved 'Model' keyword in the Laravel framework.
@@ -1317,6 +1424,91 @@ $creditTransactions = CreditTransaction::query()
 
 ---
 
+### TokenWallet
+
+**Basic Retrieval**
+
+```sql
+-- Get token wallet by tenant
+SELECT * FROM token_wallets
+WHERE tenant_id = :tenant_id
+LIMIT 1;
+```
+
+```php
+// Laravel Eloquent
+$wallet = TokenWallet::query()
+    ->where('tenant_id', $tenantId)
+    ->first();
+```
+
+**Find by ID**
+
+```sql
+SELECT * FROM token_wallets
+WHERE id = :id;
+```
+
+```php
+$wallet = TokenWallet::findOrFail($id);
+```
+
+**With Relationships**
+
+```php
+// Eager load relationships
+$wallets = TokenWallet::query()
+    ->with(['belongsTo'])
+    ->get();
+```
+
+---
+
+### TokenTransaction
+
+**Basic Retrieval**
+
+```sql
+-- Get all TokenTransactions with pagination
+SELECT * FROM token_transactions
+WHERE tenant_id = :tenant_id AND user_id = :user_id
+ORDER BY created_at DESC
+LIMIT 20 OFFSET 0;
+```
+
+```php
+// Laravel Eloquent
+$tokenTransactions = TokenTransaction::query()
+    ->where('tenant_id', $tenantId)
+    ->where('user_id', $userId)
+    ->orderBy('created_at', 'desc')
+    ->paginate(20);
+```
+
+**Find by ID**
+
+```sql
+SELECT * FROM token_transactions
+WHERE id = :id;
+```
+
+```php
+$tokenTransaction = TokenTransaction::findOrFail($id);
+```
+
+**Search Query**
+
+```php
+// Search across text fields
+$tokenTransactions = TokenTransaction::query()
+    ->where(function ($query) use ($search) {
+        $query->where('description', 'like', "%{$search}%");
+    })
+    ->get();
+```
+
+---
+
 ### GalleryVideo
 
 **Basic Retrieval**
@@ -1376,7 +1568,7 @@ $galleryVideos = GalleryVideo::query()
 ```sql
 -- Get all Purchases with pagination
 SELECT * FROM purchases
-WHERE user_id = :user_id
+WHERE user_id = :user_id AND tenant_id = :tenant_id
 ORDER BY created_at DESC
 LIMIT 20 OFFSET 0;
 ```
@@ -1385,6 +1577,7 @@ LIMIT 20 OFFSET 0;
 // Laravel Eloquent
 $purchases = Purchase::query()
     ->where('user_id', $userId)
+    ->where('tenant_id', $tenantId)
     ->orderBy('created_at', 'desc')
     ->paginate(20);
 ```
@@ -1696,7 +1889,7 @@ $algorithms = Algorithm::query()
 ```sql
 -- Get all Payments with pagination
 SELECT * FROM payments
-WHERE tenant_id = :tenant_id
+WHERE purchase_id = :purchase_id
 ORDER BY created_at DESC
 LIMIT 20 OFFSET 0;
 ```
@@ -1704,7 +1897,7 @@ LIMIT 20 OFFSET 0;
 ```php
 // Laravel Eloquent
 $payments = Payment::query()
-    ->where('tenant_id', $tenantId)
+    ->where('purchase_id', $purchaseId)
     ->orderBy('created_at', 'desc')
     ->paginate(20);
 ```
@@ -1725,7 +1918,7 @@ $payment = Payment::findOrFail($id);
 ```php
 // Eager load relationships
 $payments = Payment::query()
-    ->with(['belongsTo', 'belongsTo'])
+    ->with(['belongsTo'])
     ->get();
 ```
 

@@ -5,7 +5,6 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\EnsureTenantMatchesUser;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
-use Stancl\Tenancy\Middleware\InitializeTenancyByRequestData;
 use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
 use \App\Http\Controllers\RecordController as RecordController;
 use \App\Http\Controllers\ArticleController as ArticleController;
@@ -31,9 +30,8 @@ Route::post('password/reset/confirm', [PasswordController::class,'reset']);
 Route::get('effects', [EffectController::class,'index']);
 Route::get('effects/{slugOrId}', [EffectController::class,'show']);
 
-// Central-domain webhooks that still require tenant context (initialized from request data).
-Route::post('webhooks/payments', [PaymentWebhookController::class, 'handle'])
-    ->middleware([InitializeTenancyByRequestData::class]);
+// Central-domain webhooks (tenant is resolved from the central purchase record).
+Route::post('webhooks/payments', [PaymentWebhookController::class, 'handle']);
 
 /**
  * Tenant routes (tenant resolved by domain/subdomain).

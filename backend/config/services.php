@@ -35,4 +35,18 @@ return [
         ],
     ],
 
+    'comfyui' => [
+        'worker_token' => env('COMFYUI_WORKER_TOKEN'),
+        'lease_ttl_seconds' => env('COMFYUI_LEASE_TTL_SECONDS', 900),
+        'max_attempts' => env('COMFYUI_MAX_ATTEMPTS', 3),
+        'presigned_ttl_seconds' => env('COMFYUI_PRESIGNED_TTL_SECONDS', 900),
+        'upload_max_bytes' => env('COMFYUI_UPLOAD_MAX_BYTES', 1073741824),
+        'allowed_mime_types' => [
+            'video/mp4',
+            'video/quicktime',
+            'video/webm',
+            'video/x-matroska',
+        ],
+    ],
+
 ];

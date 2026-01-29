@@ -3,6 +3,8 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\EnsureTenantMatchesUser;
+use App\Http\Middleware\EnsureWorkerToken;
+use App\Http\Controllers\ComfyUiWorkerController;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
 use App\Http\Controllers\AiJobController;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
@@ -18,6 +20,7 @@ use \App\Http\Controllers\PasswordController as PasswordController;
 use \App\Http\Controllers\ReviewController as ReviewController;
 use \App\Http\Controllers\MeController as MeController;
 use \App\Http\Controllers\EffectController as EffectController;
+use \App\Http\Controllers\VideoController as VideoController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -34,6 +37,14 @@ Route::get('effects/{slugOrId}', [EffectController::class,'show']);
 // Central-domain webhooks (tenant is resolved from the central purchase record).
 Route::post('webhooks/payments', [PaymentWebhookController::class, 'handle']);
 
+// Worker endpoints (central, token-protected).
+Route::middleware([EnsureWorkerToken::class])->prefix('worker')->group(function () {
+    Route::post('poll', [ComfyUiWorkerController::class, 'poll']);
+    Route::post('heartbeat', [ComfyUiWorkerController::class, 'heartbeat']);
+    Route::post('complete', [ComfyUiWorkerController::class, 'complete']);
+    Route::post('fail', [ComfyUiWorkerController::class, 'fail']);
+});
+
 /**
  * Tenant routes (tenant resolved by domain/subdomain).
  */
@@ -47,6 +58,10 @@ Route::middleware([
     Route::post('/me', [MeController::class,'update']);
 
     Route::post('/ai-jobs', [AiJobController::class, 'store']);
+    Route::post('/videos/uploads', [VideoController::class, 'createUpload']);
+    Route::post('/videos', [VideoController::class, 'store']);
+    Route::post('/videos/{video}/publish', [VideoController::class, 'publish']);
+    Route::post('/videos/{video}/unpublish', [VideoController::class, 'unpublish']);
 
     Route::resource('records', RecordController::class)->except(['edit']);
     Route::resource('articles', ArticleController::class)->except(['edit']);

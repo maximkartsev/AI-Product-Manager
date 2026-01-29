@@ -3,8 +3,8 @@
 namespace App\Jobs;
 
 use App\Models\AiJob;
+use App\Models\AiJobDispatch;
 use App\Models\Tenant;
-use App\Services\TokenLedgerService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -22,7 +22,7 @@ class ProcessAiJob implements ShouldQueue
     ) {
     }
 
-    public function handle(TokenLedgerService $ledger): void
+    public function handle(): void
     {
         $tenant = Tenant::query()->whereKey($this->tenantId)->first();
         if (!$tenant) {
@@ -42,26 +42,15 @@ class ProcessAiJob implements ShouldQueue
                 return;
             }
 
-            $job->status = 'processing';
-            $job->started_at = $job->started_at ?: now();
-            $job->save();
-
-            // TODO: invoke AI provider and update job details.
-            $job->status = 'completed';
-            $job->completed_at = now();
-            $job->save();
-
-            $ledger->consumeForJob($job, ['source' => 'process_ai_job']);
+            AiJobDispatch::query()->firstOrCreate([
+                'tenant_id' => (string) $job->tenant_id,
+                'tenant_job_id' => $job->id,
+            ], [
+                'status' => 'queued',
+                'priority' => 0,
+                'attempts' => 0,
+            ]);
         } catch (\Throwable $e) {
-            $job = AiJob::query()->find($this->jobId);
-            if ($job) {
-                $job->status = 'failed';
-                $job->error_message = $e->getMessage();
-                $job->completed_at = now();
-                $job->save();
-
-                $ledger->refundForJob($job, ['source' => 'process_ai_job']);
-            }
             throw $e;
         } finally {
             $tenancy->end();

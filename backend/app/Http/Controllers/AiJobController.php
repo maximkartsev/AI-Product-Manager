@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Jobs\ProcessAiJob;
 use App\Models\AiJob;
+use App\Models\AiJobDispatch;
 use App\Models\Effect;
+use App\Models\File;
+use App\Models\Video;
 use App\Services\TokenLedgerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,7 +21,10 @@ class AiJobController extends BaseController
         $validator = Validator::make($request->all(), [
             'effect_id' => 'numeric|required|exists:effects,id',
             'idempotency_key' => 'string|required|max:255',
+            'video_id' => 'numeric|nullable',
+            'input_file_id' => 'numeric|nullable',
             'input_payload' => 'array|nullable',
+            'priority' => 'numeric|nullable',
         ]);
 
         if ($validator->fails()) {
@@ -34,7 +39,13 @@ class AiJobController extends BaseController
         $idempotencyKey = (string) $request->input('idempotency_key');
         $existing = AiJob::query()->where('idempotency_key', $idempotencyKey)->first();
         if ($existing) {
-            return $this->sendResponse($existing, 'Job already submitted');
+            $dispatch = null;
+            if (in_array($existing->status, ['queued', 'processing'], true)) {
+                $dispatch = $this->ensureDispatch($existing, (int) $request->input('priority', 0));
+            }
+            return $this->sendResponse($existing, 'Job already submitted', [
+                'dispatch_id' => $dispatch?->id,
+            ]);
         }
 
         $effect = Effect::query()->find($request->input('effect_id'));
@@ -43,12 +54,48 @@ class AiJobController extends BaseController
         }
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
+        $videoId = $request->input('video_id');
+        $inputFileId = $request->input('input_file_id');
+
+        if (!$videoId && !$inputFileId) {
+            return $this->sendError('Input file is required.', [], 422);
+        }
+
+        $resolvedVideoId = null;
+        if ($videoId) {
+            $video = Video::query()->find((int) $videoId);
+            if (!$video) {
+                return $this->sendError('Video not found.', [], 404);
+            }
+            if ((int) $video->user_id !== (int) $user->id) {
+                return $this->sendError('Video ownership mismatch.', [], 403);
+            }
+            if (!$inputFileId) {
+                $inputFileId = $video->original_file_id;
+            }
+            if (!$inputFileId) {
+                return $this->sendError('Input file is required.', [], 422);
+            }
+            $resolvedVideoId = $video->id;
+        }
+
+        if ($inputFileId) {
+            $inputFile = File::query()->find((int) $inputFileId);
+            if (!$inputFile) {
+                return $this->sendError('File not found.', [], 404);
+            }
+            if ((int) $inputFile->user_id !== (int) $user->id) {
+                return $this->sendError('File ownership mismatch.', [], 403);
+            }
+        }
 
         try {
-            $job = DB::connection('tenant')->transaction(function () use ($request, $user, $tokenCost, $ledger, $idempotencyKey) {
+            $job = DB::connection('tenant')->transaction(function () use ($request, $user, $tokenCost, $ledger, $idempotencyKey, $inputFileId, $resolvedVideoId) {
                 $aiJob = AiJob::query()->create([
                     'user_id' => $user->id,
                     'effect_id' => (int) $request->input('effect_id'),
+                    'video_id' => $resolvedVideoId,
+                    'input_file_id' => $inputFileId,
                     'status' => 'queued',
                     'idempotency_key' => $idempotencyKey,
                     'requested_tokens' => $tokenCost,
@@ -83,8 +130,37 @@ class AiJobController extends BaseController
             throw $e;
         }
 
-        ProcessAiJob::dispatch((string) $job->tenant_id, $job->id);
+        $dispatch = $this->ensureDispatch($job, (int) $request->input('priority', 0));
 
-        return $this->sendResponse($job, 'Job queued');
+        return $this->sendResponse($job, 'Job queued', [
+            'dispatch_id' => $dispatch?->id,
+        ]);
+    }
+
+    private function ensureDispatch(AiJob $job, int $priority = 0): ?AiJobDispatch
+    {
+        try {
+            return AiJobDispatch::query()->firstOrCreate([
+                'tenant_id' => (string) $job->tenant_id,
+                'tenant_job_id' => $job->id,
+            ], [
+                'status' => 'queued',
+                'priority' => $priority,
+                'attempts' => 0,
+            ]);
+        } catch (\Throwable $e) {
+            $job->status = 'failed';
+            $job->error_message = 'Failed to enqueue job for dispatch.';
+            $job->completed_at = now();
+            $job->save();
+
+            try {
+                app(TokenLedgerService::class)->refundForJob($job, ['source' => 'dispatch_enqueue']);
+            } catch (\Throwable $ledgerError) {
+                // ignore refund failures to avoid masking dispatch errors
+            }
+
+            return null;
+        }
     }
 }

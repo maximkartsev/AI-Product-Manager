@@ -42,12 +42,14 @@ class AiJobSubmissionTest extends TestCase
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
         $effect = $this->createEffect(10.0);
         $this->seedWallet($tenant->id, $user->id, 25);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
 
         Sanctum::actingAs($user);
 
         $payload = [
             'effect_id' => $effect->id,
             'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
             'input_payload' => ['prompt' => 'hello'],
         ];
 
@@ -74,12 +76,14 @@ class AiJobSubmissionTest extends TestCase
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
         $effect = $this->createEffect(50.0);
         $this->seedWallet($tenant->id, $user->id, 10);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
 
         Sanctum::actingAs($user);
 
         $payload = [
             'effect_id' => $effect->id,
             'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
         ];
 
         $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
@@ -127,6 +131,21 @@ class AiJobSubmissionTest extends TestCase
             'tenant_id' => $tenantId,
             'user_id' => $userId,
             'balance' => $balance,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createTenantFile(string $tenantId, int $userId): int
+    {
+        return (int) DB::connection('tenant_pool_1')->table('files')->insertGetId([
+            'tenant_id' => $tenantId,
+            'user_id' => $userId,
+            'disk' => 'local',
+            'path' => 'uploads/' . uniqid() . '.mp4',
+            'mime_type' => 'video/mp4',
+            'size' => 1234,
+            'original_filename' => 'input.mp4',
             'created_at' => now(),
             'updated_at' => now(),
         ]);

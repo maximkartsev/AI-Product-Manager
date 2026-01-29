@@ -1,0 +1,235 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Effect;
+use App\Models\File;
+use App\Models\GalleryVideo;
+use App\Models\Video;
+use App\Services\PresignedUrlService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+
+class VideoController extends BaseController
+{
+    private const DEFAULT_ALLOWED_MIME_TYPES = [
+        'video/mp4',
+        'video/quicktime',
+        'video/webm',
+        'video/x-matroska',
+    ];
+
+    public function createUpload(Request $request, PresignedUrlService $presigned): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'mime_type' => 'string|required|max:255',
+            'size' => 'integer|required|min:1',
+            'original_filename' => 'string|required|max:512',
+            'file_hash' => 'string|nullable|max:128',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $mimeType = strtolower((string) $request->input('mime_type'));
+        $allowed = (array) config('services.comfyui.allowed_mime_types', self::DEFAULT_ALLOWED_MIME_TYPES);
+        if (!in_array($mimeType, $allowed, true)) {
+            return $this->sendError('Unsupported mime type.', [
+                'mime_type' => $mimeType,
+            ], 422);
+        }
+
+        $maxBytes = (int) config('services.comfyui.upload_max_bytes', 1024 * 1024 * 1024);
+        $size = (int) $request->input('size');
+        if ($size > $maxBytes) {
+            return $this->sendError('File too large.', [
+                'max_bytes' => $maxBytes,
+            ], 422);
+        }
+
+        $originalFilename = (string) $request->input('original_filename');
+        if (!$this->isSafeFilename($originalFilename)) {
+            return $this->sendError('Invalid filename.', [], 422);
+        }
+
+        $extension = $this->resolveExtension($originalFilename, $mimeType);
+        $tenantId = (string) tenant()->getKey();
+        $path = sprintf(
+            'tenants/%s/uploads/%s.%s',
+            $tenantId,
+            (string) Str::uuid(),
+            $extension
+        );
+
+        $disk = (string) config('filesystems.default', 's3');
+        $file = File::query()->create([
+            'tenant_id' => $tenantId,
+            'user_id' => (int) $request->user()->id,
+            'disk' => $disk,
+            'path' => $path,
+            'mime_type' => $mimeType,
+            'size' => $size,
+            'original_filename' => $originalFilename,
+            'file_hash' => $request->input('file_hash'),
+        ]);
+
+        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+
+        try {
+            $upload = $presigned->uploadUrl($disk, $path, $ttlSeconds, $mimeType);
+        } catch (\Throwable $e) {
+            $file->delete();
+            return $this->sendError('Upload URL generation failed.', [], 500);
+        }
+
+        return $this->sendResponse([
+            'file' => $file,
+            'upload_url' => $upload['url'] ?? null,
+            'upload_headers' => $upload['headers'] ?? [],
+            'expires_in' => $ttlSeconds,
+        ], 'Upload initialized');
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'effect_id' => 'numeric|required|exists:effects,id',
+            'original_file_id' => 'numeric|required',
+            'title' => 'string|nullable|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $file = File::query()->find((int) $request->input('original_file_id'));
+        if (!$file) {
+            return $this->sendError('File not found.', [], 404);
+        }
+
+        if ((int) $file->user_id !== (int) $request->user()->id) {
+            return $this->sendError('File ownership mismatch.', [], 403);
+        }
+
+        $expiresAt = data_get($file->metadata, 'expires_at');
+        if ($expiresAt && now()->gte(\Carbon\Carbon::parse($expiresAt))) {
+            return $this->sendError('File has expired.', [], 422);
+        }
+
+        $effect = Effect::query()->find((int) $request->input('effect_id'));
+        if (!$effect) {
+            return $this->sendError('Effect not found.', [], 404);
+        }
+
+        $video = Video::query()->create([
+            'tenant_id' => (string) tenant()->getKey(),
+            'user_id' => (int) $request->user()->id,
+            'effect_id' => $effect->id,
+            'original_file_id' => $file->id,
+            'title' => $request->input('title'),
+            'status' => 'queued',
+            'is_public' => false,
+        ]);
+
+        return $this->sendResponse($video, 'Video created');
+    }
+
+    public function publish(Request $request, Video $video): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'title' => 'string|nullable|max:255',
+            'tags' => 'array|nullable',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        if ((int) $video->user_id !== (int) $request->user()->id) {
+            return $this->sendError('Video ownership mismatch.', [], 403);
+        }
+
+        if ($video->status !== 'completed') {
+            return $this->sendError('Video is not processed yet.', [], 422);
+        }
+
+        $file = $video->processed_file_id ? File::query()->find($video->processed_file_id) : null;
+        if (!$file || !$file->url) {
+            return $this->sendError('Processed file is missing.', [], 422);
+        }
+
+        $title = (string) ($request->input('title') ?: $video->title ?: 'Untitled');
+        $tags = $request->input('tags');
+
+        $gallery = GalleryVideo::withTrashed()->updateOrCreate([
+            'tenant_id' => (string) $video->tenant_id,
+            'video_id' => $video->id,
+        ], [
+            'user_id' => $video->user_id,
+            'effect_id' => $video->effect_id,
+            'title' => $title,
+            'tags' => $tags,
+            'is_public' => true,
+            'processed_file_url' => $file->url,
+            'thumbnail_url' => data_get($video->processing_details, 'thumbnail_url'),
+        ]);
+
+        if ($gallery->trashed()) {
+            $gallery->restore();
+        }
+
+        $video->is_public = true;
+        $video->save();
+
+        return $this->sendResponse($gallery, 'Video published');
+    }
+
+    public function unpublish(Request $request, Video $video): JsonResponse
+    {
+        if ((int) $video->user_id !== (int) $request->user()->id) {
+            return $this->sendError('Video ownership mismatch.', [], 403);
+        }
+
+        GalleryVideo::query()
+            ->where('tenant_id', (string) $video->tenant_id)
+            ->where('video_id', $video->id)
+            ->update(['is_public' => false]);
+
+        $video->is_public = false;
+        $video->save();
+
+        return $this->sendResponse($video, 'Video unpublished');
+    }
+
+    private function isSafeFilename(string $filename): bool
+    {
+        if ($filename === '') {
+            return false;
+        }
+
+        if (Str::contains($filename, ['..', '/', '\\'])) {
+            return false;
+        }
+
+        return basename($filename) === $filename;
+    }
+
+    private function resolveExtension(string $filename, string $mimeType): string
+    {
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        if ($extension !== '') {
+            return $extension;
+        }
+
+        return match ($mimeType) {
+            'video/mp4' => 'mp4',
+            'video/quicktime' => 'mov',
+            'video/webm' => 'webm',
+            'video/x-matroska' => 'mkv',
+            default => 'bin',
+        };
+    }
+}

@@ -17,7 +17,7 @@ tenant table and Stancl’s `BelongsToTenant` scoping.
 - **Central DB (shared; no tenant init required)**
   - Hosts **GLOBAL** + **USER_SHARED** product data and the public “Explore/Gallery”.
   - Hosts tenancy metadata (`tenants`, `domains`) and auth (`users`, `personal_access_tokens`).
-  - Hosts **payment/billing** entities (`purchases`, `payments`, `subscriptions`) for global
+  - Hosts **payment/billing** entities (`purchases`, `payments`, `payment_events`, `subscriptions`) for global
     settlement and webhook safety.
   - Hosts infra tables like `jobs`/`failed_jobs`/`cache` (so queues & cache stay stable regardless of tenant DB routing).
 
@@ -70,6 +70,7 @@ tenant table and Stancl’s `BelongsToTenant` scoping.
 | `gallery_videos` | USER_SHARED | central | **Denormalized** public content. Must be readable without tenant init; no cross-DB joins. |
 | `purchases` | USER_PRIVATE | central | Central billing record; includes `tenant_id` + `user_id`. |
 | `payments` | USER_PRIVATE | central | Linked to `purchase_id` only; no `user_id`. Token credit happens in tenant DB after success. |
+| `payment_events` | USER_PRIVATE | central | Raw provider webhook events for idempotency; unique by `provider_event_id`. |
 | `subscriptions` | USER_PRIVATE | central | Subscription state is centralized for billing + renewals. |
 
 ### Tenant pool DB tables
@@ -83,7 +84,8 @@ All tenant-pool tables MUST include:
 |------|-------|-----------|----------------|
 | `credit_transactions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. `user_id` must match the tenant’s central `user_id`. |
 | `token_wallets` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. One wallet per tenant; `user_id` matches the tenant’s central user. |
-| `token_transactions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. Append-only ledger; idempotent by provider transaction id. |
+| `token_transactions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. Append-only ledger for credits + job reservations/consumption; idempotent by provider transaction id. |
+| `ai_jobs` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. AI processing jobs; token reservation/consumption tracked per job. |
 | `videos` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. `effect_id` references central catalog (no FK). |
 | `exports` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. |
 | `rewards` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. |

@@ -13,6 +13,7 @@ class TokenTransaction extends TenantModel
         'type',
         'purchase_id',
         'payment_id',
+        'job_id',
         'provider_transaction_id',
         'description',
         'metadata',
@@ -23,6 +24,7 @@ class TokenTransaction extends TenantModel
         'amount' => 'integer',
         'purchase_id' => 'integer',
         'payment_id' => 'integer',
+        'job_id' => 'integer',
         'metadata' => 'array',
     ];
 
@@ -35,6 +37,7 @@ class TokenTransaction extends TenantModel
             'type' => 'string|required|max:50',
             'purchase_id' => 'numeric|nullable',
             'payment_id' => 'numeric|nullable',
+            'job_id' => 'numeric|nullable',
             'provider_transaction_id' => 'string|required|max:255',
             'description' => 'string|nullable',
             'metadata' => 'array|nullable',

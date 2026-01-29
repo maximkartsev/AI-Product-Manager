@@ -27,9 +27,29 @@ erDiagram
     string type "Transaction type (e.g., PAYMENT_CREDIT, REDEEMED, ADJUSTMENT)."
     bigint purchase_id FK "Central purchase id associated with this credit."
     bigint payment_id FK "Central payment id associated with this credit."
+    bigint job_id FK "AI job id associated with this reservation/consumption."
     string provider_transaction_id "Provider transaction id for idempotency."
     text description
     json metadata
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  AI_JOBS {
+    bigint id PK "Primary key for the AI job."
+    string tenant_id "Tenant routing key for pooled tenant DBs."
+    bigint user_id FK "The user who requested the job."
+    bigint effect_id FK "Effect applied in this job."
+    string status "Job status (queued, processing, completed, failed)."
+    string idempotency_key UK "Idempotency key for safe retries."
+    bigint requested_tokens "Requested token cost."
+    bigint reserved_tokens "Tokens reserved at submission."
+    bigint consumed_tokens "Tokens finalized after completion."
+    string provider_job_id "External provider job identifier."
+    json input_payload "Job input payload."
+    text error_message "Last error message."
+    timestamp started_at
+    timestamp completed_at
     timestamp created_at
     timestamp updated_at
   }
@@ -134,6 +154,19 @@ erDiagram
     string payment_gateway "The payment gateway used for the transaction (e.g., 'Stripe')."
     timestamp processed_at "Timestamp of when the payment was successfully processed."
     json metadata "Additional data from the payment gateway."
+    timestamp created_at
+    timestamp updated_at
+  }
+
+  PAYMENT_EVENTS {
+    bigint id PK "Primary key for the payment event."
+    string provider "Provider name."
+    string provider_event_id UK "Unique provider event id for idempotency."
+    bigint purchase_id FK "Related purchase id."
+    bigint payment_id FK "Related payment id."
+    json payload "Raw webhook payload."
+    timestamp received_at
+    timestamp processed_at
     timestamp created_at
     timestamp updated_at
   }
@@ -321,6 +354,8 @@ erDiagram
   CREDIT_TRANSACTIONS ||--|| PURCHASES : "belongsTo"
   TOKEN_WALLETS ||--|| USERS : "belongsTo"
   TOKEN_TRANSACTIONS ||--o{ USERS : "belongsTo"
+  AI_JOBS ||--o{ TOKEN_TRANSACTIONS : "hasMany"
+  AI_JOBS ||--o{ USERS : "belongsTo"
   GALLERY_VIDEOS ||--o{ USERS : "belongsTo"
   PURCHASES ||--o{ USERS : "belongsTo"
   USERS }o--o{ DISCOUNTS : "belongsToMany"
@@ -328,6 +363,8 @@ erDiagram
   TIERS ||--o{ SUBSCRIPTIONS : "hasMany"
   ALGORITHMS }o--o{ EFFECTS : "belongsToMany"
   PAYMENTS ||--|| PURCHASES : "belongsTo"
+  PAYMENTS ||--o{ PAYMENT_EVENTS : "hasMany"
+  PURCHASES ||--o{ PAYMENT_EVENTS : "hasMany"
   FILTERS ||--o{ CATEGORIES : "belongsTo"
   VIDEOS ||--o{ USERS : "belongsTo"
   VIDEOS ||--o{ EFFECTS : "belongsTo"

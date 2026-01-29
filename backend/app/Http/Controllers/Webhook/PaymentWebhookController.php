@@ -3,15 +3,12 @@
 namespace App\Http\Controllers\Webhook;
 
 use App\Http\Controllers\BaseController;
+use App\Jobs\CreditTokensForPayment;
 use App\Models\Payment;
+use App\Models\PaymentEvent;
 use App\Models\Purchase;
-use App\Models\Tenant;
-use App\Models\TokenTransaction;
-use App\Models\TokenWallet;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Stancl\Tenancy\Tenancy;
 
 class PaymentWebhookController extends BaseController
 {
@@ -23,7 +20,10 @@ class PaymentWebhookController extends BaseController
      */
     public function handle(Request $request): JsonResponse
     {
-        // TODO: verify signatures + parse provider payloads (Stripe/Paddle/etc).
+        if (!$this->verifySignature($request)) {
+            return $this->sendError('Invalid webhook signature.', [], 401);
+        }
+
         $purchaseId = (int) $request->input('purchase_id');
         $transactionId = trim((string) $request->input('transaction_id', ''));
 
@@ -47,6 +47,26 @@ class PaymentWebhookController extends BaseController
         $paymentGateway = (string) $request->input('payment_gateway', 'unknown');
         $processedAt = $request->input('processed_at');
         $metadata = $request->input('metadata');
+        $providerEventId = trim((string) $request->input('provider_event_id', $request->input('event_id', '')));
+        $paymentEvent = null;
+        if ($providerEventId !== '') {
+            $paymentEvent = PaymentEvent::query()->firstOrCreate(
+                ['provider_event_id' => $providerEventId],
+                [
+                    'provider' => $paymentGateway,
+                    'payload' => $request->all(),
+                    'received_at' => now(),
+                ]
+            );
+
+            if (!$paymentEvent->wasRecentlyCreated && $paymentEvent->processed_at) {
+                return $this->sendResponse([
+                    'received' => true,
+                    'duplicate_event' => true,
+                    'provider_event_id' => $providerEventId,
+                ], 'Webhook already processed');
+            }
+        }
 
         $paymentData = [
             'purchase_id' => $purchase->id,
@@ -75,8 +95,24 @@ class PaymentWebhookController extends BaseController
                 $purchase->processed_at = $purchase->processed_at ?: now();
                 $purchase->save();
             }
+            $tokenAmount = (int) $request->input('token_amount', $request->input('tokens', 0));
+            if ($tokenAmount > 0) {
+                CreditTokensForPayment::dispatch(
+                    $purchase->id,
+                    $payment->id,
+                    $tokenAmount,
+                    is_array($metadata) ? $metadata : null
+                );
+                $creditedTokens = true;
+            }
+        }
 
-            $creditedTokens = $this->creditTokens($purchase, $payment, $request);
+        if ($paymentEvent) {
+            $paymentEvent->purchase_id = $purchase->id;
+            $paymentEvent->payment_id = $payment->id;
+            $paymentEvent->payload = $request->all();
+            $paymentEvent->processed_at = now();
+            $paymentEvent->save();
         }
 
         return $this->sendResponse([
@@ -93,69 +129,22 @@ class PaymentWebhookController extends BaseController
         return in_array(strtolower($status), ['succeeded', 'success', 'completed', 'paid'], true);
     }
 
-    private function creditTokens(Purchase $purchase, Payment $payment, Request $request): bool
+    private function verifySignature(Request $request): bool
     {
-        $tokenAmount = (int) $request->input('token_amount', $request->input('tokens', 0));
-        if ($tokenAmount <= 0) {
+        $secret = (string) env('PAYMENT_WEBHOOK_SECRET', '');
+        if ($secret === '') {
+            return true;
+        }
+
+        $signature = (string) $request->header('X-Payment-Signature', '');
+        if ($signature === '') {
             return false;
         }
 
-        $tenantId = (string) $purchase->tenant_id;
-        /** @var Tenant|null $tenant */
-        $tenant = $tenantId !== '' ? Tenant::query()->whereKey($tenantId)->first() : null;
-        if (!$tenant) {
-            $tenant = Tenant::query()->where('user_id', $purchase->user_id)->first();
-            if (!$tenant) {
-                return false;
-            }
-            $tenantId = (string) $tenant->getKey();
-        }
+        $payload = $request->getContent();
+        $expected = hash_hmac('sha256', $payload, $secret);
 
-        $tenancy = app(Tenancy::class);
-        $tenancy->initialize($tenant);
-
-        try {
-            DB::connection('tenant')->transaction(function () use ($purchase, $payment, $tenantId, $tokenAmount, $request) {
-                /** @var TokenWallet $wallet */
-                $wallet = TokenWallet::query()->firstOrCreate(
-                    ['tenant_id' => $tenantId],
-                    ['user_id' => $purchase->user_id, 'balance' => 0],
-                );
-
-                if ((int) $wallet->user_id !== (int) $purchase->user_id) {
-                    throw new \RuntimeException('Token wallet user mismatch for tenant.');
-                }
-
-                $existing = TokenTransaction::query()
-                    ->where('tenant_id', $tenantId)
-                    ->where('provider_transaction_id', $payment->transaction_id)
-                    ->first();
-
-                if ($existing) {
-                    return;
-                }
-
-                $metadata = $request->input('metadata');
-
-                TokenTransaction::create([
-                    'tenant_id' => $tenantId,
-                    'user_id' => $purchase->user_id,
-                    'amount' => $tokenAmount,
-                    'type' => 'PAYMENT_CREDIT',
-                    'purchase_id' => $purchase->id,
-                    'payment_id' => $payment->id,
-                    'provider_transaction_id' => $payment->transaction_id,
-                    'description' => 'Payment credit',
-                    'metadata' => is_array($metadata) ? $metadata : null,
-                ]);
-
-                $wallet->increment('balance', $tokenAmount);
-            });
-        } finally {
-            $tenancy->end();
-        }
-
-        return true;
+        return hash_equals($expected, $signature);
     }
 }
 

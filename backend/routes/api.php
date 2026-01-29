@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\EnsureTenantMatchesUser;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
+use App\Http\Controllers\AiJobController;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
 use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
 use \App\Http\Controllers\RecordController as RecordController;
@@ -44,6 +45,8 @@ Route::middleware([
 ])->group(function () {
     Route::get('/me', [MeController::class,'show']);
     Route::post('/me', [MeController::class,'update']);
+
+    Route::post('/ai-jobs', [AiJobController::class, 'store']);
 
     Route::resource('records', RecordController::class)->except(['edit']);
     Route::resource('articles', ArticleController::class)->except(['edit']);

@@ -11,6 +11,7 @@
    - [CreditTransaction](#credittransaction)
    - [TokenWallet](#tokenwallet)
    - [TokenTransaction](#tokentransaction)
+   - [AiJob](#aijob)
    - [GalleryVideo](#galleryvideo)
    - [Purchase](#purchase)
    - [User](#user)
@@ -19,6 +20,7 @@
    - [Tier](#tier)
    - [Algorithm](#algorithm)
    - [Payment](#payment)
+   - [PaymentEvent](#paymentevent)
    - [Filter](#filter)
    - [Video](#video)
    - [AiModel](#aimodel)
@@ -47,6 +49,7 @@
 | CreditTransaction | `credit_transactions` | CUSTOM | `N/A` | **create** |
 | TokenWallet | `token_wallets` | CUSTOM | `N/A` | **create** |
 | TokenTransaction | `token_transactions` | CUSTOM | `N/A` | **create** |
+| AiJob | `ai_jobs` | CUSTOM | `N/A` | **create** |
 | GalleryVideo | `gallery_videos` | CUSTOM | `N/A` | **create** |
 | Purchase | `purchases` | CUSTOM | `N/A` | **create** |
 | User | `users` | CUSTOM | `N/A` | **create** |
@@ -55,6 +58,7 @@
 | Tier | `tiers` | CUSTOM | `N/A` | **create** |
 | Algorithm | `algorithms` | CUSTOM | `N/A` | **create** |
 | Payment | `payments` | CUSTOM | `N/A` | **create** |
+| PaymentEvent | `payment_events` | CUSTOM | `N/A` | **create** |
 | Filter | `filters` | CUSTOM | `N/A` | **create** |
 | Video | `videos` | CUSTOM | `N/A` | **create** |
 | Model | `models` | CUSTOM | `N/A` | **create** |
@@ -148,7 +152,7 @@
 
 ### TokenTransaction
 
-> Append-only ledger of token changes (earn, redeem, adjust). Used for auditability and idempotent webhook crediting.
+> Append-only ledger of token changes (payment credits, job reservations/consumption, adjustments). Used for auditability and idempotent webhook processing.
 
 **Table:** `token_transactions`  
 **Scope:** USER_PRIVATE  
@@ -167,6 +171,7 @@
 | `type` | STRING | string(50) | NOT NULL, INDEXED | Transaction type (e.g., PAYMENT_CREDIT, REDEEMED, ADJUSTMENT). |
 | `purchase_id` | BIGINT | foreign_id | NULLABLE, INDEXED | Central `purchases.id` associated with this credit (no cross-DB FK). |
 | `payment_id` | BIGINT | foreign_id | NULLABLE, INDEXED | Central `payments.id` associated with this credit (no cross-DB FK). |
+| `job_id` | BIGINT | unsignedBigInteger | NULLABLE, INDEXED | Tenant `ai_jobs.id` associated with reservation/consumption. |
 | `provider_transaction_id` | STRING | string | NOT NULL, INDEXED | Provider transaction id for idempotency. |
 | `description` | TEXT | text | NULLABLE | Human-readable description. |
 | `metadata` | JSON | json | NULLABLE | Provider payload snapshot or extra context. |
@@ -177,10 +182,57 @@
 
 - **token_transactions_tenant_provider_unique** (UNIQUE): `tenant_id, provider_transaction_id`
 - **token_transactions_tenant_user_index**: `tenant_id, user_id`
+- **token_transactions_tenant_job_type_unique** (UNIQUE): `tenant_id, job_id, type`
+- **token_transactions_job_id_index**: `job_id`
 
 #### Eloquent Relationships
 
 - **belongsTo()**: One-to-Many (hasMany/belongsTo) → `User`
+
+---
+
+### AiJob
+
+> Tracks AI processing jobs in tenant DBs, including token reservations and lifecycle status.
+
+**Table:** `ai_jobs`  
+**Scope:** USER_PRIVATE  
+**Storage Class:** WORKFLOW  
+**Lifecycle:** PERSISTENT  
+**Owner Entity:** User  
+
+#### Fields
+
+| Field | Type | Laravel Type | Constraints | Description |
+|-------|------|--------------|-------------|-------------|
+| `id` | BIGINT | id | **PK**, NOT NULL, INDEXED | Primary key for the AI job. |
+| `tenant_id` | STRING | string | NOT NULL, INDEXED | Tenant routing key for pooled tenant DBs. |
+| `user_id` | BIGINT | foreign_id | NOT NULL, INDEXED | The user who requested the job (central `users.id`, no cross-DB FK). |
+| `effect_id` | BIGINT | foreign_id | NOT NULL, INDEXED | Effect used for this job (central `effects.id`, no cross-DB FK). |
+| `status` | STRING | string(50) | NOT NULL, INDEXED | Job status (queued, processing, completed, failed). |
+| `idempotency_key` | STRING | string(255) | NOT NULL | Idempotency key for safe retries. |
+| `requested_tokens` | BIGINT | unsignedBigInteger | NOT NULL, DEFAULT `0` | Requested token cost. |
+| `reserved_tokens` | BIGINT | unsignedBigInteger | NOT NULL, DEFAULT `0` | Tokens reserved at submission. |
+| `consumed_tokens` | BIGINT | unsignedBigInteger | NOT NULL, DEFAULT `0` | Tokens finalized after completion. |
+| `provider_job_id` | STRING | string(255) | NULLABLE, INDEXED | External provider job identifier. |
+| `input_payload` | JSON | json | NULLABLE | Job input payload. |
+| `error_message` | TEXT | text | NULLABLE | Error details if the job fails. |
+| `started_at` | TIMESTAMP | timestamp | NULLABLE | Timestamp when processing started. |
+| `completed_at` | TIMESTAMP | timestamp | NULLABLE | Timestamp when processing completed. |
+| `created_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+| `updated_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+
+#### Indexes
+
+- **ai_jobs_tenant_idempotency_unique** (UNIQUE): `tenant_id, idempotency_key`
+- **ai_jobs_tenant_id_user_id_index**: `tenant_id, user_id`
+- **ai_jobs_effect_id_index**: `effect_id`
+- **ai_jobs_status_index**: `status`
+- **ai_jobs_provider_job_id_index**: `provider_job_id`
+
+#### Eloquent Relationships
+
+- *(No direct Eloquent relationships defined; references to central `users` and `effects` are validated in application logic.)*
 
 ---
 
@@ -464,6 +516,44 @@
 #### Eloquent Relationships
 
 - **belongsTo()**: One-to-One (hasOne/belongsTo) → `Purchase`
+
+---
+
+### PaymentEvent
+
+> Stores raw payment provider webhook events for idempotency and auditability.
+
+**Table:** `payment_events`  
+**Scope:** USER_PRIVATE  
+**Storage Class:** EVENT_LOG  
+**Lifecycle:** PERSISTENT  
+**Owner Entity:** Payment  
+
+#### Fields
+
+| Field | Type | Laravel Type | Constraints | Description |
+|-------|------|--------------|-------------|-------------|
+| `id` | BIGINT | id | **PK**, NOT NULL, INDEXED | Primary key for the payment event. |
+| `provider` | STRING | string(50) | NOT NULL, INDEXED | Payment provider name (e.g., Stripe). |
+| `provider_event_id` | STRING | string(255) | UNIQUE, NULLABLE | Provider event id for idempotency. |
+| `purchase_id` | BIGINT | unsignedBigInteger | NULLABLE, INDEXED | Related purchase id. |
+| `payment_id` | BIGINT | unsignedBigInteger | NULLABLE, INDEXED | Related payment id. |
+| `payload` | JSON | json | NULLABLE | Raw webhook payload. |
+| `received_at` | TIMESTAMP | timestamp | NOT NULL | When the webhook was received. |
+| `processed_at` | TIMESTAMP | timestamp | NULLABLE | When the event was fully processed. |
+| `created_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+| `updated_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
+
+#### Indexes
+
+- **payment_events_provider_event_id_unique** (UNIQUE): `provider_event_id`
+- **payment_events_provider_index**: `provider`
+- **payment_events_purchase_id_index**: `purchase_id`
+- **payment_events_payment_id_index**: `payment_id`
+
+#### Eloquent Relationships
+
+- *(No direct Eloquent relationships defined; referenced ids are tracked for auditability.)*
 
 ---
 
@@ -965,6 +1055,13 @@
   FK: `user_id`  
   ⚠️ CASCADE DELETE
 
+- **AiJob**::belongsTo() → **User** (through ``)  
+  FK: `user_id`  
+  ⚠️ Cross-DB reference (tenant → central)
+
+- **User**::hasMany() → **AiJob** (through ``)  
+  FK: `user_id`
+
 - **GalleryVideo**::belongsTo() → **User** (through ``)  
   FK: `user_id`
 
@@ -978,6 +1075,18 @@
 - **User**::hasMany() → **Purchase** (through ``)  
   FK: `user_id`  
   ⚠️ CASCADE DELETE
+
+- **PaymentEvent**::belongsTo() → **Payment** (through ``)  
+  FK: `payment_id`
+
+- **Payment**::hasMany() → **PaymentEvent** (through ``)  
+  FK: `payment_id`
+
+- **PaymentEvent**::belongsTo() → **Purchase** (through ``)  
+  FK: `purchase_id`
+
+- **Purchase**::hasMany() → **PaymentEvent** (through ``)  
+  FK: `purchase_id`
 
 - **Tier**::hasMany() → **Subscription** (through ``)  
   FK: `tier_id`
@@ -1136,10 +1245,25 @@
 
 - `token_transactions_tenant_provider_unique` **UNIQUE**: tenant_id, provider_transaction_id (BTREE)
 - `token_transactions_tenant_user_index`: tenant_id, user_id (BTREE)
+- `token_transactions_tenant_job_type_unique` **UNIQUE**: tenant_id, job_id, type (BTREE)
+- `token_transactions_job_id_index`: job_id (BTREE)
 - Field index on `id`
 - Field index on `tenant_id`
 - Field index on `user_id`
 - Field index on `type`
+
+#### ai_jobs
+
+- `ai_jobs_tenant_idempotency_unique` **UNIQUE**: tenant_id, idempotency_key (BTREE)
+- `ai_jobs_tenant_id_user_id_index`: tenant_id, user_id (BTREE)
+- `ai_jobs_effect_id_index`: effect_id (BTREE)
+- `ai_jobs_status_index`: status (BTREE)
+- `ai_jobs_provider_job_id_index`: provider_job_id (BTREE)
+- Field index on `id`
+- Field index on `tenant_id`
+- Field index on `user_id`
+- Field index on `effect_id`
+- Field index on `status`
 
 #### gallery_videos
 
@@ -1155,6 +1279,14 @@
 - Field index on `user_id`
 - Field index on `status`
 - Field index on `external_transaction_id`
+
+#### payment_events
+
+- `payment_events_provider_event_id_unique` **UNIQUE**: provider_event_id (BTREE)
+- `payment_events_provider_index`: provider (BTREE)
+- `payment_events_purchase_id_index`: purchase_id (BTREE)
+- `payment_events_payment_id_index`: payment_id (BTREE)
+- Field index on `id`
 
 #### users
 
@@ -1316,11 +1448,13 @@
 ## Schema Remarks
 
 - Schema generated from PCD analysis
-- Total entities: 24
-- Total relationships: 45
-- Coverage mapped: 24 entities
+- Total entities: 26
+- Total relationships: 49
+- Coverage mapped: 26 entities
 - The system distinguishes between two types of discounts: user-specific loyalty credits stored in `users.discount_balance` and tracked via `credit_transactions`, and global promotional codes managed in the `discounts` table. Purchases can apply amounts from either or both sources.
 - Token balances are stored in tenant DBs (`token_wallets`) with an append-only ledger (`token_transactions`) and are credited after payment success (idempotent).
+- Payment webhooks are recorded in central `payment_events` with unique `provider_event_id` for idempotency.
+- AI processing is tracked in `ai_jobs`, with token reservations (`JOB_RESERVE`), consumption (`JOB_CONSUME`), and refunds (`JOB_REFUND`) linked via `token_transactions.job_id`.
 - Foreign key constraints assume the existence of `videos` and `packages` tables, which were not part of this request but are required for the defined relationships to be valid.
 - The 'Payment' entity assumes the existence of a 'purchases' table; user linkage is derived from the purchase record (no `payments.user_id`).
 - Monetary values are stored using DECIMAL(10, 2) for precision.
@@ -1505,6 +1639,43 @@ $tokenTransactions = TokenTransaction::query()
         $query->where('description', 'like', "%{$search}%");
     })
     ->get();
+```
+
+---
+
+### AiJob
+
+**Basic Retrieval**
+
+```sql
+-- Get all AiJobs for a tenant/user with pagination
+SELECT * FROM ai_jobs
+WHERE tenant_id = :tenant_id AND user_id = :user_id
+ORDER BY created_at DESC
+LIMIT 20 OFFSET 0;
+```
+
+```php
+// Laravel Eloquent
+$jobs = AiJob::query()
+    ->where('tenant_id', $tenantId)
+    ->where('user_id', $userId)
+    ->orderBy('created_at', 'desc')
+    ->paginate(20);
+```
+
+**Find by Idempotency Key**
+
+```sql
+SELECT * FROM ai_jobs
+WHERE tenant_id = :tenant_id AND idempotency_key = :key;
+```
+
+```php
+$job = AiJob::query()
+    ->where('tenant_id', $tenantId)
+    ->where('idempotency_key', $idempotencyKey)
+    ->firstOrFail();
 ```
 
 ---
@@ -1932,6 +2103,43 @@ $payments = Payment::query()
               ->orWhere('status', 'like', "%{$search}%")
               ->orWhere('currency', 'like', "%{$search}%");
     })
+    ->get();
+```
+
+---
+
+### PaymentEvent
+
+**Basic Retrieval**
+
+```sql
+-- Get all PaymentEvents for a provider event id
+SELECT * FROM payment_events
+WHERE provider_event_id = :provider_event_id
+ORDER BY created_at DESC
+LIMIT 20 OFFSET 0;
+```
+
+```php
+// Laravel Eloquent
+$events = PaymentEvent::query()
+    ->where('provider_event_id', $providerEventId)
+    ->orderBy('created_at', 'desc')
+    ->paginate(20);
+```
+
+**Find by Payment ID**
+
+```sql
+SELECT * FROM payment_events
+WHERE payment_id = :payment_id
+ORDER BY created_at DESC;
+```
+
+```php
+$events = PaymentEvent::query()
+    ->where('payment_id', $paymentId)
+    ->orderBy('created_at', 'desc')
     ->get();
 ```
 

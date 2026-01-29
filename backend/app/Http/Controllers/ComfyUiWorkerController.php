@@ -30,6 +30,8 @@ class ComfyUiWorkerController extends BaseController
             'display_name' => 'string|nullable|max:255',
             'environment' => 'string|nullable|max:50',
             'capabilities' => 'array|nullable',
+            'providers' => 'array|nullable',
+            'providers.*' => 'string|max:50',
             'current_load' => 'integer|nullable|min:0',
             'max_concurrency' => 'integer|nullable|min:0',
         ]);
@@ -51,7 +53,15 @@ class ComfyUiWorkerController extends BaseController
         $leaseTtlSeconds = (int) config('services.comfyui.lease_ttl_seconds', self::DEFAULT_LEASE_TTL_SECONDS);
         $maxAttempts = (int) config('services.comfyui.max_attempts', self::DEFAULT_MAX_ATTEMPTS);
 
-        $dispatch = $this->leaseDispatch($worker->worker_id, $leaseTtlSeconds, $maxAttempts);
+        $providers = (array) $request->input(
+            'providers',
+            [config('services.comfyui.default_provider', 'local')]
+        );
+        $providers = array_values(array_filter($providers));
+        if (empty($providers)) {
+            $providers = [config('services.comfyui.default_provider', 'local')];
+        }
+        $dispatch = $this->leaseDispatch($worker->worker_id, $leaseTtlSeconds, $maxAttempts, $providers);
         if (!$dispatch) {
             return $this->sendResponse(['job' => null], 'No jobs available');
         }
@@ -82,7 +92,10 @@ class ComfyUiWorkerController extends BaseController
         }
 
         $leaseTtlSeconds = (int) config('services.comfyui.lease_ttl_seconds', self::DEFAULT_LEASE_TTL_SECONDS);
-        $dispatch->lease_expires_at = now()->addSeconds($leaseTtlSeconds);
+        $base = $dispatch->lease_expires_at && $dispatch->lease_expires_at->gt(now())
+            ? $dispatch->lease_expires_at
+            : now();
+        $dispatch->lease_expires_at = $base->copy()->addSeconds($leaseTtlSeconds);
         $dispatch->save();
 
         if ($request->filled('worker_id')) {
@@ -249,12 +262,13 @@ class ComfyUiWorkerController extends BaseController
         return ComfyUiWorker::query()->create(array_merge(['worker_id' => $workerId], $defaults));
     }
 
-    private function leaseDispatch(string $workerId, int $leaseTtlSeconds, int $maxAttempts): ?AiJobDispatch
+    private function leaseDispatch(string $workerId, int $leaseTtlSeconds, int $maxAttempts, array $providers): ?AiJobDispatch
     {
-        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts) {
+        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts, $providers) {
             $now = now();
 
             $dispatch = AiJobDispatch::query()
+                ->whereIn('provider', $providers)
                 ->where('attempts', '<', $maxAttempts)
                 ->where(function ($query) use ($now) {
                     $query
@@ -340,6 +354,7 @@ class ComfyUiWorkerController extends BaseController
                 'dispatch_id' => $dispatch->id,
                 'lease_token' => $dispatch->lease_token,
                 'lease_expires_at' => $dispatch->lease_expires_at?->toIso8601String(),
+                'provider' => $dispatch->provider,
                 'tenant_id' => $dispatch->tenant_id,
                 'job_id' => $job->id,
                 'effect_id' => $job->effect_id,

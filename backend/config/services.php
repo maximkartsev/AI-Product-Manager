@@ -37,6 +37,7 @@ return [
 
     'comfyui' => [
         'worker_token' => env('COMFYUI_WORKER_TOKEN'),
+        'default_provider' => env('COMFYUI_DEFAULT_PROVIDER', 'local'),
         'lease_ttl_seconds' => env('COMFYUI_LEASE_TTL_SECONDS', 900),
         'max_attempts' => env('COMFYUI_MAX_ATTEMPTS', 3),
         'presigned_ttl_seconds' => env('COMFYUI_PRESIGNED_TTL_SECONDS', 900),

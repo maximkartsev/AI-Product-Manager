@@ -11,6 +11,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class PaymentWebhookTest extends TestCase
@@ -113,9 +114,7 @@ class PaymentWebhookTest extends TestCase
             ->assertJsonPath('success', false);
     }
 
-    /**
-     * @dataProvider invalidPurchaseIdProvider
-     */
+    #[DataProvider('invalidPurchaseIdProvider')]
     public function test_webhook_rejects_invalid_purchase_id($invalidId): void
     {
         $response = $this->postWebhook([
@@ -127,9 +126,7 @@ class PaymentWebhookTest extends TestCase
             ->assertJsonPath('success', false);
     }
 
-    /**
-     * @dataProvider invalidTransactionIdProvider
-     */
+    #[DataProvider('invalidTransactionIdProvider')]
     public function test_webhook_rejects_empty_transaction_id(string $transactionId): void
     {
         $response = $this->postWebhook([
@@ -241,9 +238,7 @@ class PaymentWebhookTest extends TestCase
         $this->assertSame(40, (int) $wallet->balance);
     }
 
-    /**
-     * @dataProvider invalidTokenAmountProvider
-     */
+    #[DataProvider('invalidTokenAmountProvider')]
     public function test_non_positive_token_amount_does_not_credit(int $amount): void
     {
         [$user, $tenant] = $this->createUserAndTenant();
@@ -307,9 +302,7 @@ class PaymentWebhookTest extends TestCase
         $this->assertSame(1, $this->getTokenTransactionCount($tenant->getKey(), $transactionId));
     }
 
-    /**
-     * @dataProvider successStatusProvider
-     */
+    #[DataProvider('successStatusProvider')]
     public function test_success_statuses_credit_tokens(string $status): void
     {
         [$user, $tenant] = $this->createUserAndTenant();
@@ -334,9 +327,7 @@ class PaymentWebhookTest extends TestCase
         $this->assertSame(5, (int) $wallet->balance);
     }
 
-    /**
-     * @dataProvider nonSuccessStatusProvider
-     */
+    #[DataProvider('nonSuccessStatusProvider')]
     public function test_non_success_statuses_do_not_credit_tokens(string $status): void
     {
         [$user, $tenant] = $this->createUserAndTenant();
@@ -576,10 +567,15 @@ class PaymentWebhookTest extends TestCase
 
     private function createPurchase(User $user, string $tenantId, array $overrides = []): Purchase
     {
+        $subtotal = $overrides['subtotal'] ?? $overrides['original_amount'] ?? 100.00;
+        $total = $overrides['total'] ?? $subtotal;
+
         return Purchase::query()->create(array_merge([
             'tenant_id' => $tenantId,
             'user_id' => $user->id,
             'package_id' => null,
+            'total' => $total,
+            'subtotal' => $subtotal,
             'original_amount' => 100.00,
             'applied_discount_amount' => 0.00,
             'total_amount' => 100.00,

@@ -21,6 +21,7 @@ class AiJobController extends BaseController
         $validator = Validator::make($request->all(), [
             'effect_id' => 'numeric|required|exists:effects,id',
             'idempotency_key' => 'string|required|max:255',
+            'provider' => 'string|nullable|max:50',
             'video_id' => 'numeric|nullable',
             'input_file_id' => 'numeric|nullable',
             'input_payload' => 'array|nullable',
@@ -41,7 +42,15 @@ class AiJobController extends BaseController
         if ($existing) {
             $dispatch = null;
             if (in_array($existing->status, ['queued', 'processing'], true)) {
-                $dispatch = $this->ensureDispatch($existing, (int) $request->input('priority', 0));
+                $existingProvider = $existing->provider ?: (string) $request->input(
+                    'provider',
+                    config('services.comfyui.default_provider', 'local')
+                );
+                $dispatch = $this->ensureDispatch(
+                    $existing,
+                    (int) $request->input('priority', 0),
+                    $existingProvider
+                );
             }
             return $this->sendResponse($existing, 'Job already submitted', [
                 'dispatch_id' => $dispatch?->id,
@@ -54,6 +63,7 @@ class AiJobController extends BaseController
         }
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
+        $provider = (string) $request->input('provider', config('services.comfyui.default_provider', 'local'));
         $videoId = $request->input('video_id');
         $inputFileId = $request->input('input_file_id');
 
@@ -90,10 +100,11 @@ class AiJobController extends BaseController
         }
 
         try {
-            $job = DB::connection('tenant')->transaction(function () use ($request, $user, $tokenCost, $ledger, $idempotencyKey, $inputFileId, $resolvedVideoId) {
+            $job = DB::connection('tenant')->transaction(function () use ($request, $user, $tokenCost, $ledger, $idempotencyKey, $inputFileId, $resolvedVideoId, $provider) {
                 $aiJob = AiJob::query()->create([
                     'user_id' => $user->id,
                     'effect_id' => (int) $request->input('effect_id'),
+                    'provider' => $provider,
                     'video_id' => $resolvedVideoId,
                     'input_file_id' => $inputFileId,
                     'status' => 'queued',
@@ -130,20 +141,21 @@ class AiJobController extends BaseController
             throw $e;
         }
 
-        $dispatch = $this->ensureDispatch($job, (int) $request->input('priority', 0));
+        $dispatch = $this->ensureDispatch($job, (int) $request->input('priority', 0), $provider);
 
         return $this->sendResponse($job, 'Job queued', [
             'dispatch_id' => $dispatch?->id,
         ]);
     }
 
-    private function ensureDispatch(AiJob $job, int $priority = 0): ?AiJobDispatch
+    private function ensureDispatch(AiJob $job, int $priority = 0, ?string $provider = null): ?AiJobDispatch
     {
         try {
             return AiJobDispatch::query()->firstOrCreate([
                 'tenant_id' => (string) $job->tenant_id,
                 'tenant_job_id' => $job->id,
             ], [
+                'provider' => $provider ?: ($job->provider ?: config('services.comfyui.default_provider', 'local')),
                 'status' => 'queued',
                 'priority' => $priority,
                 'attempts' => 0,

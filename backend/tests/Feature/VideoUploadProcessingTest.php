@@ -46,6 +46,8 @@ class VideoUploadProcessingTest extends TestCase
         config(['services.comfyui.presigned_ttl_seconds' => 900]);
         config(['filesystems.default' => 's3']);
 
+        $this->resetState();
+
         app()->instance(PresignedUrlService::class, new class extends PresignedUrlService {
             public function downloadUrl(string $disk, string $path, int $ttlSeconds): string
             {
@@ -63,6 +65,22 @@ class VideoUploadProcessingTest extends TestCase
                 return ['url' => 'https://example.com/upload', 'headers' => ['Content-Type' => $contentType]];
             }
         });
+    }
+
+    private function resetState(): void
+    {
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('ai_job_dispatches')->truncate();
+        DB::connection('central')->table('gallery_videos')->truncate();
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
+
+        DB::connection('tenant_pool_1')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('tenant_pool_1')->table('ai_jobs')->truncate();
+        DB::connection('tenant_pool_1')->table('token_transactions')->truncate();
+        DB::connection('tenant_pool_1')->table('token_wallets')->truncate();
+        DB::connection('tenant_pool_1')->table('files')->truncate();
+        DB::connection('tenant_pool_1')->table('videos')->truncate();
+        DB::connection('tenant_pool_1')->statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
     public function test_upload_initiation_success(): void
@@ -566,7 +584,7 @@ class VideoUploadProcessingTest extends TestCase
         $video = $this->fetchTenantVideo($tenant->id, $videoId);
         $this->assertSame('expired', $video['status']);
         $this->assertNull($video['processed_file_id']);
-        $this->assertSame(false, $video['is_public']);
+        $this->assertFalse((bool) $video['is_public']);
 
         $gallery = GalleryVideo::query()
             ->where('tenant_id', $tenant->id)
@@ -686,8 +704,6 @@ class VideoUploadProcessingTest extends TestCase
 
     private function postJsonWithHost(string $domain, string $uri, array $payload)
     {
-        return $this->withServerVariables([
-            'HTTP_HOST' => $domain,
-        ])->postJson($uri, $payload);
+        return $this->postJson('http://' . $domain . $uri, $payload);
     }
 }

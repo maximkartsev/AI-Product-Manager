@@ -4,6 +4,10 @@ namespace App\Models;
 
 class ComfyUiWorker extends CentralModel
 {
+    public bool $enableLoggingModelsEvents = false;
+
+    protected $table = 'comfy_ui_workers';
+
     protected $fillable = [
         'worker_id',
         'display_name',

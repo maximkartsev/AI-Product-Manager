@@ -30,7 +30,7 @@ dispatch table that represents each tenant job once and drives worker selection.
 
 Central table: `ai_job_dispatches`
 - `tenant_id`, `tenant_job_id`, `status` (`queued|leased|completed|failed`)
-- `lease_token`, `lease_expires_at`, `worker_id`, `attempts`, `priority`
+- `lease_token`, `lease_expires_at`, `worker_id`, `attempts`, `priority`, `provider`
 
 ### Worker registry + health
 
@@ -41,7 +41,7 @@ Central table: `comfyui_workers`
 ### Worker protocol (pull-based)
 
 1. **Poll**: `POST /api/worker/poll`
-   - Worker sends `worker_id`, `capabilities`, `current_load`, `max_concurrency`.
+   - Worker sends `worker_id`, `capabilities`, `current_load`, `max_concurrency`, `providers`.
 2. **Lease**: backend selects a queued dispatch row and returns a **lease token** + expiry.
 3. **Heartbeat**: worker extends lease while running.
 4. **Complete/Fail**: worker reports status; backend updates tenant `ai_jobs` and applies token
@@ -52,6 +52,9 @@ Central table: `comfyui_workers`
 Workers never receive long-lived credentials. The backend issues **pre-signed URLs**:
 - `GET` for original input video
 - `PUT` for processed output video
+
+For Comfy Cloud jobs, the worker uploads inputs via Cloud Assets API and downloads outputs
+via `/api/view`, then stores final results in S3.
 
 ## Consequences
 

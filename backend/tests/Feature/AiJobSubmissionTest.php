@@ -179,8 +179,6 @@ class AiJobSubmissionTest extends TestCase
 
     private function postJsonWithHost(string $domain, string $uri, array $payload)
     {
-        return $this->withServerVariables([
-            'HTTP_HOST' => $domain,
-        ])->postJson($uri, $payload);
+        return $this->postJson('http://' . $domain . $uri, $payload);
     }
 }

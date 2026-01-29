@@ -8,6 +8,7 @@ class AiJob extends TenantModel
         'tenant_id',
         'user_id',
         'effect_id',
+        'provider',
         'video_id',
         'input_file_id',
         'output_file_id',
@@ -26,6 +27,7 @@ class AiJob extends TenantModel
     protected $casts = [
         'user_id' => 'integer',
         'effect_id' => 'integer',
+        'provider' => 'string',
         'video_id' => 'integer',
         'input_file_id' => 'integer',
         'output_file_id' => 'integer',
@@ -43,6 +45,7 @@ class AiJob extends TenantModel
             'tenant_id' => 'string|required|max:255',
             'user_id' => 'numeric|required',
             'effect_id' => 'numeric|required',
+            'provider' => 'string|nullable|max:50',
             'video_id' => 'numeric|nullable',
             'input_file_id' => 'numeric|nullable',
             'output_file_id' => 'numeric|nullable',

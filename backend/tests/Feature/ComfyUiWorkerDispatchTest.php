@@ -46,6 +46,8 @@ class ComfyUiWorkerDispatchTest extends TestCase
         config(['services.comfyui.presigned_ttl_seconds' => 60]);
         config(['services.comfyui.max_attempts' => 3]);
 
+        $this->resetState();
+
         app()->instance(PresignedUrlService::class, new class extends PresignedUrlService {
             public function downloadUrl(string $disk, string $path, int $ttlSeconds): string
             {
@@ -57,6 +59,22 @@ class ComfyUiWorkerDispatchTest extends TestCase
                 return ['url' => 'https://example.com/output', 'headers' => []];
             }
         });
+    }
+
+    private function resetState(): void
+    {
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('ai_job_dispatches')->truncate();
+        DB::connection('central')->table('comfy_ui_workers')->truncate();
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
+
+        DB::connection('tenant_pool_1')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('tenant_pool_1')->table('ai_jobs')->truncate();
+        DB::connection('tenant_pool_1')->table('token_transactions')->truncate();
+        DB::connection('tenant_pool_1')->table('token_wallets')->truncate();
+        DB::connection('tenant_pool_1')->table('files')->truncate();
+        DB::connection('tenant_pool_1')->table('videos')->truncate();
+        DB::connection('tenant_pool_1')->statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
     public function test_poll_leases_job_once(): void
@@ -684,6 +702,48 @@ class ComfyUiWorkerDispatchTest extends TestCase
 
         $poll->assertStatus(200)
             ->assertJsonPath('data.job.job_id', $highJob->id);
+    }
+
+    public function test_poll_filters_by_provider(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+
+        AiJobDispatch::query()->create([
+            'tenant_id' => $tenant->id,
+            'tenant_job_id' => $job->id,
+            'provider' => 'cloud',
+            'status' => 'queued',
+            'priority' => 0,
+            'attempts' => 0,
+        ]);
+
+        $localPoll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'worker-local',
+            'providers' => ['local'],
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $localPoll->assertStatus(200)
+            ->assertJsonPath('data.job', null);
+
+        $cloudPoll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'worker-cloud',
+            'providers' => ['cloud'],
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $cloudPoll->assertStatus(200)
+            ->assertJsonPath('data.job.job_id', $job->id)
+            ->assertJsonPath('data.job.provider', 'cloud');
     }
 
     public function test_poll_skips_dispatch_after_max_attempts(): void

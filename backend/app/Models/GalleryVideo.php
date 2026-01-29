@@ -8,6 +8,8 @@ class GalleryVideo extends CentralModel
 {
     use SoftDeletes;
 
+    public bool $enableLoggingModelsEvents = false;
+
     protected $fillable = [
         'tenant_id',
         'user_id',

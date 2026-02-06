@@ -347,10 +347,9 @@ INSERT INTO gallery_videos (user_id, video_id, title, tags, is_public, created_a
 - `Tag.name`
 
 ---
-
 ## Loyalty Credit Accumulation and Redemption
 
-A user earns discount credits by creating free videos and later redeems these credits to get a discount on a premium purchase.
+A user earns **loyalty discount credits** by creating free videos and later redeems these credits to get a discount on a premium purchase.
 
 ### Steps & SQL Queries
 
@@ -364,14 +363,19 @@ A user earns discount credits by creating free videos and later redeems these cr
 UPDATE videos SET status = 'processed' WHERE id = ? AND user_id = ?;
 ```
 
-#### Step 2: The system automatically awards loyalty credits by creating a 'CreditTransaction' record linked to the user's account.
+#### Step 2: The system awards loyalty credits by creating a `credit_transactions` record and updating the user's `discount_balance`.
 
 - **Operation:** CREATE on `credit_transactions`
 - **Fields:** `user_id`, `amount`, `type`, `description`, `created_at`, `updated_at`
 - **Status:** ✅ Verified against schema
 
 ```sql
-INSERT INTO credit_transactions (user_id, amount, type, description, created_at, updated_at) VALUES (?, ?, 'credit', 'Loyalty credit for video creation', NOW(), NOW());
+INSERT INTO credit_transactions (user_id, amount, type, description, created_at, updated_at)
+VALUES (?, ?, 'EARNED', 'Loyalty credit for video creation', NOW(), NOW());
+```
+
+```sql
+UPDATE users SET discount_balance = discount_balance + ? WHERE id = ?;
 ```
 
 #### Step 3: The user's accumulated discount balance is displayed on their account dashboard.
@@ -394,7 +398,7 @@ SELECT discount_balance FROM users WHERE id = ?;
 SELECT id, name, price FROM packages WHERE id = ?;
 ```
 
-#### Step 5: On the checkout page, the system displays the full price and the available discount from the user's credit balance.
+#### Step 5: On the checkout page, the system displays the full price and the available loyalty discount from the user's balance.
 
 - **Operation:** READ on `users`
 - **Fields:** `discount_balance`, `id`
@@ -404,45 +408,53 @@ SELECT id, name, price FROM packages WHERE id = ?;
 SELECT discount_balance FROM users WHERE id = ?;
 ```
 
-#### Step 6: The user chooses to apply their credits, which reduces the final amount due.
+#### Step 6: The user chooses to apply their credits, reducing the final amount due.
 
-- **Operation:** READ on `users`
-- **Fields:** `discount_balance`, `id`
+- **Operation:** (App logic) compute `applied_discount_amount = LEAST(discount_balance, original_amount)`
+- **Fields:** `discount_balance`, `original_amount`
 - **Status:** ✅ Verified against schema
 
-```sql
-SELECT discount_balance FROM users WHERE id = ?;
-```
-
-#### Step 7: The user completes the payment for the remaining balance.
+#### Step 7: The user completes the payment for the remaining balance and a `purchases` record is created.
 
 - **Operation:** CREATE on `purchases`
 - **Fields:** `tenant_id`, `user_id`, `package_id`, `original_amount`, `applied_discount_amount`, `total_amount`, `status`, `created_at`, `updated_at`
 - **Status:** ✅ Verified against schema
 
 ```sql
-INSERT INTO purchases (tenant_id, user_id, package_id, original_amount, applied_discount_amount, total_amount, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW());
+INSERT INTO purchases (tenant_id, user_id, package_id, original_amount, applied_discount_amount, total_amount, status, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW());
 ```
 
-#### Step 8: The system records the 'Purchase' and creates a new 'CreditTransaction' to debit the redeemed credits from the user's balance.
+#### Step 8: After payment success, the purchase is marked completed and redeemed credits are debited (logged in `credit_transactions` + reflected in `users.discount_balance`).
 
 - **Operation:** UPDATE on `purchases`
 - **Fields:** `status`, `external_transaction_id`, `processed_at`, `id`
 - **Status:** ✅ Verified against schema
 
 ```sql
-UPDATE purchases SET status = 'completed', external_transaction_id = ?, processed_at = NOW() WHERE id = ?;
+UPDATE purchases
+SET status = 'completed', external_transaction_id = ?, processed_at = NOW()
+WHERE id = ?;
+```
+
+```sql
+INSERT INTO credit_transactions (user_id, amount, type, description, related_purchase_id, created_at, updated_at)
+VALUES (?, ?, 'REDEEMED', 'Redeemed loyalty credits on purchase', ?, NOW(), NOW());
+```
+
+```sql
+UPDATE users SET discount_balance = discount_balance - ? WHERE id = ?;
 ```
 
 ### Entities Involved
 
 - **User**
 - **Video**
-- **Discount**
 - **CreditTransaction**
 - **Package**
 - **Purchase**
 - **Payment**
+- **Discount**
 
 ### Required Fields
 
@@ -459,4 +471,3 @@ UPDATE purchases SET status = 'completed', external_transaction_id = ?, processe
 - `Payment.purchase_id`
 
 ---
-

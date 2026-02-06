@@ -30,6 +30,64 @@ export type AuthSuccessData = {
   tenant?: TenantInfo;
 };
 
+export type WalletData = {
+  balance: number;
+};
+
+export type MeData = {
+  id: number;
+  name: string;
+  email: string;
+  is_admin?: boolean;
+};
+
+export type UploadInitRequest = {
+  effect_id: number;
+  mime_type: string;
+  size: number;
+  original_filename: string;
+  file_hash?: string | null;
+};
+
+export type UploadInitData = {
+  file: {
+    id: number;
+  };
+  upload_url: string;
+  upload_headers: Record<string, string | string[]>;
+  expires_in: number;
+};
+
+export type VideoCreateRequest = {
+  effect_id: number;
+  original_file_id: number;
+  title?: string | null;
+};
+
+export type VideoData = {
+  id: number;
+  status: string;
+  effect_id: number;
+  original_file_id: number | null;
+  processed_file_id?: number | null;
+};
+
+export type AiJobRequest = {
+  effect_id: number;
+  idempotency_key: string;
+  provider?: string | null;
+  video_id?: number | null;
+  input_file_id?: number | null;
+  input_payload?: Record<string, unknown> | null;
+  priority?: number | null;
+};
+
+export type AiJobData = {
+  id: number;
+  status: string;
+  requested_tokens: number;
+};
+
 export type ApiEffect = {
   id: number;
   name: string;
@@ -37,6 +95,7 @@ export type ApiEffect = {
   description?: string | null;
   thumbnail_url?: string | null;
   preview_video_url?: string | null;
+  credits_cost?: number | null;
   is_premium: boolean;
   is_active: boolean;
 };
@@ -273,6 +332,26 @@ export function login(payload: LoginRequest): Promise<AuthSuccessData> {
   return apiPost<AuthSuccessData>("/login", payload);
 }
 
+export function getWallet(): Promise<WalletData> {
+  return apiGet<WalletData>("/wallet");
+}
+
+export function getMe(): Promise<MeData> {
+  return apiGet<MeData>("/me");
+}
+
+export function initVideoUpload(payload: UploadInitRequest): Promise<UploadInitData> {
+  return apiPost<UploadInitData>("/videos/uploads", payload);
+}
+
+export function createVideo(payload: VideoCreateRequest): Promise<VideoData> {
+  return apiPost<VideoData>("/videos", payload);
+}
+
+export function submitAiJob(payload: AiJobRequest): Promise<AiJobData> {
+  return apiPost<AiJobData>("/ai-jobs", payload);
+}
+
 export function getEffects(): Promise<ApiEffect[]> {
   return apiGet<ApiEffect[]>("/effects");
 }
@@ -292,5 +371,141 @@ export function getArticles(
     order: params?.order ?? undefined,
   };
   return apiGet<ArticleIndexData>("/articles", query, token);
+}
+
+export type ColumnConfig = {
+  key: string;
+  label: string;
+};
+
+export async function getAvailableColumns(entityClass: string): Promise<ColumnConfig[]> {
+  const data = await apiRequest<{ columns: ColumnConfig[] }>(`/columns?class=${encodeURIComponent(entityClass)}`, {
+    method: "GET",
+  });
+  return data.columns ?? [];
+}
+
+export type EffectUploadInitRequest = {
+  kind: "workflow" | "thumbnail" | "preview_video";
+  mime_type: string;
+  size: number;
+  original_filename: string;
+};
+
+export type EffectUploadInitData = {
+  path: string;
+  upload_url: string;
+  upload_headers: Record<string, string | string[]>;
+  expires_in: number;
+  public_url?: string | null;
+};
+
+export type AdminEffect = {
+  id: number;
+  name?: string;
+  slug?: string;
+  description?: string | null;
+  type?: string | null;
+  preview_url?: string | null;
+  thumbnail_url?: string | null;
+  preview_video_url?: string | null;
+  comfyui_workflow_path?: string | null;
+  comfyui_input_path_placeholder?: string | null;
+  output_extension?: string | null;
+  output_mime_type?: string | null;
+  output_node_id?: string | null;
+  parameters?: string | null;
+  default_values?: string | null;
+  credits_cost?: number | null;
+  processing_time_estimate?: number | null;
+  popularity_score?: number | null;
+  sort_order?: number | null;
+  is_active?: boolean;
+  is_premium?: boolean;
+  is_new?: boolean;
+  ai_model_id?: number | null;
+  ai_model?: {
+    id?: number;
+    name?: string;
+  } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AdminEffectPayload = Partial<AdminEffect>;
+
+export type AdminEffectsIndexData = {
+  items: AdminEffect[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order: string;
+  search: string | null;
+  filters: unknown[];
+};
+
+type FilterValue = {
+  field: string;
+  operator: string;
+  value: string | string[];
+};
+
+function appendFilterParams(params: URLSearchParams, filters?: FilterValue[]) {
+  if (!filters) return;
+  filters.forEach((filter) => {
+    const operator = filter.operator || "=";
+    const key = operator === "=" ? filter.field : `${filter.field}:${operator}`;
+    const rawValue = Array.isArray(filter.value) ? filter.value.join(",") : filter.value;
+    const value = typeof rawValue === "string" ? rawValue.trim() : rawValue;
+    if (value === "" || value === null || value === undefined) {
+      if (["isnull", "notnull", "doesnthave"].includes(operator)) {
+        params.append(key, "1");
+      }
+      return;
+    }
+    params.append(key, String(value));
+  });
+}
+
+export async function getAdminEffects(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<AdminEffectsIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+
+  if (params.search) {
+    query.set("search", params.search);
+  }
+
+  if (params.order) {
+    query.set("order", params.order);
+  }
+
+  appendFilterParams(query, params.filters);
+
+  return apiRequest<AdminEffectsIndexData>(`/admin/effects?${query.toString()}`, { method: "GET" });
+}
+
+export function createAdminEffect(payload: AdminEffectPayload): Promise<AdminEffect> {
+  return apiPost<AdminEffect>("/admin/effects", payload);
+}
+
+export function updateAdminEffect(id: number, payload: AdminEffectPayload): Promise<AdminEffect> {
+  return apiRequest<AdminEffect>(`/admin/effects/${id}`, { method: "PATCH", body: payload });
+}
+
+export function deleteAdminEffect(id: number): Promise<void> {
+  return apiRequest<void>(`/admin/effects/${id}`, { method: "DELETE" });
+}
+
+export function initEffectAssetUpload(payload: EffectUploadInitRequest): Promise<EffectUploadInitData> {
+  return apiPost<EffectUploadInitData>("/admin/effects/uploads", payload);
 }
 

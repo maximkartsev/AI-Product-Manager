@@ -82,7 +82,6 @@ All tenant-pool tables MUST include:
 
 | Table | Scope | Placement | Required rules |
 |------|-------|-----------|----------------|
-| `credit_transactions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. `user_id` must match the tenant’s central `user_id`. |
 | `token_wallets` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. One wallet per tenant; `user_id` matches the tenant’s central user. |
 | `token_transactions` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. Append-only ledger for credits + job reservations/consumption; idempotent by provider transaction id. |
 | `ai_jobs` | USER_PRIVATE | tenant-pool | Requires `tenant_id`. AI processing jobs; token reservation/consumption tracked per job. |

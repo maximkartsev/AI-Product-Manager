@@ -1,15 +1,4 @@
 erDiagram
-  CREDIT_TRANSACTIONS {
-    bigint id PK "Primary key for the credit transaction."
-    bigint user_id FK "The user who earned or redeemed the credits."
-    decimal amount "The amount of credits transacted. Positive for earning, negative for redeeming."
-    enum type "The type of transaction (e.g., EARNED, REDEEMED, ADJUSTMENT)."
-    text description "A description of the transaction, e.g., 'Earned from creating video #123'."
-    bigint related_purchase_id FK "Links a redemption transaction to the specific purchase it was applied to."
-    timestamp created_at
-    timestamp updated_at
-  }
-
   GALLERY_VIDEOS {
     bigint id PK "Primary key for the gallery video entry."
     bigint user_id FK "The user who created and published the video."
@@ -27,7 +16,7 @@ erDiagram
     bigint user_id FK "The user who made the purchase."
     bigint package_id FK "The package or product that was purchased."
     decimal original_amount "The original price of the package before any discounts."
-    decimal applied_discount_amount "The amount of loyalty credits or discount code value applied to this purchase."
+    decimal applied_discount_amount "The amount of discount code value applied to this purchase."
     decimal total_amount "The final amount paid by the user after all discounts."
     string status "The status of the purchase (e.g., pending, completed, failed, refunded)."
     string external_transaction_id UK "The unique transaction ID from the external payment processor (e.g., Stripe)."
@@ -43,7 +32,6 @@ erDiagram
     string password_hash_or_social_id "Stores the hashed password for email-based login or the unique ID from a social provider."
     string social_provider "Indicates the social login provider (e.g., 'google', 'tiktok') if used."
     string authentication_token UK "API token for authenticating stateless requests."
-    decimal discount_balance "The user's current balance of loyalty credits, which can be redeemed for discounts."
     string remember_token "Standard Laravel field for 'remember me' functionality."
     timestamp created_at
     timestamp updated_at
@@ -293,8 +281,6 @@ erDiagram
     timestamp deleted_at
   }
 
-  CREDIT_TRANSACTIONS ||--o{ USERS : "belongsTo"
-  CREDIT_TRANSACTIONS ||--|| PURCHASES : "belongsTo"
   GALLERY_VIDEOS ||--o{ USERS : "belongsTo"
   PURCHASES ||--o{ USERS : "belongsTo"
   USERS }o--o{ DISCOUNTS : "belongsToMany"

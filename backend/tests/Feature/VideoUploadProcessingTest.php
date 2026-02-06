@@ -44,7 +44,14 @@ class VideoUploadProcessingTest extends TestCase
         config(['services.comfyui.worker_token' => 'test-token']);
         config(['services.comfyui.upload_max_bytes' => 1024 * 1024]);
         config(['services.comfyui.presigned_ttl_seconds' => 900]);
+        config(['services.comfyui.workflow_disk' => 's3']);
         config(['filesystems.default' => 's3']);
+
+        Storage::fake('s3');
+        Storage::disk('s3')->put(
+            'resources/comfyui/workflows/cloud_video_effect.json',
+            json_encode(['1' => ['inputs' => []]])
+        );
 
         $this->resetState();
 
@@ -86,9 +93,12 @@ class VideoUploadProcessingTest extends TestCase
     public function test_upload_initiation_success(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $this->seedWallet($tenant->id, $user->id, 25);
         Sanctum::actingAs($user);
 
         $payload = [
+            'effect_id' => $effect->id,
             'mime_type' => 'video/mp4',
             'size' => 1024,
             'original_filename' => 'input.mp4',
@@ -108,11 +118,32 @@ class VideoUploadProcessingTest extends TestCase
         $this->assertSame('input.mp4', $file['original_filename']);
     }
 
+    public function test_upload_fails_when_tokens_insufficient(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/videos/uploads', [
+            'effect_id' => $effect->id,
+            'mime_type' => 'video/mp4',
+            'size' => 1024,
+            'original_filename' => 'input.mp4',
+        ]);
+
+        $requiredTokens = (int) ceil((float) $effect->credits_cost);
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data.required_tokens', $requiredTokens);
+    }
+
     public function test_upload_requires_auth(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
 
         $response = $this->postJsonWithHost($domain, '/api/videos/uploads', [
+            'effect_id' => $effect->id,
             'mime_type' => 'video/mp4',
             'size' => 1024,
             'original_filename' => 'input.mp4',
@@ -124,11 +155,13 @@ class VideoUploadProcessingTest extends TestCase
     public function test_upload_rejects_tenant_mismatch(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
         $otherUser = User::factory()->create();
 
         Sanctum::actingAs($otherUser);
 
         $response = $this->postJsonWithHost($domain, '/api/videos/uploads', [
+            'effect_id' => $effect->id,
             'mime_type' => 'video/mp4',
             'size' => 1024,
             'original_filename' => 'input.mp4',
@@ -140,6 +173,8 @@ class VideoUploadProcessingTest extends TestCase
     public function test_upload_validates_metadata_and_limits(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $this->seedWallet($tenant->id, $user->id, 25);
         Sanctum::actingAs($user);
 
         $cases = [
@@ -152,11 +187,13 @@ class VideoUploadProcessingTest extends TestCase
         ];
 
         foreach ($cases as $case) {
-            $response = $this->postJsonWithHost($domain, '/api/videos/uploads', $case['payload']);
+            $payload = array_merge($case['payload'], ['effect_id' => $effect->id]);
+            $response = $this->postJsonWithHost($domain, '/api/videos/uploads', $payload);
             $response->assertStatus(422);
         }
 
         $tooLarge = $this->postJsonWithHost($domain, '/api/videos/uploads', [
+            'effect_id' => $effect->id,
             'mime_type' => 'video/mp4',
             'size' => 1024 * 1024 + 1,
             'original_filename' => 'input.mp4',
@@ -168,9 +205,12 @@ class VideoUploadProcessingTest extends TestCase
     public function test_upload_duplicate_hash_creates_separate_files(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $this->seedWallet($tenant->id, $user->id, 25);
         Sanctum::actingAs($user);
 
         $payload = [
+            'effect_id' => $effect->id,
             'mime_type' => 'video/mp4',
             'size' => 512,
             'original_filename' => 'input.mp4',
@@ -195,12 +235,15 @@ class VideoUploadProcessingTest extends TestCase
     public function test_upload_fails_when_disk_unsupported(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $this->seedWallet($tenant->id, $user->id, 25);
         Sanctum::actingAs($user);
 
         app()->instance(PresignedUrlService::class, new PresignedUrlService());
         config(['filesystems.default' => 'local']);
 
         $response = $this->postJsonWithHost($domain, '/api/videos/uploads', [
+            'effect_id' => $effect->id,
             'mime_type' => 'video/mp4',
             'size' => 1024,
             'original_filename' => 'input.mp4',
@@ -212,11 +255,14 @@ class VideoUploadProcessingTest extends TestCase
     public function test_upload_rejects_expired_presigned_ttl(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $this->seedWallet($tenant->id, $user->id, 25);
         Sanctum::actingAs($user);
 
         config(['services.comfyui.presigned_ttl_seconds' => 0]);
 
         $response = $this->postJsonWithHost($domain, '/api/videos/uploads', [
+            'effect_id' => $effect->id,
             'mime_type' => 'video/mp4',
             'size' => 1024,
             'original_filename' => 'input.mp4',

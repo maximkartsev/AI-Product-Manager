@@ -1,4 +1,4 @@
-.PHONY: init check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate install-frontend
+.PHONY: init check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate seed install-frontend
 
 # Prerequisites
 # docker --version
@@ -19,7 +19,7 @@ DB_NAME := bp
 DB_USER := root
 DB_PASSWORD := root
 
-init: check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate install-frontend
+init: check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate seed install-frontend
 	@echo "✅ Initialization complete!"
 
 check-submodules:
@@ -119,6 +119,11 @@ migrate:
 	@echo "🔄 Running database migrations..."
 	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && php artisan tenancy:pools-migrate"
 	@echo "✅ Migrations completed"
+
+seed:
+	@echo "🌱 Seeding database..."
+	@cd $(LARADOCK_DIR) && docker compose exec -T workspace bash -c "cd /var/www && php artisan db:seed"
+	@echo "✅ Seeding completed"
 
 install-frontend:
 	@echo "📦 Checking frontend dependencies..."

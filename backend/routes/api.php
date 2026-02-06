@@ -2,7 +2,9 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\BaseController;
 use App\Http\Middleware\EnsureTenantMatchesUser;
+use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureWorkerToken;
 use App\Http\Controllers\ComfyUiWorkerController;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
@@ -19,8 +21,10 @@ use \App\Http\Controllers\RegisterController as RegisterController;
 use \App\Http\Controllers\PasswordController as PasswordController;
 use \App\Http\Controllers\ReviewController as ReviewController;
 use \App\Http\Controllers\MeController as MeController;
+use \App\Http\Controllers\WalletController as WalletController;
 use \App\Http\Controllers\EffectController as EffectController;
 use \App\Http\Controllers\VideoController as VideoController;
+use \App\Http\Controllers\Admin\EffectsController as AdminEffectsController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -56,6 +60,21 @@ Route::middleware([
 ])->group(function () {
     Route::get('/me', [MeController::class,'show']);
     Route::post('/me', [MeController::class,'update']);
+    Route::get('/wallet', [WalletController::class, 'show']);
+
+    Route::middleware([EnsureAdmin::class])->group(function () {
+        Route::get('/filters', [BaseController::class, 'getAvailableFilers']);
+        Route::get('/filter-options', [BaseController::class, 'getFilterOptions']);
+        Route::get('/columns', [BaseController::class, 'getAvailableColumns']);
+
+        Route::prefix('admin')->group(function () {
+            Route::get('/effects', [AdminEffectsController::class, 'index']);
+            Route::post('/effects/uploads', [AdminEffectsController::class, 'createUpload']);
+            Route::post('/effects', [AdminEffectsController::class, 'store']);
+            Route::patch('/effects/{id}', [AdminEffectsController::class, 'update']);
+            Route::delete('/effects/{id}', [AdminEffectsController::class, 'destroy']);
+        });
+    });
 
     Route::post('/ai-jobs', [AiJobController::class, 'store']);
     Route::post('/videos/uploads', [VideoController::class, 'createUpload']);

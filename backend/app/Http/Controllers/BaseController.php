@@ -370,6 +370,69 @@ class BaseController extends Controller
         return $this->sendResponse(['filters' => $filters], null);
     }
 
+    public function getAvailableColumns(Request $request)
+    {
+        $class = $request->get('class', null);
+
+        if (is_null($class) || empty($class)) {
+            return $this->sendError(trans('Class not specified'), [], 400);
+        }
+
+        if (empty($class)) {
+            return $this->sendError(trans('Invalid class name'), [], 400);
+        }
+
+        $class = 'App\Models\\' . $class;
+
+        if (!((new $class) instanceof BaseModel) && !(new $class) instanceof User) {
+            return $this->sendError(trans('Class not found'), [], 400);
+        }
+
+        $fillableFields = (new $class())->getFillable();
+
+        if ($class != 'App\\Models\\User' && $class::hasTimestamps()) {
+            $fillableFields[] = 'created_at';
+            $fillableFields[] = 'updated_at';
+        }
+
+        $fillableFields[] = 'id';
+
+        $fillableFields = array_unique($fillableFields);
+        sort($fillableFields);
+
+        $columns = [];
+        $model = new $class();
+        $addedKeys = [];
+
+        foreach ($fillableFields as $field) {
+            $key = $field;
+            $label = $field;
+
+            if (str_ends_with($label, '_id')) {
+                $relationName = substr($label, 0, -3);
+                $relationMethod = \Str::camel($relationName);
+
+                if (method_exists($model, $relationMethod)) {
+                    $key = $relationName;
+                    $label = $relationName;
+                }
+            }
+
+            $label = str_replace('_', ' ', $label);
+            $label = ucwords($label);
+
+            if (!in_array($key, $addedKeys, true)) {
+                $columns[] = [
+                    'key' => $key,
+                    'label' => $label,
+                ];
+                $addedKeys[] = $key;
+            }
+        }
+
+        return $this->sendResponse(['columns' => $columns], null);
+    }
+
     public function getFilterOptions(Request $request)
     {
         // if there is no class in request then extract class from controller name

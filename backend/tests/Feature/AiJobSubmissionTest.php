@@ -7,6 +7,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -35,6 +36,13 @@ class AiJobSubmissionTest extends TestCase
             Artisan::call('tenancy:pools-migrate');
             static::$prepared = true;
         }
+
+        config(['services.comfyui.workflow_disk' => 's3']);
+        Storage::fake('s3');
+        Storage::disk('s3')->put(
+            'resources/comfyui/workflows/cloud_video_effect.json',
+            json_encode(['1' => ['inputs' => []]])
+        );
     }
 
     public function test_ai_job_submission_reserves_tokens_and_is_idempotent(): void
@@ -69,6 +77,41 @@ class AiJobSubmissionTest extends TestCase
 
         $this->assertSame(15, $this->getWalletBalance($tenant->id));
         $this->assertSame(1, $this->getJobTransactionCount($tenant->id, $jobId, 'JOB_RESERVE'));
+    }
+
+    public function test_ai_job_submission_builds_payload_from_effect_workflow(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $effect->update([
+            'comfyui_workflow_path' => 'resources/comfyui/workflows/cloud_video_effect.json',
+            'comfyui_input_path_placeholder' => '__INPUT_PATH__',
+            'output_extension' => 'mp4',
+            'output_mime_type' => 'video/mp4',
+            'output_node_id' => '3',
+        ]);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $jobId = $response->json('data.id');
+        $this->assertNotNull($jobId);
+
+        $job = $this->fetchTenantJob($tenant->id, $jobId);
+        $inputPayload = json_decode($job['input_payload'] ?? '', true);
+        $this->assertIsArray($inputPayload);
+        $this->assertArrayHasKey('workflow', $inputPayload);
     }
 
     public function test_ai_job_submission_fails_when_tokens_insufficient(): void

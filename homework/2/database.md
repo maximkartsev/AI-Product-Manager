@@ -8,7 +8,6 @@
 
 1. [Coverage Summary](#coverage-summary)
 2. [Entity Definitions](#entity-definitions)
-   - [CreditTransaction](#credittransaction)
    - [GalleryVideo](#galleryvideo)
    - [Purchase](#purchase)
    - [User](#user)
@@ -42,7 +41,6 @@
 
 | Entity | Table | Coverage Type | Plugin/Package | Migration Action |
 |--------|-------|---------------|----------------|------------------|
-| CreditTransaction | `credit_transactions` | CUSTOM | `N/A` | **create** |
 | GalleryVideo | `gallery_videos` | CUSTOM | `N/A` | **create** |
 | Purchase | `purchases` | CUSTOM | `N/A` | **create** |
 | User | `users` | CUSTOM | `N/A` | **create** |
@@ -75,40 +73,6 @@
 ---
 
 ## Entity Definitions
-
-### CreditTransaction
-
-> Logs all changes to a user's loyalty credit balance, including earning credits from activities and redeeming them on purchases.
-
-**Table:** `credit_transactions`  
-**Scope:** USER_PRIVATE  
-**Storage Class:** EVENT_LOG  
-**Lifecycle:** PERSISTENT  
-**Owner Entity:** User  
-
-#### Fields
-
-| Field | Type | Laravel Type | Constraints | Description |
-|-------|------|--------------|-------------|-------------|
-| `id` | BIGINT | id | **PK**, NOT NULL, INDEXED | Primary key for the credit transaction. |
-| `user_id` | BIGINT | foreign_id_constrained | **FK** → `users.id`, NOT NULL, INDEXED | The user who earned or redeemed the credits. |
-| `amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The amount of credits transacted. Positive for earning, negative for redeeming. |
-| `type` | ENUM | enum | NOT NULL, INDEXED | The type of transaction (e.g., EARNED, REDEEMED, ADJUSTMENT). |
-| `description` | TEXT | text | - | A description of the transaction, e.g., 'Earned from creating video #123'. |
-| `related_purchase_id` | BIGINT | foreign_id | **FK** → `purchases.id`, INDEXED | Links a redemption transaction to the specific purchase it was applied to. |
-| `created_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
-| `updated_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
-
-#### Indexes
-
-- **credit_transactions_user_id_type_index**: `user_id, type`
-
-#### Eloquent Relationships
-
-- **belongsTo()**: One-to-Many (hasMany/belongsTo) → `User`
-- **belongsTo()**: One-to-One (hasOne/belongsTo) → `Purchase`
-
----
 
 ### GalleryVideo
 
@@ -163,7 +127,7 @@
 | `user_id` | BIGINT | foreign_id_constrained | **FK** → `users.id`, NOT NULL, INDEXED | The user who made the purchase. |
 | `package_id` | BIGINT | foreign_id_constrained | **FK** → `packages.id`, NOT NULL, INDEXED | The package or product that was purchased. |
 | `original_amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The original price of the package before any discounts. |
-| `applied_discount_amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The amount of loyalty credits or discount code value applied to this purchase. |
+| `applied_discount_amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The amount of discount code value applied to this purchase. |
 | `total_amount` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The final amount paid by the user after all discounts. |
 | `status` | STRING | string_default(50) | NOT NULL, DEFAULT `pending`, INDEXED | The status of the purchase (e.g., pending, completed, failed, refunded). |
 | `external_transaction_id` | STRING | string | UNIQUE, INDEXED | The unique transaction ID from the external payment processor (e.g., Stripe). |
@@ -180,7 +144,7 @@
 
 ### User
 
-> Stores user account information, authentication details, and loyalty credit balance.
+> Stores user account information and authentication details.
 
 **Table:** `users`  
 **Scope:** GLOBAL  
@@ -198,7 +162,6 @@
 | `password_hash_or_social_id` | STRING | string | 🔒 PII | Stores the hashed password for email-based login or the unique ID from a social provider. |
 | `social_provider` | STRING | string(50) | INDEXED | Indicates the social login provider (e.g., 'google', 'tiktok') if used. |
 | `authentication_token` | STRING | string(100) | UNIQUE, INDEXED | API token for authenticating stateless requests. |
-| `discount_balance` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The user's current balance of loyalty credits, which can be redeemed for discounts. |
 | `remember_token` | STRING | remember_token | - | Standard Laravel field for 'remember me' functionality. |
 | `created_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
 | `updated_at` | TIMESTAMP | timestamp | NOT NULL | Auto-managed |
@@ -211,7 +174,6 @@
 
 #### Eloquent Relationships
 
-- **hasMany()**: One-to-Many (hasMany/belongsTo) → `CreditTransaction`
 - **hasMany()**: One-to-Many (hasMany/belongsTo) → `GalleryVideo`
 - **hasMany()**: One-to-Many (hasMany/belongsTo) → `Purchase`
 - **belongsToMany()**: Many-to-Many (belongsToMany) → `Discount`
@@ -220,7 +182,7 @@
 
 ### Discount
 
-> Represents promotional discount codes (e.g., 'SUMMER20') that can be applied to purchases, separate from user loyalty credits.
+> Represents promotional discount codes (e.g., 'SUMMER20') that can be applied to purchases.
 
 **Table:** `discounts`  
 **Scope:** GLOBAL  
@@ -650,7 +612,7 @@
 
 ### Reward
 
-> Stores loyalty credits, discounts, or other rewards earned by users through platform engagement.
+> Stores user rewards or entitlements earned through platform engagement.
 
 **Table:** `rewards`  
 **Scope:** USER_PRIVATE  
@@ -664,8 +626,8 @@
 |-------|------|--------------|-------------|-------------|
 | `id` | BIGINT | id | **PK**, UNIQUE, NOT NULL, INDEXED | Primary key for the reward. |
 | `user_id` | BIGINT | foreign_id_constrained | **FK** → `users.id`, NOT NULL, INDEXED | The user who earned this reward. |
-| `type` | STRING | string(50) | NOT NULL, DEFAULT `DISCOUNT_CREDIT`, INDEXED | Type of reward, e.g., 'DISCOUNT_CREDIT', 'FREE_EXPORT', 'PRO_TRIAL'. |
-| `value` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The monetary value of the reward if applicable (e.g., discount amount). |
+| `type` | STRING | string(50) | NOT NULL, DEFAULT `EXPORT_CREDIT`, INDEXED | Type of reward, e.g., 'EXPORT_CREDIT', 'PRO_TRIAL'. |
+| `value` | DECIMAL | decimal(10,2) | NOT NULL, DEFAULT `0.0` | The monetary value of the reward if applicable. |
 | `description` | STRING | string | NOT NULL | User-facing description of how the reward was earned. |
 | `source_action` | STRING | string(100) | INDEXED | The action that triggered the reward, e.g., 'VIDEO_CREATION', 'REFERRAL'. |
 | `expires_at` | TIMESTAMP | timestamp | INDEXED | Timestamp for when the reward expires and can no longer be used. |
@@ -1031,12 +993,6 @@
 
 ### Entity Indexes
 
-#### credit_transactions
-
-- `credit_transactions_user_id_type_index`: user_id, type (BTREE)
-- Field index on `id`
-- Field index on `type`
-
 #### gallery_videos
 
 - `gallery_videos_is_public_created_at_index`: is_public, created_at (BTREE)
@@ -1213,7 +1169,6 @@
 - Total entities: 22
 - Total relationships: 43
 - Coverage mapped: 22 entities
-- The system distinguishes between two types of discounts: user-specific loyalty credits stored in `users.discount_balance` and tracked via `credit_transactions`, and global promotional codes managed in the `discounts` table. Purchases can apply amounts from either or both sources.
 - Foreign key constraints assume the existence of `videos` and `packages` tables, which were not part of this request but are required for the defined relationships to be valid.
 - The 'Payment' entity assumes the existence of a 'users' table and a 'purchases' table for foreign key constraints.
 - Monetary values are stored using DECIMAL(10, 2) for precision.
@@ -1263,59 +1218,6 @@ SELECT v.id, v.status, f.url FROM videos AS v JOIN files AS f ON v.processed_fil
 ## Retrieval Query Examples
 
 > Practical query examples for retrieving data. These can be used by engineering teams and AI tools.
-
-### CreditTransaction
-
-**Basic Retrieval**
-
-```sql
--- Get all CreditTransactions with pagination
-SELECT * FROM credit_transactions
-WHERE user_id = :user_id
-ORDER BY created_at DESC
-LIMIT 20 OFFSET 0;
-```
-
-```php
-// Laravel Eloquent
-$creditTransactions = CreditTransaction::query()
-    ->where('user_id', $userId)
-    ->orderBy('created_at', 'desc')
-    ->paginate(20);
-```
-
-**Find by ID**
-
-```sql
-SELECT * FROM credit_transactions
-WHERE id = :id;
-```
-
-```php
-$creditTransaction = CreditTransaction::findOrFail($id);
-```
-
-**With Relationships**
-
-```php
-// Eager load relationships
-$creditTransactions = CreditTransaction::query()
-    ->with(['belongsTo', 'belongsTo'])
-    ->get();
-```
-
-**Search Query**
-
-```php
-// Search across text fields
-$creditTransactions = CreditTransaction::query()
-    ->where(function ($query) use ($search) {
-        $query->where('description', 'like', "%{$search}%");
-    })
-    ->get();
-```
-
----
 
 ### GalleryVideo
 

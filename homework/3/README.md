@@ -7,7 +7,7 @@ Implementation of 20 new entities + 4 pivot tables for an AI Video Effects Studi
 
 ## Files Created
 
-### Migrations (25 files)
+### Migrations (24 files)
 Located in `backend/database/migrations/`:
 
 | File | Description |
@@ -29,7 +29,6 @@ Located in `backend/database/migrations/`:
 | `2026_01_20_000015_create_watermarks_table.php` | User watermarks |
 | `2026_01_20_000016_create_purchases_table.php` | Purchase records |
 | `2026_01_20_000017_create_payments_table.php` | Payment records |
-| `2026_01_20_000018_create_credit_transactions_table.php` | Credit history |
 | `2026_01_20_000019_create_videos_table.php` | User videos |
 | `2026_01_20_000020_create_exports_table.php` | Export jobs |
 | `2026_01_20_000021_create_gallery_videos_table.php` | Public gallery |
@@ -45,7 +44,7 @@ Located in `backend/app/Models/`:
 Category.php, Tier.php, Package.php, AiModel.php, Algorithm.php,
 Discount.php, Reward.php, Subscription.php, File.php, Effect.php,
 Style.php, Filter.php, Overlay.php, Watermark.php, Purchase.php,
-Payment.php, CreditTransaction.php, Video.php, Export.php, GalleryVideo.php
+Payment.php, Video.php, Export.php, GalleryVideo.php
 ```
 
 Each model includes:
@@ -64,7 +63,7 @@ AiModelController.php, AlgorithmController.php, DiscountController.php,
 RewardController.php, SubscriptionController.php, FileController.php,
 EffectController.php, StyleController.php, FilterController.php,
 OverlayController.php, WatermarkController.php, PurchaseController.php,
-PaymentController.php, CreditTransactionController.php, VideoController.php,
+PaymentController.php, VideoController.php,
 ExportController.php, GalleryVideoController.php
 ```
 
@@ -83,7 +82,7 @@ Located in `backend/app/Http/Resources/`:
 Category.php, Tier.php, Package.php, AiModel.php, Algorithm.php,
 Discount.php, Reward.php, Subscription.php, File.php, Effect.php,
 Style.php, Filter.php, Overlay.php, Watermark.php, Purchase.php,
-Payment.php, CreditTransaction.php, Video.php, Export.php, GalleryVideo.php
+Payment.php, Video.php, Export.php, GalleryVideo.php
 ```
 
 ### Updated Files
@@ -96,9 +95,9 @@ Added 120 messages (6 per entity).
 
 **User Model** - `backend/app/Models/User.php`:
 Added new fields and relationships:
-- credits_balance, avatar_url, timezone, locale, preferences
+- avatar_url, timezone, locale, preferences
 - referral_code, referred_by, referral_count
-- Relationships: subscriptions, files, videos, watermarks, purchases, creditTransactions, galleryVideos, discounts
+- Relationships: subscriptions, files, videos, watermarks, purchases, galleryVideos, discounts
 
 **Tag Model** - `backend/app/Models/Tag.php`:
 Added morphedByMany relationships for Overlay and Watermark.
@@ -125,7 +124,6 @@ Added morphedByMany relationships for Overlay and Watermark.
 | `/api/watermarks` | User watermarks |
 | `/api/purchases` | Purchase records |
 | `/api/payments` | Payment records |
-| `/api/credit-transactions` | Credit history |
 | `/api/videos` | User videos |
 | `/api/exports` | Export jobs |
 | `/api/gallery-videos` | Public gallery |
@@ -175,7 +173,6 @@ User
 ├── Videos (hasMany) -> Effect, Style, Filter, Overlay, Watermark
 ├── Watermarks (hasMany)
 ├── Purchases (hasMany) -> Package, Discount
-├── CreditTransactions (hasMany)
 ├── GalleryVideos (hasMany)
 └── Discounts (belongsToMany)
 

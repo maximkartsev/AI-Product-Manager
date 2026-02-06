@@ -46,7 +46,7 @@ Thumbs.db
 # Docker
 *.log
 
-
+.venv/
 *.iml
 .claude/
 .cursor/
@@ -56,3 +56,4 @@ aios
 aios.7z
 nul
 Lectures
+run_worker_cloud.bat

@@ -52,7 +52,8 @@ def _cloud_request(method: str, path: str, **kwargs) -> requests.Response:
     url = f"{COMFY_CLOUD_BASE_URL}{path}"
     headers = kwargs.pop("headers", {})
     headers.update(_cloud_headers())
-    resp = requests.request(method, url, headers=headers, timeout=60, **kwargs)
+    timeout = kwargs.pop("timeout", 60)
+    resp = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
     resp.raise_for_status()
     return resp
 
@@ -121,7 +122,8 @@ def fail_job(dispatch_id: int, lease_token: str, message: str) -> None:
 def download_input(input_url: str) -> str:
     resp = requests.get(input_url, stream=True, timeout=60)
     resp.raise_for_status()
-    suffix = os.path.splitext(input_url)[1] or ".bin"
+    url_path = input_url.split("?", 1)[0]
+    suffix = os.path.splitext(url_path)[1] or ".bin"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         for chunk in resp.iter_content(chunk_size=1024 * 1024):
             if chunk:
@@ -131,8 +133,15 @@ def download_input(input_url: str) -> str:
 
 def upload_output(output_url: str, output_headers: Dict[str, str], output_path: str) -> None:
     headers = output_headers or {}
+    normalized = {}
+    for key, value in headers.items():
+        if isinstance(value, list):
+            if value:
+                normalized[key] = value[0]
+            continue
+        normalized[key] = value
     with open(output_path, "rb") as handle:
-        resp = requests.put(output_url, data=handle, headers=headers, timeout=300)
+        resp = requests.put(output_url, data=handle, headers=normalized, timeout=300)
         resp.raise_for_status()
 
 
@@ -143,14 +152,42 @@ def prepare_workflow(input_payload: Dict[str, Any], input_reference: Optional[st
 
     if input_reference:
         placeholder = input_payload.get("input_path_placeholder", "__INPUT_PATH__")
+        reference_prefix = input_payload.get("input_reference_prefix")
+        is_asset_reference = reference_prefix is None and not os.path.exists(input_reference)
         serialized = json.dumps(workflow)
         if placeholder in serialized:
-            workflow = json.loads(serialized.replace(placeholder, input_reference))
+            if reference_prefix is not None:
+                if reference_prefix:
+                    serialized = serialized.replace(
+                        f"{reference_prefix}{placeholder}",
+                        f"{reference_prefix}{input_reference}",
+                    )
+                    serialized = serialized.replace(
+                        placeholder, f"{reference_prefix}{input_reference}"
+                    )
+                else:
+                    serialized = serialized.replace(
+                        f"asset://{placeholder}", input_reference
+                    )
+                    serialized = serialized.replace(placeholder, input_reference)
+            elif is_asset_reference:
+                serialized = serialized.replace(
+                    f"asset://{placeholder}", f"asset://{input_reference}"
+                )
+                serialized = serialized.replace(placeholder, f"asset://{input_reference}")
+            else:
+                serialized = serialized.replace(placeholder, input_reference)
+            workflow = json.loads(serialized)
 
         input_node_id = input_payload.get("input_node_id")
         input_field = input_payload.get("input_field")
         if input_node_id is not None and input_field:
-            workflow[str(input_node_id)]["inputs"][input_field] = input_reference
+            value = input_reference
+            if reference_prefix and not str(value).startswith(reference_prefix):
+                value = f"{reference_prefix}{value}"
+            elif is_asset_reference and not str(value).startswith("asset://"):
+                value = f"asset://{value}"
+            workflow[str(input_node_id)]["inputs"][input_field] = value
 
     return workflow
 
@@ -244,6 +281,18 @@ def cloud_upload_asset_from_url(input_url: str, name: str, mime_type: Optional[s
     return resp.json()
 
 
+def cloud_upload_input_file(file_path: str, name: str, mime_type: Optional[str]) -> Dict[str, Any]:
+    file_name = name or os.path.basename(file_path)
+    file_mime = mime_type or "application/octet-stream"
+    form_data = {
+        "type": "input",
+    }
+    with open(file_path, "rb") as handle:
+        files = {"image": (file_name, handle, file_mime)}
+        resp = _cloud_request("POST", "/api/upload/image", data=form_data, files=files, timeout=300)
+    return resp.json()
+
+
 def cloud_submit_prompt(workflow: Dict[str, Any], extra_data: Optional[Dict[str, Any]]) -> str:
     payload: Dict[str, Any] = {"prompt": workflow}
     if extra_data:
@@ -266,9 +315,9 @@ def cloud_wait_for_job(prompt_id: str) -> None:
         status_resp = _cloud_request("GET", f"/api/job/{prompt_id}/status")
         status_data = status_resp.json()
         status = status_data.get("status")
-        if status in ("completed",):
+        if status in ("completed", "success"):
             return
-        if status in ("error", "cancelled"):
+        if status in ("error", "cancelled", "failed", "non_retryable_error", "retryable_error"):
             raise RuntimeError(status_data.get("error_message") or "Comfy Cloud job failed.")
 
         time.sleep(2)
@@ -343,13 +392,18 @@ def process_job(job: Dict[str, Any]) -> None:
                 raise RuntimeError("Missing input_url for cloud provider.")
 
             asset_name = input_payload.get("input_name") or os.path.basename(input_url.split("?")[0])
-            asset = cloud_upload_asset_from_url(input_url, asset_name, input_payload.get("input_mime_type"))
-            input_reference = asset.get("asset_hash") or asset.get("name")
+            input_path = download_input(input_url)
+            upload = cloud_upload_input_file(input_path, asset_name, input_payload.get("input_mime_type"))
+            input_reference = upload.get("name")
             if not input_reference:
-                raise RuntimeError("Cloud asset reference missing.")
+                raise RuntimeError("Cloud input upload missing filename.")
 
+            input_payload["input_reference_prefix"] = ""
             workflow = prepare_workflow(input_payload, input_reference)
-            prompt_id = cloud_submit_prompt(workflow, input_payload.get("extra_data"))
+            extra_data = dict(input_payload.get("extra_data") or {})
+            if COMFY_MANAGED_API_KEY:
+                extra_data.setdefault("api_key_comfy_org", COMFY_MANAGED_API_KEY)
+            prompt_id = cloud_submit_prompt(workflow, extra_data or None)
             cloud_wait_for_job(prompt_id)
             outputs = cloud_fetch_outputs(prompt_id)
             output_file_info = extract_output_file(outputs, output_node_id)
@@ -367,7 +421,7 @@ def process_job(job: Dict[str, Any]) -> None:
             if not COMFY_MANAGED_API_KEY:
                 raise RuntimeError("COMFY_MANAGED_API_KEY is required for managed provider.")
             extra_data = dict(extra_data or {})
-            extra_data.setdefault("api_key", COMFY_MANAGED_API_KEY)
+            extra_data.setdefault("api_key_comfy_org", COMFY_MANAGED_API_KEY)
 
         provider_job_id, outputs = run_comfyui(workflow, output_node_id, extra_data)
         output_file_info = extract_output_file(outputs, output_node_id)

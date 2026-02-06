@@ -10,5 +10,4 @@ MVP journeys:
 - `subscription-upgrade.md`
 - `viral-loop-onboarding.md`
 - `publish-to-gallery.md`
-- `loyalty-credits.md`
 

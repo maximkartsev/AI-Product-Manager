@@ -1448,9 +1448,9 @@
 ## Schema Remarks
 
 - Schema generated from PCD analysis
-- Total entities: 26
-- Total relationships: 49
-- Coverage mapped: 26 entities
+- Total entities: 27
+- Total relationships: 53
+- Coverage mapped: 27 entities
 - The system distinguishes between two types of discounts: user-specific loyalty credits stored in `users.discount_balance` and tracked via `credit_transactions`, and global promotional codes managed in the `discounts` table. Purchases can apply amounts from either or both sources.
 - Token balances are stored in tenant DBs (`token_wallets`) with an append-only ledger (`token_transactions`) and are credited after payment success (idempotent).
 - Payment webhooks are recorded in central `payment_events` with unique `provider_event_id` for idempotency.
@@ -1542,17 +1542,6 @@ $creditTransaction = CreditTransaction::findOrFail($id);
 // Eager load relationships
 $creditTransactions = CreditTransaction::query()
     ->with(['belongsTo', 'belongsTo'])
-    ->get();
-```
-
-**Search Query**
-
-```php
-// Search across text fields
-$creditTransactions = CreditTransaction::query()
-    ->where(function ($query) use ($search) {
-        $query->where('description', 'like', "%{$search}%");
-    })
     ->get();
 ```
 

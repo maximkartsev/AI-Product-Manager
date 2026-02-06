@@ -21,6 +21,7 @@ class UsersSeeder extends Seeder
                 'name' => 'Admin User',
                 'email' => 'test@gmail.com',
                 'password' => bcrypt('654321'),
+                'is_admin' => true,
             ],
         ];
 
@@ -28,6 +29,11 @@ class UsersSeeder extends Seeder
             $user = User::query()->where('email', $input['email'])->first();
             if (!$user) {
                 $user = User::factory()->create($input);
+            }
+
+            if (array_key_exists('is_admin', $input) && (bool) $user->is_admin !== (bool) $input['is_admin']) {
+                $user->is_admin = (bool) $input['is_admin'];
+                $user->save();
             }
 
             $this->ensureTenantForUser($user);

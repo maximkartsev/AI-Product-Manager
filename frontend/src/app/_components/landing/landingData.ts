@@ -133,5 +133,5 @@ export const features: Feature[] = [
   },
 ];
 
-export const trustBadges = ["Free to start", "No credit card", "Instant results"] as const;
+export const trustBadges = ["Instant start", "No credit card", "Instant results"] as const;
 

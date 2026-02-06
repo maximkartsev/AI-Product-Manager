@@ -29,6 +29,16 @@ pip install -r requirements.txt
 - `HEARTBEAT_INTERVAL_SECONDS` (default `30`)
 - `CAPABILITIES` (JSON string, optional)
 
+## Comfy Cloud + MinIO E2E
+For the full end-to-end flow (upload → cloud → MinIO), see:
+`docs/ai-supported/requirements/comfy-cloud-e2e.md`.
+
+Required env vars for cloud mode:
+- `COMFY_PROVIDER=cloud`
+- `COMFY_CLOUD_API_KEY=<your Comfy Cloud key>`
+- `WORKER_TOKEN=<COMFYUI_WORKER_TOKEN>`
+- `API_BASE_URL=http://localhost:80` (or `http://nginx` in Docker)
+
 ## Run
 
 ```

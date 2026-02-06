@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Effect;
 use App\Models\File;
 use App\Models\GalleryVideo;
+use App\Models\TokenWallet;
 use App\Models\Video;
 use App\Services\PresignedUrlService;
 use Illuminate\Http\JsonResponse;
@@ -24,6 +25,7 @@ class VideoController extends BaseController
     public function createUpload(Request $request, PresignedUrlService $presigned): JsonResponse
     {
         $validator = Validator::make($request->all(), [
+            'effect_id' => 'numeric|required|exists:effects,id',
             'mime_type' => 'string|required|max:255',
             'size' => 'integer|required|min:1',
             'original_filename' => 'string|required|max:512',
@@ -32,6 +34,31 @@ class VideoController extends BaseController
 
         if ($validator->fails()) {
             return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $effect = Effect::query()->find((int) $request->input('effect_id'));
+        if (!$effect) {
+            return $this->sendError('Effect not found.', [], 404);
+        }
+
+        $tokenCost = (int) ceil((float) $effect->credits_cost);
+        if ($tokenCost > 0) {
+            $tenantId = (string) tenant()->getKey();
+            $wallet = TokenWallet::query()->firstOrCreate(
+                ['tenant_id' => $tenantId],
+                ['user_id' => (int) $request->user()->id, 'balance' => 0]
+            );
+
+            if ((int) $wallet->user_id !== (int) $request->user()->id) {
+                return $this->sendError('Token wallet user mismatch.', [], 500);
+            }
+
+            if ((int) $wallet->balance < $tokenCost) {
+                return $this->sendError('Insufficient tokens.', [
+                    'required_tokens' => $tokenCost,
+                    'balance' => (int) $wallet->balance,
+                ], 422);
+            }
         }
 
         $mimeType = strtolower((string) $request->input('mime_type'));

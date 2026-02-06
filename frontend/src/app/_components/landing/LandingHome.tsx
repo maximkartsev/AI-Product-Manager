@@ -1,6 +1,6 @@
 "use client";
 
-import { ApiError, getEffects, type ApiEffect } from "@/lib/api";
+import { ApiError, getAccessToken, getEffects, getMe, type ApiEffect } from "@/lib/api";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -58,7 +58,7 @@ function toLandingEffect(effect: ApiEffect): LandingEffect {
     name: effect.name,
     tagline: taglineForDescription(effect.description),
     badge: effect.is_premium ? "Premium" : undefined,
-    stats: { uses: effect.is_premium ? "Premium" : "Free" },
+    stats: { uses: effect.is_premium ? "Premium" : "Tokens" },
     gradient: gradientForSlug(effect.slug),
   };
 }
@@ -249,9 +249,14 @@ export default function LandingHome() {
   const [authOpen, setAuthOpen] = useState(false);
   const [effectsState, setEffectsState] = useState<EffectsState>({ status: "loading" });
   const [effectsReload, setEffectsReload] = useState(0);
+  const [token, setToken] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const openAuth = () => setAuthOpen(true);
-  const closeAuth = () => setAuthOpen(false);
+  const closeAuth = () => {
+    setAuthOpen(false);
+    setToken(getAccessToken());
+  };
 
   const goToEffect = (slug: string) => {
     router.push(`/effects/${encodeURIComponent(slug)}`);
@@ -293,6 +298,33 @@ export default function LandingHome() {
     };
   }, [effectsReload]);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setToken(getAccessToken()), 0);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setIsAdmin(false);
+      return;
+    }
+
+    let cancelled = false;
+    getMe()
+      .then((data) => {
+        if (cancelled) return;
+        setIsAdmin(Boolean(data.is_admin));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setIsAdmin(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <div className="relative mx-auto w-full max-w-md sm:max-w-xl lg:max-w-4xl">
@@ -309,9 +341,16 @@ export default function LandingHome() {
               <span className="uppercase">{brand.name}</span>
             </Link>
 
-            <PillButton onClick={openAuth} ariaLabel="Sign in">
-              Sign In
-            </PillButton>
+            <div className="flex items-center gap-2">
+              {isAdmin ? (
+                <PillButton onClick={() => router.push("/admin/effects")} ariaLabel="Admin">
+                  Admin
+                </PillButton>
+              ) : null}
+              <PillButton onClick={openAuth} ariaLabel={token ? "Account" : "Sign in"}>
+                {token ? "Account" : "Sign In"}
+              </PillButton>
+            </div>
           </div>
         </header>
 

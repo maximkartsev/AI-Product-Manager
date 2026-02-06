@@ -17,7 +17,6 @@ AI Video Effects Studio lets a user upload a video, apply an AI-powered effect, 
 
 - Watermark / animated frames as a **freemium gate**
 - Packages / tiers / subscriptions
-- Loyalty/discount credits
 
 ## Hard constraints (from seed)
 

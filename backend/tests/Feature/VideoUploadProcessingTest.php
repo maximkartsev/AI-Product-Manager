@@ -290,6 +290,75 @@ class VideoUploadProcessingTest extends TestCase
             ->assertJsonPath('data.is_public', false);
     }
 
+    public function test_get_video_success_returns_processed_url(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $originalFileId = $this->createTenantFile($tenant->id, $user->id);
+        $processedFileId = $this->createTenantFile($tenant->id, $user->id, [
+            'url' => 'https://example.com/output.mp4',
+        ]);
+
+        $videoId = $this->createTenantVideo($tenant->id, $user->id, $effect->id, $originalFileId, [
+            'status' => 'completed',
+            'processed_file_id' => $processedFileId,
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->getJson('http://' . $domain . "/api/videos/{$videoId}");
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.id', $videoId)
+            ->assertJsonPath('data.processed_file_url', 'https://example.com/output.mp4')
+            ->assertJsonPath('data.error', null);
+    }
+
+    public function test_get_video_returns_error_when_failed(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $originalFileId = $this->createTenantFile($tenant->id, $user->id);
+
+        $videoId = $this->createTenantVideo($tenant->id, $user->id, $effect->id, $originalFileId, [
+            'status' => 'failed',
+            'processing_details' => json_encode(['error' => 'Worker failure']),
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->getJson('http://' . $domain . "/api/videos/{$videoId}");
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.id', $videoId)
+            ->assertJsonPath('data.error', 'Worker failure');
+    }
+
+    public function test_get_video_rejects_foreign_user_id(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect();
+        $otherUser = User::factory()->create();
+        $originalFileId = $this->createTenantFile($tenant->id, $otherUser->id);
+
+        $videoId = $this->createTenantVideo($tenant->id, $otherUser->id, $effect->id, $originalFileId);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->getJson('http://' . $domain . "/api/videos/{$videoId}");
+        $response->assertStatus(403);
+    }
+
+    public function test_get_video_not_found(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        Sanctum::actingAs($user);
+
+        $response = $this->getJson('http://' . $domain . '/api/videos/999999');
+        $response->assertStatus(404)
+            ->assertJsonPath('success', false);
+    }
+
     public function test_create_video_requires_effect_id(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\ComfyUiWorker;
+use App\Models\Effect;
 use App\Models\File;
 use App\Models\Tenant;
 use App\Models\Video;
@@ -160,6 +161,15 @@ class ComfyUiWorkerController extends BaseController
             }
 
             $job->save();
+
+            if ($job->started_at && $job->completed_at) {
+                $durationSeconds = (int) $job->started_at->diffInSeconds($job->completed_at);
+                if ($durationSeconds > 0) {
+                    Effect::query()
+                        ->whereKey($job->effect_id)
+                        ->update(['last_processing_time_seconds' => $durationSeconds]);
+                }
+            }
 
             if ($job->video_id) {
                 Video::query()->whereKey($job->video_id)->update([

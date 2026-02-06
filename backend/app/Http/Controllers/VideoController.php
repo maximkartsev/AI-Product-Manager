@@ -10,6 +10,7 @@ use App\Models\Video;
 use App\Services\PresignedUrlService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -162,6 +163,75 @@ class VideoController extends BaseController
         ]);
 
         return $this->sendResponse($video, 'Video created');
+    }
+
+    public function show(Request $request, int $id, PresignedUrlService $presigned): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->sendError('Unauthorized.', [], 401);
+        }
+
+        $video = Video::query()->find($id);
+        if (!$video) {
+            return $this->sendError('Video not found.', [], 404);
+        }
+
+        if ((int) $video->user_id !== (int) $user->id) {
+            return $this->sendError('Video ownership mismatch.', [], 403);
+        }
+
+        $originalFileUrl = null;
+        if ($video->original_file_id) {
+            $file = File::withTrashed()->find((int) $video->original_file_id);
+            if ($file) {
+                if ($file->url) {
+                    $originalFileUrl = (string) $file->url;
+                } elseif ($file->disk && $file->path) {
+                    try {
+                        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+                        $originalFileUrl = $presigned->downloadUrl($file->disk, $file->path, $ttlSeconds);
+                    } catch (\Throwable $e) {
+                        // ignore URL generation issues
+                    }
+                }
+            }
+        }
+
+        $processedFileUrl = null;
+        if ($video->processed_file_id) {
+            $file = File::withTrashed()->find((int) $video->processed_file_id);
+            if ($file) {
+                if ($file->url) {
+                    $processedFileUrl = (string) $file->url;
+                } elseif ($file->disk && $file->path) {
+                    try {
+                        $processedFileUrl = (string) Storage::disk($file->disk)->url($file->path);
+                    } catch (\Throwable $e) {
+                        // ignore URL generation issues
+                    }
+                }
+            }
+        }
+
+        $error = null;
+        $details = $video->processing_details;
+        if (is_array($details)) {
+            $raw = $details['error'] ?? null;
+            if (is_string($raw) && trim($raw) !== '') {
+                $error = trim($raw);
+            }
+        }
+        if (!$error && $video->status === 'failed') {
+            $error = 'Processing failed.';
+        }
+
+        $payload = $video->toArray();
+        $payload['original_file_url'] = $originalFileUrl;
+        $payload['processed_file_url'] = $processedFileUrl;
+        $payload['error'] = $error;
+
+        return $this->sendResponse($payload, 'Video retrieved');
     }
 
     public function publish(Request $request, Video $video): JsonResponse

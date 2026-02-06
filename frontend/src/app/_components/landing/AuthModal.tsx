@@ -2,6 +2,7 @@
 
 import {
   ApiError,
+  clearTenantDomain,
   login,
   register,
   setAccessToken,
@@ -16,6 +17,7 @@ import { IconApple, IconEye, IconEyeOff, IconLock, IconMail, IconMusic, IconSpar
 type Props = {
   open: boolean;
   onClose: () => void;
+  initialMode?: "signup" | "signin";
 };
 
 type SubmitState =
@@ -106,24 +108,30 @@ function formatAuthError(err: ApiError): string {
   return `${base} (${firstField}: ${String(firstMessage)})`;
 }
 
-export default function AuthModal({ open, onClose }: Props) {
+export default function AuthModal({ open, onClose, initialMode = "signup" }: Props) {
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const [mode, setMode] = useState<"signup" | "signin">("signup");
+  const [mode, setMode] = useState<"signup" | "signin">(initialMode);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
 
   const resetState = useCallback(() => {
-    setMode("signup");
+    setMode(initialMode);
     setShowPassword(false);
     setName("");
     setEmail("");
     setPassword("");
     setSubmitState({ status: "idle" });
-  }, []);
+  }, [initialMode]);
+
+  useEffect(() => {
+    if (!open) return;
+    setMode(initialMode);
+    setSubmitState({ status: "idle" });
+  }, [initialMode, open]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -161,6 +169,8 @@ export default function AuthModal({ open, onClose }: Props) {
       setAccessToken(data.token);
       if (data.tenant?.domain) {
         setTenantDomain(data.tenant.domain);
+      } else {
+        clearTenantDomain();
       }
 
       setSubmitState({ status: "success" });

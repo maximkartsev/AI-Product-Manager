@@ -1,0 +1,940 @@
+"use client";
+
+import AuthModal from "@/app/_components/landing/AuthModal";
+import {
+  ApiError,
+  createVideo,
+  getAccessToken,
+  getEffect,
+  getVideo,
+  initVideoUpload,
+  submitAiJob,
+  type ApiEffect,
+  type VideoData,
+} from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
+import { deletePendingUpload, deletePreview, loadPendingUpload, loadPreview, savePreview } from "@/lib/uploadPreviewStore";
+import { AlertTriangle, Film, Layers, Sparkles, UploadCloud, Wand2 } from "lucide-react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+
+type LoadState =
+  | { status: "loading" }
+  | { status: "success"; data: ApiEffect }
+  | { status: "not_found" }
+  | { status: "error"; message: string; code?: number };
+
+type VideoPollState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; data: VideoData }
+  | { status: "error"; message: string; code?: number };
+
+type StepStatus = "pending" | "running" | "done" | "error";
+
+type ProcessingStep = {
+  id: string;
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+};
+
+const PROCESSING_STEPS: ProcessingStep[] = [
+  { id: "frames", label: "Analyzing video frames...", icon: Film },
+  { id: "subjects", label: "Detecting subjects...", icon: Layers },
+  { id: "magic", label: "Applying AI magic...", icon: Wand2 },
+  { id: "finalize", label: "Finalizing your creation...", icon: Sparkles },
+];
+
+function subtitleFromEffect(effect?: ApiEffect | null): string {
+  const raw = (effect?.description ?? "").trim();
+  if (!raw) return "Transform into comic art";
+  const firstLine = raw.split(/\r?\n/)[0] ?? raw;
+  return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
+}
+
+function isTerminalStatus(status: string | undefined | null): boolean {
+  return status === "completed" || status === "failed" || status === "expired";
+}
+
+function normalizeUploadHeaders(
+  headers: Record<string, string | string[]> | undefined,
+  fallbackContentType: string,
+): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      if (Array.isArray(value)) {
+        if (value[0]) normalized[key] = value[0];
+        continue;
+      }
+      if (value) normalized[key] = value;
+    }
+  }
+
+  if (!normalized["Content-Type"]) {
+    normalized["Content-Type"] = fallbackContentType;
+  }
+
+  return normalized;
+}
+
+function uploadWithProgress(opts: {
+  url: string;
+  headers: Record<string, string>;
+  file: File;
+  onProgress: (value: number) => void;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", opts.url, true);
+
+    Object.entries(opts.headers).forEach(([key, value]) => {
+      xhr.setRequestHeader(key, value);
+    });
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const pct = Math.round((event.loaded / event.total) * 100);
+      opts.onProgress(Math.min(100, Math.max(0, pct)));
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Upload failed (${xhr.status}).`));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Upload failed."));
+    };
+
+    xhr.send(opts.file);
+  });
+}
+
+function formatUploadError(err: ApiError): string {
+  const base = err.message || "Upload failed.";
+  const payload = err.data as { data?: unknown } | undefined;
+  if (!payload || typeof payload !== "object" || !("data" in payload)) return base;
+
+  const data = payload.data as Record<string, unknown> | undefined;
+  if (!data) return base;
+
+  const requiredTokens = data.required_tokens;
+  if (typeof requiredTokens === "number") {
+    return `${base} (required tokens: ${requiredTokens})`;
+  }
+
+  return base;
+}
+
+export default function ProcessingClient({ slug }: { slug: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const videoId = useMemo(() => {
+    const raw = searchParams.get("videoId");
+    if (!raw) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.trunc(n);
+  }, [searchParams]);
+  const uploadId = useMemo(() => {
+    const raw = searchParams.get("uploadId");
+    if (!raw) return null;
+    return raw.trim() || null;
+  }, [searchParams]);
+
+  const [authOpen, setAuthOpen] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [localPreviewReady, setLocalPreviewReady] = useState(false);
+  const [previewNonce, setPreviewNonce] = useState(0);
+
+  const [effectState, setEffectState] = useState<LoadState>({ status: "loading" });
+  const [videoState, setVideoState] = useState<VideoPollState>({ status: "idle" });
+  const [pollNotice, setPollNotice] = useState<string | null>(null);
+  const [pollNonce, setPollNonce] = useState(0);
+
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "uploading" | "error" | "done">("idle");
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadAttempt, setUploadAttempt] = useState(0);
+  const uploadInFlightRef = useRef(false);
+
+  // UI simulation state (local per page instance)
+  const [doneSteps, setDoneSteps] = useState(0);
+  const [progressValue, setProgressValue] = useState(8);
+  const processingStartMsRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setToken(getAccessToken()), 0);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (uploadId) {
+      setLocalPreviewReady(false);
+      setUploadStatus("loading");
+      setUploadError(null);
+
+      void (async () => {
+        const file = await loadPendingUpload(uploadId);
+        if (cancelled) return;
+
+        if (!file) {
+          setPendingFile(null);
+          setLocalPreviewUrl(null);
+          setLocalPreviewReady(true);
+          setUploadStatus("error");
+          setUploadError("Upload session expired. Please reselect the video.");
+          return;
+        }
+
+        setPendingFile(file);
+        setLocalPreviewUrl(URL.createObjectURL(file));
+        setLocalPreviewReady(true);
+        setUploadStatus("idle");
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!videoId) {
+      setPendingFile(null);
+      setLocalPreviewUrl(null);
+      setLocalPreviewReady(true);
+      return;
+    }
+
+    setPendingFile(null);
+
+    const previewKey = `video_preview_${videoId}`;
+    setLocalPreviewReady(false);
+
+    try {
+      const stored = window.sessionStorage.getItem(previewKey);
+      if (stored) {
+        setLocalPreviewUrl(stored);
+        setLocalPreviewReady(true);
+        return () => {
+          cancelled = true;
+        };
+      }
+    } catch {
+      // ignore storage issues
+    }
+
+    void (async () => {
+      const file = await loadPreview(videoId);
+      if (cancelled) return;
+
+      if (file) {
+        const url = URL.createObjectURL(file);
+        setLocalPreviewUrl(url);
+      } else {
+        setLocalPreviewUrl(null);
+      }
+
+      setLocalPreviewReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [previewNonce, uploadId, videoId]);
+
+  useEffect(() => {
+    if (!localPreviewUrl || !localPreviewUrl.startsWith("blob:")) return;
+    return () => {
+      URL.revokeObjectURL(localPreviewUrl);
+    };
+  }, [localPreviewUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      setEffectState({ status: "loading" });
+      try {
+        const data = await getEffect(slug);
+        if (cancelled) return;
+        setEffectState({ status: "success", data });
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError) {
+          if (err.status === 404) {
+            setEffectState({ status: "not_found" });
+            return;
+          }
+          setEffectState({ status: "error", message: err.message, code: err.status });
+          return;
+        }
+        setEffectState({ status: "error", message: "Unexpected error while loading the effect." });
+      }
+    }
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  useEffect(() => {
+    if (!uploadId) return;
+    if (uploadInFlightRef.current) return;
+    if (uploadStatus === "uploading") return;
+    if (uploadStatus === "error") return;
+    if (!pendingFile) return;
+    if (!token) {
+      setUploadStatus("error");
+      setUploadError("Sign in to upload your video.");
+      return;
+    }
+    if (effectState.status !== "success") return;
+
+    const guardKey = `upload_job_${uploadId}`;
+    try {
+      const existing = window.sessionStorage.getItem(guardKey);
+      if (existing) {
+        if (/^\d+$/.test(existing)) {
+          const cachedVideoId = Number(existing);
+          if (Number.isFinite(cachedVideoId) && cachedVideoId > 0) {
+            router.replace(`/effects/${encodeURIComponent(slug)}/processing?videoId=${cachedVideoId}`);
+            return;
+          }
+        }
+        return;
+      }
+      window.sessionStorage.setItem(guardKey, "1");
+    } catch {
+      // ignore storage issues
+    }
+
+    uploadInFlightRef.current = true;
+    setUploadStatus("uploading");
+    setUploadError(null);
+    setUploadProgress(0);
+
+    const run = async () => {
+      try {
+        const mimeType = pendingFile.type || "video/mp4";
+        const init = await initVideoUpload({
+          effect_id: effectState.data.id,
+          mime_type: mimeType,
+          size: pendingFile.size,
+          original_filename: pendingFile.name,
+        });
+
+        const uploadHeaders = normalizeUploadHeaders(init.upload_headers, mimeType);
+        await uploadWithProgress({
+          url: init.upload_url,
+          headers: uploadHeaders,
+          file: pendingFile,
+          onProgress: (value) => setUploadProgress(value),
+        });
+
+        setUploadProgress(100);
+
+        const video = await createVideo({
+          effect_id: effectState.data.id,
+          original_file_id: init.file.id,
+          title: pendingFile.name,
+        });
+
+        void savePreview(video.id, pendingFile);
+
+        const idempotencyKey = `effect_${effectState.data.id}_${uploadId}`;
+        const job = await submitAiJob({
+          effect_id: effectState.data.id,
+          video_id: video.id,
+          idempotency_key: idempotencyKey,
+        });
+
+        if (job.status === "failed") {
+          throw new Error(job.error_message || "Processing job failed to queue.");
+        }
+
+        if (localPreviewUrl) {
+          try {
+            window.sessionStorage.setItem(`video_preview_${video.id}`, localPreviewUrl);
+          } catch {
+            // ignore storage issues
+          }
+        }
+
+        try {
+          window.sessionStorage.setItem(guardKey, String(video.id));
+        } catch {
+          // ignore storage issues
+        }
+
+        await deletePendingUpload(uploadId);
+        setUploadStatus("done");
+        uploadInFlightRef.current = false;
+        router.replace(`/effects/${encodeURIComponent(slug)}/processing?videoId=${video.id}`);
+      } catch (err) {
+        if (err instanceof ApiError) {
+          setUploadError(formatUploadError(err));
+        } else if (err instanceof Error) {
+          setUploadError(err.message || "Upload failed.");
+        } else {
+          setUploadError("Upload failed.");
+        }
+        setUploadStatus("error");
+        try {
+          window.sessionStorage.removeItem(guardKey);
+        } catch {
+          // ignore storage issues
+        }
+        uploadInFlightRef.current = false;
+      }
+    };
+
+    void run();
+  }, [
+    effectState,
+    localPreviewUrl,
+    pendingFile,
+    router,
+    slug,
+    token,
+    uploadAttempt,
+    uploadId,
+    uploadStatus,
+  ]);
+
+  // Poll video status.
+  useEffect(() => {
+    if (!token) {
+      setVideoState({ status: "idle" });
+      setPollNotice(null);
+      return;
+    }
+
+    if (!videoId) {
+      if (uploadId) {
+        setVideoState({ status: "idle" });
+        setPollNotice(null);
+        return;
+      }
+      setVideoState({ status: "error", message: "Missing or invalid video id in the URL." });
+      setPollNotice(null);
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const tick = async () => {
+      let shouldContinue = true;
+
+      try {
+        setVideoState((prev) => (prev.status === "idle" ? { status: "loading" } : prev));
+        const data = await getVideo(videoId);
+        if (cancelled) return;
+
+        setPollNotice(null);
+        setVideoState({ status: "ready", data });
+        if (isTerminalStatus(data.status)) {
+          shouldContinue = false;
+        }
+      } catch (err) {
+        if (cancelled) return;
+
+        const message = err instanceof ApiError ? err.message : "Unable to refresh processing status.";
+        const code = err instanceof ApiError ? err.status : undefined;
+        setPollNotice(message);
+
+        setVideoState((prev) => {
+          // If we already have data, keep showing it (and keep retrying in background).
+          if (prev.status === "ready") return prev;
+          return { status: "error", message, code };
+        });
+      } finally {
+        if (cancelled) return;
+        if (shouldContinue) {
+          timeoutId = window.setTimeout(() => void tick(), 2000);
+        }
+      }
+    };
+
+    void tick();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [pollNonce, token, videoId]);
+
+  const videoStatus: string | null = videoState.status === "ready" ? (videoState.data.status ?? null) : null;
+  const errorMessage: string | null = videoState.status === "ready" ? (videoState.data.error ?? null) : null;
+  const processedFileUrl: string | null =
+    videoState.status === "ready" ? (videoState.data.processed_file_url ?? null) : null;
+  const originalFileUrl: string | null =
+    videoState.status === "ready" ? (videoState.data.original_file_url ?? null) : null;
+
+  const fallbackPreviewVideoUrl =
+    effectState.status === "success" ? (effectState.data.preview_video_url ?? null) : null;
+  const fallbackPreviewImageUrl =
+    effectState.status === "success" ? (effectState.data.thumbnail_url ?? null) : null;
+
+  const previewVideoUrl = localPreviewReady
+    ? (localPreviewUrl ?? (uploadId ? null : originalFileUrl) ?? fallbackPreviewVideoUrl)
+    : (localPreviewUrl ?? fallbackPreviewVideoUrl);
+  const previewImageUrl = previewVideoUrl ? null : fallbackPreviewImageUrl;
+  const previewKey = videoId ? `video_preview_${videoId}` : null;
+
+  const isUploadPhase = !!uploadId && uploadStatus !== "done";
+  const activeStepper = videoStatus === "completed" ? 3 : isUploadPhase ? 1 : 2;
+  const displayProgress = isUploadPhase ? uploadProgress : progressValue;
+
+  useEffect(() => {
+    if (!videoId) return;
+    if (videoStatus !== "completed" && videoStatus !== "failed") return;
+
+    void deletePreview(videoId);
+    if (previewKey) {
+      try {
+        window.sessionStorage.removeItem(previewKey);
+      } catch {
+        // ignore storage issues
+      }
+    }
+  }, [previewKey, videoId, videoStatus]);
+
+  // Keep progress moving while processing.
+  useEffect(() => {
+    if (videoStatus === "queued") {
+      processingStartMsRef.current = null;
+      setDoneSteps(0);
+      setProgressValue(8);
+      return;
+    }
+
+    if (videoStatus === "completed") {
+      setDoneSteps(4);
+      setProgressValue(100);
+      return;
+    }
+
+    if (videoStatus === "failed") {
+      setProgressValue((v) => Math.min(95, Math.max(8, v)));
+    }
+  }, [videoStatus]);
+
+  useEffect(() => {
+    if (videoStatus !== "processing") return;
+
+    const estimateSecondsRaw =
+      effectState.status === "success" ? Number(effectState.data.processing_time_estimate ?? 0) : 0;
+    const lastSecondsRaw =
+      effectState.status === "success" ? Number(effectState.data.last_processing_time_seconds ?? 0) : 0;
+    const totalTimeSeconds = Number.isFinite(estimateSecondsRaw) && estimateSecondsRaw > 0
+      ? estimateSecondsRaw
+      : Number.isFinite(lastSecondsRaw) && lastSecondsRaw > 0
+        ? lastSecondsRaw
+        : 35;
+
+    if (!processingStartMsRef.current) {
+      processingStartMsRef.current = Date.now();
+    }
+
+    const intervalId = window.setInterval(() => {
+      const start = processingStartMsRef.current ?? Date.now();
+      const elapsedSeconds = Math.max(0, (Date.now() - start) / 1000);
+      const ratio = Math.min(1, elapsedSeconds / totalTimeSeconds);
+
+      // 10% → 95% over the total time; completion snaps to 100%.
+      const target = 10 + ratio * 85;
+      const clampedTarget = Math.min(95, Math.max(10, target));
+      setProgressValue((prev) => Math.max(prev, clampedTarget));
+
+      // Step boundaries: 1/9, 2/9, 8/9, 1 (AI magic = 2/3 total time).
+      const nextDoneSteps =
+        ratio >= 8 / 9 ? 3 : ratio >= 2 / 9 ? 2 : ratio >= 1 / 9 ? 1 : 0;
+      setDoneSteps(nextDoneSteps);
+    }, 250);
+
+    return () => window.clearInterval(intervalId);
+  }, [effectState, videoStatus]);
+
+  const currentStepIndex = useMemo(() => {
+    return Math.min(doneSteps, PROCESSING_STEPS.length - 1);
+  }, [doneSteps]);
+
+  const CurrentIcon = isUploadPhase ? UploadCloud : PROCESSING_STEPS[currentStepIndex]?.icon ?? Sparkles;
+
+  const stepStatuses: StepStatus[] = useMemo(() => {
+    if (videoStatus === "completed") {
+      return PROCESSING_STEPS.map(() => "done");
+    }
+
+    const statuses: StepStatus[] = [];
+    for (let i = 0; i < PROCESSING_STEPS.length; i++) {
+      if (i < doneSteps) {
+        statuses.push("done");
+        continue;
+      }
+
+      if (i === currentStepIndex) {
+        statuses.push(videoStatus === "failed" ? "error" : "running");
+        continue;
+      }
+
+      statuses.push("pending");
+    }
+    return statuses;
+  }, [currentStepIndex, doneSteps, videoStatus]);
+
+  const uploadLabel =
+    uploadStatus === "error"
+      ? "Upload failed."
+      : uploadStatus === "loading"
+        ? "Preparing upload..."
+        : "Uploading video...";
+
+  const activeStepLabel = isUploadPhase
+    ? uploadLabel
+    : videoStatus === "completed"
+      ? "Your creation is ready."
+      : videoStatus === "failed"
+        ? "Processing failed."
+        : PROCESSING_STEPS[currentStepIndex]?.label ?? "Processing...";
+
+  const stepBadgeClass = (step: number) =>
+    step === activeStepper
+      ? "grid h-7 w-7 place-items-center rounded-full border border-fuchsia-400/40 bg-fuchsia-500/15 text-xs font-semibold text-fuchsia-100 shadow-[0_0_0_4px_rgba(236,72,153,0.06)]"
+      : "grid h-7 w-7 place-items-center rounded-full border border-white/10 bg-white/5 text-xs font-semibold text-white/60";
+
+  return (
+    <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
+      <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl">
+        <header className="flex items-center justify-between gap-4">
+          <Link
+            href={`/effects/${encodeURIComponent(slug)}`}
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+          >
+            <span aria-hidden="true">←</span> Back
+          </Link>
+          <div className="text-xs font-semibold text-white/55">Processing...</div>
+        </header>
+
+        <div className="mt-6 flex items-center justify-center gap-3">
+          <span className={stepBadgeClass(1)}>1</span>
+          <span className="h-0.5 w-10 rounded-full bg-white/10" aria-hidden="true" />
+          <span className={stepBadgeClass(2)}>2</span>
+          <span className="h-0.5 w-10 rounded-full bg-white/10" aria-hidden="true" />
+          <span className={stepBadgeClass(3)}>3</span>
+        </div>
+
+        {pollNotice ? (
+          <div className="mt-5 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/80">
+            {pollNotice}
+          </div>
+        ) : null}
+
+        {isUploadPhase && uploadStatus === "error" ? (
+          <div className="mt-6 rounded-3xl border border-red-500/25 bg-red-500/10 p-5">
+            <div className="text-sm font-semibold text-red-100">Upload failed</div>
+            <div className="mt-1 text-xs text-red-100/75">
+              {uploadError ?? "We couldn't upload your video. Please try again."}
+            </div>
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  uploadInFlightRef.current = false;
+                  setUploadStatus("idle");
+                  setUploadError(null);
+                  setUploadProgress(0);
+                  setUploadAttempt((v) => v + 1);
+                }}
+                className="inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+              >
+                Retry upload
+              </button>
+              <Link
+                href={`/effects/${encodeURIComponent(slug)}`}
+                className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+              >
+                Back to effect
+              </Link>
+            </div>
+          </div>
+        ) : null}
+
+        {!token ? (
+          <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
+            <div className="text-sm font-semibold text-white">Sign in to see progress</div>
+            <div className="mt-2 text-xs leading-5 text-white/60">
+              Your processing status is tied to your account. Sign in to continue.
+            </div>
+            <button
+              type="button"
+              onClick={() => setAuthOpen(true)}
+              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+            >
+              Sign in
+            </button>
+          </div>
+        ) : null}
+
+        {token && videoState.status === "error" ? (
+          <div className="mt-6 rounded-3xl border border-red-500/25 bg-red-500/10 p-5">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 grid h-9 w-9 place-items-center rounded-2xl bg-red-500/15 text-red-200">
+                <AlertTriangle className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-red-100">Couldn&apos;t load status</div>
+                <div className="mt-1 text-xs text-red-100/70">
+                  {videoState.code ? <span className="font-semibold">HTTP {videoState.code}</span> : null}
+                  {videoState.code ? ": " : null}
+                  {videoState.message}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPollNonce((v) => v + 1)}
+              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {token && videoState.status !== "error" ? (
+          <main className="mt-6">
+            <div className="mx-auto w-full max-w-sm">
+              <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+                <div className="relative aspect-[9/13] w-full">
+                  {previewVideoUrl ? (
+                    <video
+                      className="absolute inset-0 h-full w-full object-cover opacity-40 brightness-110 saturate-110"
+                      src={previewVideoUrl}
+                      muted
+                      loop
+                      autoPlay
+                      playsInline
+                      preload="metadata"
+                      onError={() => {
+                        if (previewKey) {
+                          try {
+                            window.sessionStorage.removeItem(previewKey);
+                          } catch {
+                            // ignore storage issues
+                          }
+                        }
+                        if (localPreviewUrl) {
+                          setLocalPreviewUrl(null);
+                        }
+                        setLocalPreviewReady(false);
+                        setPreviewNonce((v) => v + 1);
+                      }}
+                    />
+                  ) : previewImageUrl ? (
+                    <img
+                      className="absolute inset-0 h-full w-full object-cover opacity-35 brightness-110 saturate-110"
+                      src={previewImageUrl}
+                      alt={effectState.status === "success" ? effectState.data.name : "Effect preview"}
+                    />
+                  ) : null}
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(236,72,153,0.2),transparent_55%),radial-gradient(circle_at_80%_40%,rgba(99,102,241,0.18),transparent_60%)]" />
+                  <div className="absolute inset-0 bg-black/35" />
+
+                  <div className="absolute inset-0 grid place-items-center">
+                    <span className="relative grid h-16 w-16 place-items-center">
+                      <span className="grid h-16 w-16 place-items-center rounded-full border border-white/15 bg-fuchsia-500/15 text-fuchsia-200 shadow-lg backdrop-blur-sm animate-pulse">
+                        <CurrentIcon className="h-7 w-7" />
+                      </span>
+                      <span className="absolute inset-0 rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-200/80 animate-spin" />
+                    </span>
+                  </div>
+
+                  <div className="absolute inset-x-5 bottom-5">
+                    <Progress value={displayProgress} className="h-2" />
+                    <div className="mt-3 text-center text-xs font-semibold text-white/70">{activeStepLabel}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 text-center">
+                <div className="text-lg font-semibold tracking-tight text-white">
+                  Applying{" "}
+                  {effectState.status === "success" ? (
+                    <span className="text-fuchsia-200">{effectState.data.name}</span>
+                  ) : (
+                    <span className="text-fuchsia-200">effect</span>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-white/55">
+                  {effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Transform into comic art"}
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-3">
+                {isUploadPhase ? (
+                  (() => {
+                    const status: StepStatus = uploadStatus === "error" ? "error" : "running";
+                    const Icon = UploadCloud;
+                    const isRunning = status === "running";
+                    const isError = status === "error";
+                    const detail =
+                      uploadStatus === "uploading"
+                        ? `${uploadProgress}%`
+                        : uploadStatus === "loading"
+                          ? "Preparing"
+                          : isError
+                            ? "Failed"
+                            : "";
+
+                    return (
+                      <div className="flex items-center justify-between gap-4 transition-all duration-300">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span
+                            className={cn(
+                              "grid h-10 w-10 shrink-0 place-items-center rounded-2xl border text-fuchsia-200",
+                              isRunning && "border-fuchsia-400/25 bg-fuchsia-500/10 shadow-[0_0_20px_rgba(236,72,153,0.25)]",
+                              isError && "border-red-500/25 bg-red-500/10 text-red-200",
+                            )}
+                          >
+                            <Icon className={cn("h-5 w-5", isRunning && "animate-pulse")} />
+                          </span>
+                          <span className={cn("truncate text-sm", isError ? "text-red-100" : "text-white/80")}>
+                            Uploading video...
+                          </span>
+                        </div>
+                        <div className="shrink-0 text-xs font-semibold">
+                          {isError ? <span className="text-red-200">Failed</span> : null}
+                          {!isError && detail ? <span className="text-white/70">{detail}</span> : null}
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  PROCESSING_STEPS.map((step, idx) => {
+                    const status = stepStatuses[idx] ?? "pending";
+                    const Icon = step.icon;
+                    const isDone = status === "done";
+                    const isRunning = status === "running";
+                    const isError = status === "error";
+
+                    const rowOpacity = isDone || isRunning || isError ? "opacity-100" : "opacity-40";
+
+                    return (
+                      <div
+                        key={step.id}
+                        className={cn(
+                          "flex items-center justify-between gap-4 transition-all duration-300",
+                          rowOpacity,
+                          isRunning && "translate-x-0.5",
+                        )}
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span
+                            className={cn(
+                              "grid h-10 w-10 shrink-0 place-items-center rounded-2xl border text-fuchsia-200",
+                              isDone && "border-fuchsia-400/25 bg-fuchsia-500/10",
+                              isRunning && "border-fuchsia-400/25 bg-fuchsia-500/10 shadow-[0_0_20px_rgba(236,72,153,0.25)]",
+                              status === "pending" && "border-white/10 bg-white/5 text-white/60",
+                              isError && "border-red-500/25 bg-red-500/10 text-red-200",
+                            )}
+                          >
+                            <Icon className={cn("h-5 w-5", isRunning && "animate-pulse")} />
+                          </span>
+                          <span className={cn("truncate text-sm", isError ? "text-red-100" : "text-white/80")}>
+                            {step.label}
+                          </span>
+                        </div>
+
+                        <div className="shrink-0 text-xs font-semibold">
+                          {isDone ? <span className="text-fuchsia-200">Done</span> : null}
+                          {isError ? <span className="text-red-200">Failed</span> : null}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {videoStatus === "failed" ? (
+                <div className="mt-6 rounded-3xl border border-red-500/25 bg-red-500/10 p-4">
+                  <div className="text-sm font-semibold text-red-100">Processing failed</div>
+                  <div className="mt-1 text-xs text-red-100/75">
+                    {errorMessage ? errorMessage : "Something went wrong while processing your video."}
+                  </div>
+                  <div className="mt-4 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPollNonce((v) => v + 1)}
+                      className="inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                    >
+                      Retry status check
+                    </button>
+                    <Link
+                      href={`/effects/${encodeURIComponent(slug)}`}
+                      className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                    >
+                      Back to effect
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
+
+              {videoStatus === "completed" ? (
+                <div className="mt-6 rounded-3xl border border-emerald-500/25 bg-emerald-500/10 p-4">
+                  <div className="text-sm font-semibold text-emerald-100">Done!</div>
+                  <div className="mt-1 text-xs text-emerald-100/75">Your processed video is ready.</div>
+                  {processedFileUrl ? (
+                    <a
+                      href={processedFileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                    >
+                      Open result
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPollNonce((v) => v + 1)}
+                      className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-[11px] text-white/65">
+                <span className="font-semibold text-fuchsia-200">Did you know?</span> Our AI analyzes thousands of frames
+                per second to create seamless effects.
+              </div>
+            </div>
+          </main>
+        ) : null}
+      </div>
+
+      <AuthModal
+        open={authOpen}
+        onClose={() => {
+          setAuthOpen(false);
+          setToken(getAccessToken());
+          setPollNonce((v) => v + 1);
+        }}
+      />
+    </div>
+  );
+}
+

@@ -70,6 +70,13 @@ export type VideoData = {
   effect_id: number;
   original_file_id: number | null;
   processed_file_id?: number | null;
+  original_file_url?: string | null;
+  title?: string | null;
+  is_public?: boolean;
+  processing_details?: Record<string, unknown> | null;
+  expires_at?: string | null;
+  processed_file_url?: string | null;
+  error?: string | null;
 };
 
 export type AiJobRequest = {
@@ -86,6 +93,8 @@ export type AiJobData = {
   id: number;
   status: string;
   requested_tokens: number;
+  error_message?: string | null;
+  video_id?: number | null;
 };
 
 export type ApiEffect = {
@@ -96,6 +105,8 @@ export type ApiEffect = {
   thumbnail_url?: string | null;
   preview_video_url?: string | null;
   credits_cost?: number | null;
+  processing_time_estimate?: number | null;
+  last_processing_time_seconds?: number | null;
   is_premium: boolean;
   is_active: boolean;
 };
@@ -346,6 +357,10 @@ export function initVideoUpload(payload: UploadInitRequest): Promise<UploadInitD
 
 export function createVideo(payload: VideoCreateRequest): Promise<VideoData> {
   return apiPost<VideoData>("/videos", payload);
+}
+
+export function getVideo(id: number): Promise<VideoData> {
+  return apiGet<VideoData>(`/videos/${id}`);
 }
 
 export function submitAiJob(payload: AiJobRequest): Promise<AiJobData> {

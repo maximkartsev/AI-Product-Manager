@@ -48,7 +48,7 @@
   },
   "7": {
     "inputs": {
-      "file": "67523e2a82b1506812a7ea59d0d00cdfd6d4dacaa3138d1ba10efca1e9ea45c7.mp4",
+      "file": "__INPUT_PATH__",
       "video-preview": ""
     },
     "class_type": "LoadVideo",

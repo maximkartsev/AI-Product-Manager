@@ -4,15 +4,14 @@ import AuthModal from "@/app/_components/landing/AuthModal";
 import { IconPlay, IconSparkles, IconWand } from "@/app/_components/landing/icons";
 import {
   ApiError,
-  createVideo,
   getAccessToken,
   getEffect,
   getWallet,
-  initVideoUpload,
-  submitAiJob,
   type ApiEffect,
 } from "@/lib/api";
+import { savePendingUpload } from "@/lib/uploadPreviewStore";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 
 type LoadState =
@@ -29,8 +28,6 @@ type WalletState =
 
 type UploadState =
   | { status: "idle" }
-  | { status: "uploading" }
-  | { status: "queued"; jobId: number }
   | { status: "error"; message: string };
 
 type Plan = {
@@ -64,53 +61,6 @@ const PLANS: Plan[] = [
     description: "For teams and high-volume production pipelines.",
   },
 ];
-
-function formatUploadError(err: ApiError): string {
-  const base = err.message || "Upload failed.";
-  const payload = err.data as { data?: unknown } | undefined;
-  if (!payload || typeof payload !== "object" || !("data" in payload)) return base;
-
-  const data = payload.data as Record<string, unknown> | undefined;
-  if (!data) return base;
-
-  const requiredTokens = data.required_tokens;
-  if (typeof requiredTokens === "number") {
-    return `${base} (required tokens: ${requiredTokens})`;
-  }
-
-  return base;
-}
-
-function getRequiredTokens(err: ApiError): number | null {
-  const payload = err.data as { data?: unknown } | undefined;
-  if (!payload || typeof payload !== "object" || !("data" in payload)) return null;
-  const data = payload.data as Record<string, unknown> | undefined;
-  if (!data) return null;
-  const requiredTokens = data.required_tokens;
-  return typeof requiredTokens === "number" ? requiredTokens : null;
-}
-
-function normalizeUploadHeaders(
-  headers: Record<string, string | string[]> | undefined,
-  fallbackContentType: string,
-): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  if (headers) {
-    for (const [key, value] of Object.entries(headers)) {
-      if (Array.isArray(value)) {
-        if (value[0]) normalized[key] = value[0];
-        continue;
-      }
-      if (value) normalized[key] = value;
-    }
-  }
-
-  if (!normalized["Content-Type"]) {
-    normalized["Content-Type"] = fallbackContentType;
-  }
-
-  return normalized;
-}
 
 function PlansModal({
   open,
@@ -189,6 +139,7 @@ function PlansModal({
 }
 
 export default function EffectDetailClient({ slug }: { slug: string }) {
+  const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [reload, setReload] = useState(0);
 
@@ -273,9 +224,6 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
 
   const hasEnoughTokens =
     creditsCost === 0 || (walletState.status === "ready" && walletState.balance >= creditsCost);
-  const requiresWallet = !!token && creditsCost > 0;
-  const isUploadLocked = requiresWallet && (!hasEnoughTokens || walletState.status !== "ready");
-  const isUploading = uploadState.status === "uploading";
 
   function openAuth() {
     setAuthOpen(true);
@@ -306,15 +254,6 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
       return;
     }
 
-    if (walletState.status === "ready" && !hasEnoughTokens && creditsCost > 0) {
-      openPlans();
-      return;
-    }
-
-    if (isUploadLocked || isUploading) {
-      return;
-    }
-
     fileInputRef.current?.click();
   }
 
@@ -333,83 +272,24 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
       return;
     }
 
-    if (isUploadLocked) {
-      setUploadState({ status: "error", message: "Insufficient tokens to upload." });
-      if (walletState.status === "ready" && !hasEnoughTokens && creditsCost > 0) {
-        openPlans();
-      }
-      return;
-    }
-
-    const mimeType = file.type || "video/mp4";
-
-    setUploadState({ status: "uploading" });
-
     try {
-      const init = await initVideoUpload({
-        effect_id: state.data.id,
-        mime_type: mimeType,
-        size: file.size,
-        original_filename: file.name,
-      });
-
-      const uploadHeaders = normalizeUploadHeaders(init.upload_headers, mimeType);
-      const uploadResponse = await fetch(init.upload_url, {
-        method: "PUT",
-        headers: uploadHeaders,
-        body: file,
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error(`Upload failed with ${uploadResponse.status}`);
-      }
-
-      const video = await createVideo({
-        effect_id: state.data.id,
-        original_file_id: init.file.id,
-        title: file.name,
-      });
-
-      const idempotencyKey = `effect_${state.data.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const job = await submitAiJob({
-        effect_id: state.data.id,
-        video_id: video.id,
-        idempotency_key: idempotencyKey,
-      });
-
-      setUploadState({ status: "queued", jobId: job.id });
-
-      try {
-        const wallet = await getWallet();
-        setWalletState({ status: "ready", balance: wallet.balance });
-      } catch {
-        // Ignore wallet refresh errors after upload.
-      }
+      const uploadId = `upload_${crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
+      await savePendingUpload(uploadId, file);
+      setUploadState({ status: "idle" });
+      router.push(`/effects/${encodeURIComponent(slug)}/processing?uploadId=${uploadId}`);
     } catch (err) {
       if (err instanceof ApiError) {
-        const requiredTokens = getRequiredTokens(err);
-        if (requiredTokens !== null) {
-          openPlans();
-        }
-        setUploadState({ status: "error", message: formatUploadError(err) });
+        setUploadState({ status: "error", message: err.message });
         return;
       }
-      setUploadState({ status: "error", message: "Unexpected error while uploading the video." });
+      setUploadState({ status: "error", message: "Unexpected error while preparing the upload." });
     }
   }
 
   const uploadLabel = !token
     ? "Sign in to try"
-    : isUploading
-      ? "Uploading..."
-      : uploadState.status === "queued"
-        ? "Queued for processing"
-        : "Try This Effect";
-  const disableUpload: boolean =
-    !!token &&
-    (isUploading ||
-      uploadState.status === "queued" ||
-      (requiresWallet && walletState.status !== "ready"));
+    : "Try This Effect";
+  const disableUpload: boolean = false;
 
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
@@ -555,13 +435,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
                 ) : null}
               </div>
 
-              {uploadState.status === "uploading" ? (
-                <div className="mt-3 text-[11px] text-white/60">Uploading and queueing your job...</div>
-              ) : uploadState.status === "queued" ? (
-                <div className="mt-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
-                  Video queued. Processing will start shortly.
-                </div>
-              ) : uploadState.status === "error" ? (
+              {uploadState.status === "error" ? (
                 <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
                   {uploadState.message}
                 </div>
@@ -599,7 +473,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         requiredTokens={creditsCost}
         balance={walletState.status === "ready" ? walletState.balance : null}
       />
-      <AuthModal open={authOpen} onClose={closeAuth} />
+      <AuthModal open={authOpen} onClose={closeAuth} initialMode="signin" />
     </div>
   );
 }

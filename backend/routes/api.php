@@ -79,6 +79,7 @@ Route::middleware([
     Route::post('/ai-jobs', [AiJobController::class, 'store']);
     Route::post('/videos/uploads', [VideoController::class, 'createUpload']);
     Route::post('/videos', [VideoController::class, 'store']);
+    Route::get('/videos/{id}', [VideoController::class, 'show']);
     Route::post('/videos/{video}/publish', [VideoController::class, 'publish']);
     Route::post('/videos/{video}/unpublish', [VideoController::class, 'unpublish']);
 

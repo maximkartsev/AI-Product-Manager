@@ -11,7 +11,7 @@ import {
 } from "@/lib/api";
 import { savePendingUpload } from "@/lib/uploadPreviewStore";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 
 type LoadState =
@@ -140,6 +140,7 @@ function PlansModal({
 
 export default function EffectDetailClient({ slug }: { slug: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [reload, setReload] = useState(0);
 
@@ -150,6 +151,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   const [uploadState, setUploadState] = useState<UploadState>({ status: "idle" });
   const [pendingUpload, setPendingUpload] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const autoUploadRef = useRef(false);
 
   useEffect(() => {
     const t = window.setTimeout(() => setToken(getAccessToken()), 0);
@@ -248,14 +250,25 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   }
 
   function onUploadClick() {
-    if (!token) {
+    const nextToken = token ?? getAccessToken();
+    if (!nextToken) {
       setPendingUpload(true);
       openAuth();
       return;
     }
 
+    if (!token) {
+      setToken(nextToken);
+    }
     fileInputRef.current?.click();
   }
+
+  useEffect(() => {
+    if (autoUploadRef.current) return;
+    if (searchParams.get("upload") !== "1") return;
+    autoUploadRef.current = true;
+    onUploadClick();
+  }, [searchParams, token]);
 
   async function onFileSelected(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];

@@ -61,7 +61,8 @@ class VideoUploadProcessingTest extends TestCase
                 if ($ttlSeconds <= 0) {
                     throw new \RuntimeException('TTL expired.');
                 }
-                return 'https://example.com/input';
+                $normalizedPath = ltrim($path, '/');
+                return "https://example.com/presigned/{$normalizedPath}";
             }
 
             public function uploadUrl(string $disk, string $path, int $ttlSeconds, ?string $contentType = null): array
@@ -296,6 +297,7 @@ class VideoUploadProcessingTest extends TestCase
         $effect = $this->createEffect();
         $originalFileId = $this->createTenantFile($tenant->id, $user->id);
         $processedFileId = $this->createTenantFile($tenant->id, $user->id, [
+            'path' => 'outputs/processed.mp4',
             'url' => 'https://example.com/output.mp4',
         ]);
 
@@ -310,7 +312,7 @@ class VideoUploadProcessingTest extends TestCase
         $response->assertStatus(200)
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.id', $videoId)
-            ->assertJsonPath('data.processed_file_url', 'https://example.com/output.mp4')
+            ->assertJsonPath('data.processed_file_url', 'https://example.com/presigned/outputs/processed.mp4')
             ->assertJsonPath('data.error', null);
     }
 

@@ -210,7 +210,7 @@ class ComfyUiWorkerController extends BaseController
             return $this->sendError('Lease not found.', [], 404);
         }
 
-        $errorMessage = (string) $request->input('error_message', 'Worker failure');
+        $errorMessage = $this->sanitizeWorkerError((string) $request->input('error_message', 'Worker failure'));
 
         $this->withTenant($dispatch->tenant_id, function () use ($dispatch, $ledger, $errorMessage, $request) {
             $job = AiJob::query()->find($dispatch->tenant_job_id);
@@ -247,6 +247,32 @@ class ComfyUiWorkerController extends BaseController
         });
 
         return $this->sendResponse(['dispatch_id' => $dispatch->id], 'Job failed');
+    }
+
+    private function sanitizeWorkerError(string $raw): string
+    {
+        $trimmed = trim($raw);
+        if ($trimmed === '') {
+            return 'Processing failed.';
+        }
+
+        $decoded = json_decode($trimmed, true);
+        if (is_array($decoded)) {
+            $message = $decoded['exception_message'] ?? $decoded['error_message'] ?? null;
+            if (is_string($message) && trim($message) !== '') {
+                return trim($message);
+            }
+        }
+
+        if (preg_match('/exception_message\\"?:\\"([^\\"]+)/', $trimmed, $match)) {
+            $candidate = trim($match[1]);
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        $firstLine = strtok($trimmed, "\n");
+        return $firstLine !== false && trim($firstLine) !== '' ? trim($firstLine) : 'Processing failed.';
     }
 
     private function upsertWorker(Request $request): ComfyUiWorker

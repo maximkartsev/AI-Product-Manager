@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Effect;
+use App\Models\AiJob;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
+use Stancl\Tenancy\Tenancy;
 use Tests\TestCase;
 
 class AiJobSubmissionTest extends TestCase
@@ -109,7 +111,8 @@ class AiJobSubmissionTest extends TestCase
         $this->assertNotNull($jobId);
 
         $job = $this->fetchTenantJob($tenant->id, $jobId);
-        $inputPayload = json_decode($job['input_payload'] ?? '', true);
+        $payloadRaw = $job['input_payload'] ?? null;
+        $inputPayload = is_string($payloadRaw) ? json_decode($payloadRaw, true) : $payloadRaw;
         $this->assertIsArray($inputPayload);
         $this->assertArrayHasKey('workflow', $inputPayload);
     }
@@ -218,6 +221,19 @@ class AiJobSubmissionTest extends TestCase
             ->where('job_id', $jobId)
             ->where('type', $type)
             ->count();
+    }
+
+    private function fetchTenantJob(string $tenantId, int $jobId): AiJob
+    {
+        $tenant = Tenant::query()->whereKey($tenantId)->firstOrFail();
+        $tenancy = app(Tenancy::class);
+        $tenancy->initialize($tenant);
+
+        try {
+            return AiJob::query()->findOrFail($jobId);
+        } finally {
+            $tenancy->end();
+        }
     }
 
     private function postJsonWithHost(string $domain, string $uri, array $payload)

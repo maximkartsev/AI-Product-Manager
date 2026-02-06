@@ -10,7 +10,6 @@ use App\Models\Video;
 use App\Services\PresignedUrlService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -181,6 +180,8 @@ class VideoController extends BaseController
             return $this->sendError('Video ownership mismatch.', [], 403);
         }
 
+        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+
         $originalFileUrl = null;
         if ($video->original_file_id) {
             $file = File::withTrashed()->find((int) $video->original_file_id);
@@ -189,7 +190,6 @@ class VideoController extends BaseController
                     $originalFileUrl = (string) $file->url;
                 } elseif ($file->disk && $file->path) {
                     try {
-                        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
                         $originalFileUrl = $presigned->downloadUrl($file->disk, $file->path, $ttlSeconds);
                     } catch (\Throwable $e) {
                         // ignore URL generation issues
@@ -202,14 +202,15 @@ class VideoController extends BaseController
         if ($video->processed_file_id) {
             $file = File::withTrashed()->find((int) $video->processed_file_id);
             if ($file) {
-                if ($file->url) {
-                    $processedFileUrl = (string) $file->url;
-                } elseif ($file->disk && $file->path) {
+                if ($file->disk && $file->path) {
                     try {
-                        $processedFileUrl = (string) Storage::disk($file->disk)->url($file->path);
+                        $processedFileUrl = $presigned->downloadUrl($file->disk, $file->path, $ttlSeconds);
                     } catch (\Throwable $e) {
                         // ignore URL generation issues
                     }
+                }
+                if (!$processedFileUrl && $file->url) {
+                    $processedFileUrl = (string) $file->url;
                 }
             }
         }

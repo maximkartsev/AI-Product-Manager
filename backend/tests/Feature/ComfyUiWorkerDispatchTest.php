@@ -43,6 +43,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         }
 
         config(['services.comfyui.worker_token' => 'test-token']);
+        config(['services.comfyui.default_provider' => 'local']);
         config(['services.comfyui.presigned_ttl_seconds' => 60]);
         config(['services.comfyui.max_attempts' => 3]);
 
@@ -84,13 +85,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        $dispatch = AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $dispatch = $this->createDispatch($tenant->id, $job->id);
 
         $first = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-1',
@@ -128,11 +123,8 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        $dispatch = AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
+        $dispatch = $this->createDispatch($tenant->id, $job->id, [
             'status' => 'leased',
-            'priority' => 0,
             'attempts' => 1,
             'lease_token' => 'old-token',
             'lease_expires_at' => now()->subMinutes(5),
@@ -166,13 +158,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->seedWallet($tenant->id, $user->id, 25);
         $this->reserveTokens($tenant, $job, 5);
 
-        $dispatch = AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $dispatch = $this->createDispatch($tenant->id, $job->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-1',
@@ -220,13 +206,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $response = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-capacity',
@@ -247,13 +227,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         ComfyUiWorker::query()->create([
             'worker_id' => 'worker-drain',
@@ -282,13 +256,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $response = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-urls',
@@ -310,13 +278,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-heartbeat',
@@ -353,13 +315,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        $dispatch = AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $dispatch = $this->createDispatch($tenant->id, $job->id);
 
         $this->postJson('/api/worker/heartbeat', [
             'dispatch_id' => $dispatch->id,
@@ -393,13 +349,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->seedWallet($tenant->id, $user->id, 10);
         $this->reserveTokens($tenant, $job, 5);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-fail',
@@ -451,13 +401,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->seedWallet($tenant->id, $user->id, 10);
         $this->reserveTokens($tenant, $job, 5);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-complete',
@@ -503,13 +447,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->seedWallet($tenant->id, $user->id, 10);
         $this->reserveTokens($tenant, $job, 5);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-fail-first',
@@ -558,13 +496,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->seedWallet($tenant->id, $user->id, 10);
         $this->reserveTokens($tenant, $job, 5);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-output',
@@ -606,13 +538,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->seedWallet($tenant->id, $user->id, 10);
         $this->reserveTokens($tenant, $job, 5);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-no-output',
@@ -643,13 +569,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         [$user, $tenant] = $this->createUserTenant();
         $this->createEffect();
 
-        $dispatch = AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => 999999,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $dispatch = $this->createDispatch($tenant->id, 999999);
 
         $response = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-orphan',
@@ -676,21 +596,9 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $lowJob = $this->createTenantJob($tenant, $user, $effect, $fileId);
         $highJob = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $lowJob->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $lowJob->id, ['priority' => 0]);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $highJob->id,
-            'status' => 'queued',
-            'priority' => 5,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $highJob->id, ['priority' => 5]);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-priority',
@@ -711,14 +619,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'provider' => 'cloud',
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenant->id, $job->id, ['provider' => 'cloud']);
 
         $localPoll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-local',
@@ -755,13 +656,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenant->id,
-            'tenant_job_id' => $job->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 1,
-        ]);
+        $this->createDispatch($tenant->id, $job->id, ['attempts' => 1]);
 
         $response = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-max-attempts',
@@ -807,13 +702,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $jobA = $this->createTenantJob($tenantA, $userA, $effect, $fileA);
         $jobB = $this->createTenantJob($tenantB, $userB, $effect, $fileB);
 
-        AiJobDispatch::query()->create([
-            'tenant_id' => $tenantA->id,
-            'tenant_job_id' => $jobA->id,
-            'status' => 'queued',
-            'priority' => 0,
-            'attempts' => 0,
-        ]);
+        $this->createDispatch($tenantA->id, $jobA->id);
 
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-isolation',
@@ -928,6 +817,20 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function createDispatch(string $tenantId, int $jobId, array $overrides = []): AiJobDispatch
+    {
+        $defaults = [
+            'tenant_id' => $tenantId,
+            'tenant_job_id' => $jobId,
+            'provider' => config('services.comfyui.default_provider', 'local'),
+            'status' => 'queued',
+            'priority' => 0,
+            'attempts' => 0,
+        ];
+
+        return AiJobDispatch::query()->create(array_merge($defaults, $overrides));
     }
 
     private function getJobTransactionCount(string $tenantId, int $jobId, string $type): int

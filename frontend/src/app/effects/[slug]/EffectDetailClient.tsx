@@ -10,6 +10,7 @@ import {
   type ApiEffect,
 } from "@/lib/api";
 import { savePendingUpload } from "@/lib/uploadPreviewStore";
+import VideoPlayer from "@/components/video/VideoPlayer";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
@@ -376,7 +377,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
             <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5">
               <div className="relative aspect-[9/16] w-full bg-gradient-to-br from-fuchsia-500/18 to-indigo-500/12">
                 {state.data.preview_video_url ? (
-                  <video
+                  <VideoPlayer
                     className="absolute inset-0 h-full w-full object-cover"
                     src={state.data.preview_video_url}
                     muted

@@ -12,10 +12,11 @@ import {
   type ApiEffect,
   type VideoData,
 } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { Progress } from "@/components/ui/progress";
 import { deletePendingUpload, deletePreview, loadPendingUpload, loadPreview, savePreview } from "@/lib/uploadPreviewStore";
-import { AlertTriangle, Download, Film, Globe, Layers, Settings2, Share2, Sparkles, UploadCloud, Wand2 } from "lucide-react";
+import ProcessingStepProcessing from "@/app/effects/[slug]/processing/ProcessingStepProcessing";
+import ProcessingStepResult from "@/app/effects/[slug]/processing/ProcessingStepResult";
+import ProcessingStepUpload from "@/app/effects/[slug]/processing/ProcessingStepUpload";
+import { AlertTriangle, Film, Layers, Sparkles, UploadCloud, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
@@ -498,26 +499,37 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const showResult = videoStatus === "completed";
   const activeStepper = videoStatus === "completed" ? 3 : isUploadPhase ? 1 : 2;
   const displayProgress = isUploadPhase ? uploadProgress : progressValue;
-  const showUploadError = isUploadPhase && uploadStatus === "error";
   const showStatusError = token && videoState.status === "error";
-  const showProcessingError = videoStatus === "failed";
-  const shouldScrollOnError = showUploadError || showStatusError || showProcessingError;
+
+  const effectName = effectState.status === "success" ? effectState.data.name : "effect";
+  const processingSubtitle =
+    effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Transform into comic art";
+  const resultSubtitle =
+    effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Comic Book effect applied successfully";
+  const watermarkLabel = effectState.status === "success" ? effectState.data.name : "AI Effect";
+
+  const handlePreviewError = () => {
+    if (previewKey) {
+      try {
+        window.sessionStorage.removeItem(previewKey);
+      } catch {
+        // ignore storage issues
+      }
+    }
+    if (localPreviewUrl) {
+      setLocalPreviewUrl(null);
+    }
+    setLocalPreviewReady(false);
+    setPreviewNonce((v) => v + 1);
+  };
 
   useEffect(() => {
-    if (!shouldScrollOnError) return;
+    if (!showStatusError) return;
     const rafId = window.requestAnimationFrame(() => {
       window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
     });
     return () => window.cancelAnimationFrame(rafId);
-  }, [shouldScrollOnError]);
-
-  useEffect(() => {
-    if (!showResult) return;
-    const rafId = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(rafId);
-  }, [showResult]);
+  }, [showStatusError]);
 
   useEffect(() => {
     if (!videoId) return;
@@ -738,298 +750,43 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         {token && videoState.status !== "error" ? (
           <main className="mt-6">
             <div className="mx-auto w-full max-w-sm">
-              {!showResult ? (
-                <>
-              <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
-                <div className="relative aspect-[9/13] w-full">
-                  {previewVideoUrl ? (
-                    <video
-                      className="absolute inset-0 h-full w-full object-cover opacity-40 brightness-110 saturate-110"
-                      src={previewVideoUrl}
-                      muted
-                      loop
-                      autoPlay
-                      playsInline
-                      preload="metadata"
-                      onError={() => {
-                        if (previewKey) {
-                          try {
-                            window.sessionStorage.removeItem(previewKey);
-                          } catch {
-                            // ignore storage issues
-                          }
-                        }
-                        if (localPreviewUrl) {
-                          setLocalPreviewUrl(null);
-                        }
-                        setLocalPreviewReady(false);
-                        setPreviewNonce((v) => v + 1);
-                      }}
-                    />
-                  ) : previewImageUrl ? (
-                    <img
-                      className="absolute inset-0 h-full w-full object-cover opacity-35 brightness-110 saturate-110"
-                      src={previewImageUrl}
-                      alt={effectState.status === "success" ? effectState.data.name : "Effect preview"}
-                    />
-                  ) : null}
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(236,72,153,0.2),transparent_55%),radial-gradient(circle_at_80%_40%,rgba(99,102,241,0.18),transparent_60%)]" />
-                  <div className="absolute inset-0 bg-black/35" />
-                  <div className="absolute inset-0 grid place-items-center">
-                    <span className="relative grid h-16 w-16 place-items-center">
-                      <span className="grid h-16 w-16 place-items-center rounded-full border border-white/15 bg-fuchsia-500/15 text-fuchsia-200 shadow-lg backdrop-blur-sm animate-pulse">
-                        <CurrentIcon className="h-7 w-7" />
-                      </span>
-                      <span className="absolute inset-0 rounded-full border-2 border-fuchsia-400/30 border-t-fuchsia-200/80 animate-spin" />
-                    </span>
-                  </div>
-
-                  <div className="absolute inset-x-5 bottom-5">
-                    <Progress value={displayProgress} className="h-2" />
-                    <div className="mt-3 text-center text-xs font-semibold text-white/70">{activeStepLabel}</div>
-                  </div>
-                </div>
-              </div>
-
-                {!isUploadPhase ? (
-                  <div className="mt-4 rounded-2xl border border-white/15 bg-white/10 px-3 py-2.5 text-[11px] text-white/80 backdrop-blur-md shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-                    <div className="text-[11px] font-semibold text-white">Just a heads up</div>
-                    <div className="text-[10px] text-white/70">
-                      Processing can take a little while. Finished video will appear in your private gallery.
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="mt-6 text-center">
-                <div className="text-lg font-semibold tracking-tight text-white">
-                  Applying{" "}
-                  {effectState.status === "success" ? (
-                    <span className="text-fuchsia-200">{effectState.data.name}</span>
-                  ) : (
-                    <span className="text-fuchsia-200">effect</span>
-                  )}
-                </div>
-                <div className="mt-1 text-xs text-white/55">
-                  {effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Transform into comic art"}
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-3">
-                {showResult ? null : isUploadPhase ? (
-                  (() => {
-                    const status: StepStatus = uploadStatus === "error" ? "error" : "running";
-                    const Icon = UploadCloud;
-                    const isRunning = status === "running";
-                    const isError = status === "error";
-                    const detail =
-                      uploadStatus === "uploading"
-                        ? `${uploadProgress}%`
-                        : uploadStatus === "loading"
-                          ? "Preparing"
-                          : isError
-                            ? "Failed"
-                            : "";
-
-                    return (
-                      <div className="flex items-center justify-between gap-4 transition-all duration-300">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span
-                            className={cn(
-                              "grid h-10 w-10 shrink-0 place-items-center rounded-2xl border text-fuchsia-200",
-                              isRunning && "border-fuchsia-400/25 bg-fuchsia-500/10 shadow-[0_0_20px_rgba(236,72,153,0.25)]",
-                              isError && "border-red-500/25 bg-red-500/10 text-red-200",
-                            )}
-                          >
-                            <Icon className={cn("h-5 w-5", isRunning && "animate-pulse")} />
-                          </span>
-                          <span className={cn("truncate text-sm", isError ? "text-red-100" : "text-white/80")}>
-                            Uploading video...
-                          </span>
-                        </div>
-                        <div className="shrink-0 text-xs font-semibold">
-                          {isError ? <span className="text-red-200">Failed</span> : null}
-                          {!isError && detail ? <span className="text-white/70">{detail}</span> : null}
-                        </div>
-                      </div>
-                    );
-                  })()
-                ) : (
-                  PROCESSING_STEPS.map((step, idx) => {
-                    const status = stepStatuses[idx] ?? "pending";
-                    const Icon = step.icon;
-                    const isDone = status === "done";
-                    const isRunning = status === "running";
-                    const isError = status === "error";
-
-                    const rowOpacity = isDone || isRunning || isError ? "opacity-100" : "opacity-40";
-
-                    return (
-                      <div
-                        key={step.id}
-                        className={cn(
-                          "flex items-center justify-between gap-4 transition-all duration-300",
-                          rowOpacity,
-                          isRunning && "translate-x-0.5",
-                        )}
-                      >
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span
-                            className={cn(
-                              "grid h-10 w-10 shrink-0 place-items-center rounded-2xl border text-fuchsia-200",
-                              isDone && "border-fuchsia-400/25 bg-fuchsia-500/10",
-                              isRunning && "border-fuchsia-400/25 bg-fuchsia-500/10 shadow-[0_0_20px_rgba(236,72,153,0.25)]",
-                              status === "pending" && "border-white/10 bg-white/5 text-white/60",
-                              isError && "border-red-500/25 bg-red-500/10 text-red-200",
-                            )}
-                          >
-                            <Icon className={cn("h-5 w-5", isRunning && "animate-pulse")} />
-                          </span>
-                          <span className={cn("truncate text-sm", isError ? "text-red-100" : "text-white/80")}>
-                            {step.label}
-                          </span>
-                        </div>
-
-                        <div className="shrink-0 text-xs font-semibold">
-                          {isDone ? <span className="text-fuchsia-200">Done</span> : null}
-                          {isError ? <span className="text-red-200">Failed</span> : null}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              {videoStatus === "failed" ? (
-                <div className="mt-6 rounded-3xl border border-red-500/25 bg-red-500/10 p-4">
-                  <div className="text-sm font-semibold text-red-100">Processing failed</div>
-                  <div className="mt-1 text-xs text-red-100/75">
-                    {errorMessage ? errorMessage : "Something went wrong while processing your video."}
-                  </div>
-                  <div className="mt-4">
-                    <Link
-                      href={`/effects/${encodeURIComponent(slug)}?upload=1`}
-                      className="inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-                    >
-                      Upload another video
-                    </Link>
-                  </div>
-                </div>
-              ) : null}
-
-                </>
-              ) : null}
-
               {showResult ? (
-                <div className="mt-6">
-                  <section className="relative mb-6 aspect-[9/16] w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5">
-                    {processedFileUrl ? (
-                      <video
-                        className="h-full w-full object-cover"
-                        src={processedFileUrl}
-                        playsInline
-                        autoPlay
-                        loop
-                        muted
-                        preload="metadata"
-                      />
-                    ) : previewImageUrl ? (
-                      <img
-                        className="h-full w-full object-cover"
-                        src={previewImageUrl}
-                        alt={effectState.status === "success" ? effectState.data.name : "Effect preview"}
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
-                        Video preview
-                      </div>
-                    )}
-                    <div className="pointer-events-none absolute inset-0">
-                      <div className="absolute bottom-4 left-4 right-4 text-xs font-medium text-white/90 drop-shadow-lg">
-                        dzzzs.com • {effectState.status === "success" ? effectState.data.name : "AI Effect"}
-                      </div>
-                    </div>
-                  </section>
-
-                  <div className="mb-6 text-center">
-                    <div className="text-xl font-semibold text-white">Your video is ready!</div>
-                    <div className="mt-1 text-sm text-white/55">
-                      {effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Comic Book effect applied successfully"}
-                    </div>
-                  </div>
-
-                  <div className="mb-6 rounded-xl border border-fuchsia-400/30 bg-gradient-to-r from-fuchsia-500/20 to-violet-500/20 p-4 text-[11px] text-white/70">
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-10 w-10 place-items-center rounded-full bg-fuchsia-500/20 text-fuchsia-200">
-                        <Sparkles className="h-5 w-5" />
-                      </span>
-                      <div>
-                        <div className="text-sm font-medium text-white">You earned $0.10 credit!</div>
-                        <div className="text-xs text-white/50">Use it towards Pro upgrade</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mb-6 grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      disabled
-                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-xs font-semibold text-white"
-                    >
-                      <Settings2 className="h-4 w-4" />
-                      Customize
-                    </button>
-                    <button
-                      type="button"
-                      disabled
-                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-xs font-semibold text-white"
-                    >
-                      <Share2 className="h-4 w-4" />
-                      Share
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled
-                    className="mb-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 text-sm font-semibold text-white"
-                  >
-                    <Globe className="h-5 w-5" />
-                    Publish to Gallery
-                  </button>
-                  <a
-                    href={processedFileUrl ?? "#"}
-                    className={cn(
-                      "mb-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300",
-                      !processedFileUrl && "pointer-events-none opacity-60",
-                    )}
-                    download={processedFileUrl ? "processed-video.mp4" : undefined}
-                    target={processedFileUrl ? "_blank" : undefined}
-                    rel={processedFileUrl ? "noreferrer" : undefined}
-                  >
-                    <Download className="h-5 w-5" />
-                    Download Video
-                  </a>
-                  <button
-                    type="button"
-                    disabled
-                    className="mb-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white"
-                  >
-                    View My Videos
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-xs font-semibold text-white"
-                  >
-                    <Wand2 className="h-4 w-4" />
-                    Create Another
-                  </button>
-                </div>
+                <ProcessingStepResult
+                  processedFileUrl={processedFileUrl}
+                  previewImageUrl={previewImageUrl}
+                  effectName={effectName}
+                  subtitle={resultSubtitle}
+                  watermarkLabel={watermarkLabel}
+                />
+              ) : isUploadPhase ? (
+                <ProcessingStepUpload
+                  previewVideoUrl={previewVideoUrl}
+                  previewImageUrl={previewImageUrl}
+                  onPreviewError={handlePreviewError}
+                  currentIcon={CurrentIcon}
+                  displayProgress={displayProgress}
+                  activeStepLabel={activeStepLabel}
+                  effectName={effectName}
+                  subtitle={processingSubtitle}
+                  uploadStatus={uploadStatus}
+                  uploadProgress={uploadProgress}
+                />
               ) : (
-                <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-[11px] text-white/65">
-                  <span className="font-semibold text-fuchsia-200">Did you know?</span> Our AI analyzes thousands of frames
-                  per second to create seamless effects.
-                </div>
+                <ProcessingStepProcessing
+                  previewVideoUrl={previewVideoUrl}
+                  previewImageUrl={previewImageUrl}
+                  onPreviewError={handlePreviewError}
+                  currentIcon={CurrentIcon}
+                  displayProgress={displayProgress}
+                  activeStepLabel={activeStepLabel}
+                  effectName={effectName}
+                  subtitle={processingSubtitle}
+                  steps={PROCESSING_STEPS}
+                  stepStatuses={stepStatuses}
+                  showError={videoStatus === "failed"}
+                  errorMessage={errorMessage}
+                  uploadAnotherHref={`/effects/${encodeURIComponent(slug)}?upload=1`}
+                />
               )}
             </div>
           </main>

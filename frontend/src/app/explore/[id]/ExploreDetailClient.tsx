@@ -72,7 +72,6 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const effectName = data?.effect?.name ?? "AI Effect";
   const effectDescription = useMemo(() => (data?.effect?.description ?? "").trim(), [data?.effect?.description]);
   const isPremium = Boolean(data?.effect?.is_premium);
-  const effectDescription = useMemo(() => (data?.effect?.description ?? "").trim(), [data?.effect?.description]);
 
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">

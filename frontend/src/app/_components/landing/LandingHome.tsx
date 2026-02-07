@@ -23,7 +23,7 @@ function gradientClass(from: string, to: string) {
   return `${from} ${to}`;
 }
 
-type LandingEffect = Effect & { slug: string };
+type LandingEffect = Effect & { slug: string; preview_video_url?: string | null };
 
 type EffectsState =
   | { status: "loading" }
@@ -77,6 +77,7 @@ function toLandingEffect(effect: ApiEffect): LandingEffect {
     type: effect.type ?? null,
     is_premium: effect.is_premium,
     thumbnail_url: effect.thumbnail_url ?? null,
+    preview_video_url: effect.preview_video_url ?? null,
     badge: undefined,
     stats: { uses: "Tokens" },
     gradient: gradientForSlug(effect.slug),
@@ -97,6 +98,13 @@ function toLandingGalleryItem(item: GalleryVideo): GalleryItem {
     processed_file_url: item.processed_file_url ?? null,
     effect_slug: item.effect?.slug ?? null,
   };
+}
+
+function pickFeaturedEffect(effects: LandingEffect[]): LandingEffect | null {
+  if (!effects.length) return null;
+  // TODO: Replace with usage-frequency ranking once available.
+  const idx = Math.floor(Math.random() * effects.length);
+  return effects[idx] ?? null;
 }
 
 function EffectCardSkeleton({ gradient }: { gradient: { from: string; to: string } }) {
@@ -338,6 +346,8 @@ export default function LandingHome() {
   const [authOpen, setAuthOpen] = useState(false);
   const [effectsState, setEffectsState] = useState<EffectsState>({ status: "loading" });
   const [effectsReload, setEffectsReload] = useState(0);
+  const [featuredEffect, setFeaturedEffect] = useState<LandingEffect | null>(null);
+  const [pendingDoSameSlug, setPendingDoSameSlug] = useState<string | null>(null);
   const [galleryState, setGalleryState] = useState<PublicGalleryState>({ status: "loading" });
   const [galleryReload, setGalleryReload] = useState(0);
   const [token, setToken] = useState<string | null>(null);
@@ -358,7 +368,14 @@ export default function LandingHome() {
   const closeAuth = () => {
     closeUploadAuth();
     setAuthOpen(false);
-    setToken(getAccessToken());
+    const nextToken = getAccessToken();
+    setToken(nextToken);
+    if (pendingDoSameSlug) {
+      if (nextToken) {
+        goToEffect(pendingDoSameSlug);
+      }
+      setPendingDoSameSlug(null);
+    }
   };
 
   const goToEffect = (slug: string) => {
@@ -372,6 +389,23 @@ export default function LandingHome() {
     }
     clearUploadError();
     startUpload(effect.slug);
+  };
+
+  const handleDoSameClick = () => {
+    if (!featuredEffect) return;
+    const activeToken = token ?? getAccessToken();
+    if (!activeToken) {
+      setPendingDoSameSlug(featuredEffect.slug);
+      setAuthOpen(true);
+      return;
+    }
+    if (!token) setToken(activeToken);
+    if (featuredEffect.type === "configurable") {
+      goToEffect(featuredEffect.slug);
+      return;
+    }
+    clearUploadError();
+    startUpload(featuredEffect.slug);
   };
 
   useEffect(() => {
@@ -409,6 +443,14 @@ export default function LandingHome() {
       cancelled = true;
     };
   }, [effectsReload]);
+
+  useEffect(() => {
+    if (effectsState.status !== "success") {
+      setFeaturedEffect(null);
+      return;
+    }
+    setFeaturedEffect(pickFeaturedEffect(effectsState.data));
+  }, [effectsState.status, effectsState.data]);
 
   useEffect(() => {
     let cancelled = false;
@@ -472,6 +514,13 @@ export default function LandingHome() {
     };
   }, [token]);
 
+  const heroEffectLabel = featuredEffect
+    ? featuredEffect.name.toLowerCase().includes("effect")
+      ? featuredEffect.name
+      : `${featuredEffect.name} Effect`
+    : hero.effectLabel;
+  const heroEffectDescription = featuredEffect?.tagline ?? hero.effectDescription;
+
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <input
@@ -512,6 +561,23 @@ export default function LandingHome() {
           <section className="relative">
             <div className="relative w-full overflow-hidden bg-zinc-900/50 md:mx-auto md:mt-6 md:max-w-md md:rounded-3xl">
               <div className="relative aspect-[9/16] w-full">
+                {featuredEffect?.preview_video_url ? (
+                  <VideoPlayer
+                    className="absolute inset-0 h-full w-full object-cover"
+                    src={featuredEffect.preview_video_url}
+                    muted
+                    loop
+                    autoPlay
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : featuredEffect?.thumbnail_url ? (
+                  <img
+                    className="absolute inset-0 h-full w-full object-cover"
+                    src={featuredEffect.thumbnail_url}
+                    alt={heroEffectLabel}
+                  />
+                ) : null}
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(236,72,153,0.35),transparent_55%),radial-gradient(circle_at_80%_40%,rgba(34,211,238,0.28),transparent_58%),radial-gradient(circle_at_40%_90%,rgba(99,102,241,0.25),transparent_55%)]" />
                 <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-black/20 to-black/85" />
 
@@ -524,29 +590,31 @@ export default function LandingHome() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  aria-label="Play hero preview"
-                  className="absolute inset-0 grid place-items-center"
-                  onClick={openAuth}
-                >
-                  <span className="grid h-20 w-20 place-items-center rounded-full border border-white/25 bg-black/40 backdrop-blur-sm shadow-2xl">
-                    <IconPlay className="h-9 w-9 translate-x-0.5 text-white/90" />
-                  </span>
-                </button>
-
                 <div className="absolute bottom-4 left-4 w-[calc(100%-2rem)] max-w-[340px]">
                   <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-black/45 px-3 py-2 backdrop-blur-sm">
                     <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10">
                       <IconSparkles className="h-4 w-4 text-fuchsia-200" />
                     </span>
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-white">{hero.effectLabel}</div>
-                      <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-white/70">{hero.effectDescription}</div>
+                      <div className="truncate text-sm font-semibold text-white">{heroEffectLabel}</div>
+                      <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-white/70">
+                        {heroEffectDescription}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div className="px-4 pt-4 md:mx-auto md:max-w-md">
+              <button
+                type="button"
+                onClick={handleDoSameClick}
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300"
+              >
+                <IconWand className="h-5 w-5" />
+                Do the Same
+              </button>
             </div>
 
             <div className="px-4 pt-6 text-center">
@@ -711,20 +779,6 @@ export default function LandingHome() {
           </section>
         </main>
 
-        <div className="fixed inset-x-0 bottom-0 z-40">
-          <div className="mx-auto w-full max-w-md px-4 pb-[calc(16px+env(safe-area-inset-bottom))] sm:max-w-xl lg:max-w-4xl">
-            <div className="rounded-3xl border border-white/10 bg-black/70 p-2 backdrop-blur-md supports-[backdrop-filter]:bg-black/40">
-              <button
-                type="button"
-                onClick={openAuth}
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300"
-              >
-                <IconWand className="h-5 w-5" />
-                Do the Same
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
 
       <AuthModal open={combinedAuthOpen} onClose={closeAuth} />

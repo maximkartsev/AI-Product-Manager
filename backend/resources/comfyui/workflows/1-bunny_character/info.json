@@ -3,6 +3,7 @@
 	"slug": "bunny-character",
 	"description": "Replacing people with a bunny character.",
 	"type": "configurable",
+	"category": "Fun",
 	"tags": ["bunny", "character", "cute"],
 	"is_premium": true,
 	"is_new": true,

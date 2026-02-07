@@ -639,6 +639,12 @@ export default function LandingHome() {
                 <h2 className="text-lg font-semibold tracking-tight text-white">Popular Effects</h2>
                 <p className="mt-1 text-xs text-white/50">Trending transformations loved by creators</p>
               </div>
+              <Link
+                href="/effects"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-white/70 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+              >
+                View all <IconArrowRight className="h-4 w-4" />
+              </Link>
             </div>
 
             {effectsState.status === "error" ? (

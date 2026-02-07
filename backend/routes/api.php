@@ -26,6 +26,7 @@ use \App\Http\Controllers\EffectController as EffectController;
 use \App\Http\Controllers\VideoController as VideoController;
 use \App\Http\Controllers\GalleryController as GalleryController;
 use \App\Http\Controllers\Admin\EffectsController as AdminEffectsController;
+use \App\Http\Controllers\Admin\CategoriesController as AdminCategoriesController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -76,6 +77,11 @@ Route::middleware([
             Route::post('/effects', [AdminEffectsController::class, 'store']);
             Route::patch('/effects/{id}', [AdminEffectsController::class, 'update']);
             Route::delete('/effects/{id}', [AdminEffectsController::class, 'destroy']);
+
+            Route::get('/categories', [AdminCategoriesController::class, 'index']);
+            Route::post('/categories', [AdminCategoriesController::class, 'store']);
+            Route::patch('/categories/{id}', [AdminCategoriesController::class, 'update']);
+            Route::delete('/categories/{id}', [AdminCategoriesController::class, 'destroy']);
         });
     });
 

@@ -15,6 +15,7 @@ class Effect extends CentralModel
         'name',
         'slug',
         'description',
+        'category_id',
         'tags',
         'ai_model_id',
         'type',
@@ -39,6 +40,7 @@ class Effect extends CentralModel
     ];
 
     protected $casts = [
+        'category_id' => 'integer',
         'ai_model_id' => 'integer',
         'tags' => 'array',
         'credits_cost' => 'float',
@@ -58,6 +60,7 @@ class Effect extends CentralModel
             'name' => 'string|required|max:255',
             'slug' => 'string|required|max:255',
             'description' => 'string|nullable',
+            'category_id' => 'numeric|nullable|exists:categories,id',
             'tags' => 'array|nullable',
             'tags.*' => 'string|max:64',
             'ai_model_id' => 'numeric|nullable|exists:ai_models,id',
@@ -86,5 +89,10 @@ class Effect extends CentralModel
     public function aiModel()
     {
         return $this->belongsTo(\App\Models\AiModel::class);
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(\App\Models\Category::class);
     }
 }

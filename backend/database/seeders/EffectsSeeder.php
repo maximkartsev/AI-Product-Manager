@@ -2,10 +2,12 @@
 
 namespace Database\Seeders;
 
+use App\Models\Category;
 use App\Models\Effect;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class EffectsSeeder extends Seeder
 {
@@ -55,6 +57,8 @@ class EffectsSeeder extends Seeder
             $type = isset($info['type']) ? trim((string) $info['type']) : '';
             $type = $type !== '' ? $type : 'transform';
             $tags = $this->parseTags($info['tags'] ?? null);
+            $categoryName = $this->parseCategoryName($info['category'] ?? null);
+            $categoryId = $this->resolveCategoryId($categoryName, $infoPath);
 
             $workflowFullPath = $this->findWorkflowJson($folder);
             if (!$workflowFullPath) {
@@ -73,6 +77,7 @@ class EffectsSeeder extends Seeder
                 [
                     'name' => $name,
                     'description' => $description,
+                    'category_id' => $categoryId,
                     'tags' => !empty($tags) ? array_values($tags) : null,
                     'type' => $type,
                     'preview_url' => null,
@@ -249,6 +254,41 @@ class EffectsSeeder extends Seeder
         }
 
         return $tags;
+    }
+
+    private function parseCategoryName(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $trimmed = trim((string) $value);
+        return $trimmed !== '' ? $trimmed : null;
+    }
+
+    private function resolveCategoryId(?string $name, string $infoPath): ?int
+    {
+        if (!$name) {
+            $this->command?->warn("Missing category in info.json: {$infoPath}");
+            return null;
+        }
+
+        $slug = Str::slug($name);
+        if ($slug === '') {
+            $this->command?->warn("Invalid category slug in info.json: {$infoPath}");
+            return null;
+        }
+
+        $categoryId = Category::query()->where('slug', $slug)->value('id');
+        if (!$categoryId) {
+            $this->command?->warn("Category not found for effect (run CategoriesSeeder): {$infoPath}");
+            return null;
+        }
+
+        return (int) $categoryId;
     }
 
     private function contentTypeForExtension(string $extension): string

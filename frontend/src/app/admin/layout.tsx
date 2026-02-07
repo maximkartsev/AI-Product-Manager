@@ -14,6 +14,12 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             >
               Effects
             </Link>
+            <Link
+              href="/admin/categories"
+              className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-200 hover:bg-gray-800"
+            >
+              Categories
+            </Link>
           </nav>
         </aside>
         <main className="flex-1">{children}</main>

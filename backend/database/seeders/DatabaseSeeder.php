@@ -16,6 +16,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             UsersSeeder::class,
+            CategoriesSeeder::class,
             EffectsSeeder::class,
             WorkflowsToS3Seeder::class,
             TokenWalletSeeder::class,

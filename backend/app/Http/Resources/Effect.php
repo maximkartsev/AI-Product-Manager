@@ -18,9 +18,16 @@ class Effect extends JsonResource
     public function toArray($request)
     {
         $data = parent::toArray($request);
+        $category = $this->relationLoaded('category') ? $this->category : null;
 
         $data['thumbnail_url'] = $this->presignEffectAsset($data['thumbnail_url'] ?? null);
         $data['preview_video_url'] = $this->presignEffectAsset($data['preview_video_url'] ?? null);
+        $data['category'] = $category ? [
+            'id' => $category->id,
+            'name' => $category->name,
+            'slug' => $category->slug,
+            'description' => $category->description,
+        ] : null;
 
         return $data;
     }

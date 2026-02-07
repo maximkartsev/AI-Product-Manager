@@ -131,15 +131,31 @@ export type ApiEffect = {
   name: string;
   slug: string;
   description?: string | null;
+  category?: {
+    id: number;
+    name: string;
+    slug: string;
+    description?: string | null;
+  } | null;
   type?: string | null;
   tags?: string[] | null;
   thumbnail_url?: string | null;
   preview_video_url?: string | null;
   credits_cost?: number | null;
   processing_time_estimate?: number | null;
+  popularity_score?: number | null;
+  sort_order?: number | null;
+  is_new?: boolean | null;
   last_processing_time_seconds?: number | null;
   is_premium: boolean;
   is_active: boolean;
+};
+
+export type ApiCategory = {
+  id: number;
+  name: string;
+  slug: string;
+  description?: string | null;
 };
 
 export type Article = {
@@ -491,6 +507,7 @@ export type AdminEffect = {
   name?: string;
   slug?: string;
   description?: string | null;
+  category_id?: number | null;
   tags?: string[] | null;
   type?: string | null;
   preview_url?: string | null;
@@ -523,6 +540,28 @@ export type AdminEffectPayload = Partial<AdminEffect>;
 
 export type AdminEffectsIndexData = {
   items: AdminEffect[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order: string;
+  search: string | null;
+  filters: unknown[];
+};
+
+export type AdminCategory = {
+  id: number;
+  name?: string;
+  slug?: string;
+  description?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AdminCategoryPayload = Partial<AdminCategory>;
+
+export type AdminCategoriesIndexData = {
+  items: AdminCategory[];
   totalItems: number;
   totalPages: number;
   page: number;
@@ -590,6 +629,43 @@ export function updateAdminEffect(id: number, payload: AdminEffectPayload): Prom
 
 export function deleteAdminEffect(id: number): Promise<void> {
   return apiRequest<void>(`/admin/effects/${id}`, { method: "DELETE" });
+}
+
+export async function getAdminCategories(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<AdminCategoriesIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+
+  if (params.search) {
+    query.set("search", params.search);
+  }
+
+  if (params.order) {
+    query.set("order", params.order);
+  }
+
+  appendFilterParams(query, params.filters);
+
+  return apiRequest<AdminCategoriesIndexData>(`/admin/categories?${query.toString()}`, { method: "GET" });
+}
+
+export function createAdminCategory(payload: AdminCategoryPayload): Promise<AdminCategory> {
+  return apiPost<AdminCategory>("/admin/categories", payload);
+}
+
+export function updateAdminCategory(id: number, payload: AdminCategoryPayload): Promise<AdminCategory> {
+  return apiRequest<AdminCategory>(`/admin/categories/${id}`, { method: "PATCH", body: payload });
+}
+
+export function deleteAdminCategory(id: number): Promise<void> {
+  return apiRequest<void>(`/admin/categories/${id}`, { method: "DELETE" });
 }
 
 export function initEffectAssetUpload(payload: EffectUploadInitRequest): Promise<EffectUploadInitData> {

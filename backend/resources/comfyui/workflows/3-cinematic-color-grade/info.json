@@ -3,6 +3,7 @@
 	"slug": "cinematic-color-grade",
 	"description": "Film-like contrast and color for a cinematic look.",
 	"type": "simple",
+	"category": "Style",
 	"tags": ["cinematic", "color", "grade"],
 	"is_premium": true,
 	"is_new": false,

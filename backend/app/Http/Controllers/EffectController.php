@@ -19,6 +19,7 @@ class EffectController extends BaseController
     {
         $items = Effect::query()
             ->where('is_active', true)
+            ->with(['category'])
             ->orderBy('id', 'asc')
             ->get();
 
@@ -63,7 +64,8 @@ class EffectController extends BaseController
     public function show($slugOrId): JsonResponse
     {
         $query = Effect::query()
-            ->where('is_active', true);
+            ->where('is_active', true)
+            ->with(['category']);
 
         if (is_numeric($slugOrId)) {
             $item = $query->whereKey((int) $slugOrId)->first();

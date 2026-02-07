@@ -72,9 +72,9 @@ setup-env:
 
 build-containers:
 	@echo "🏗️  Building Docker containers..."
-	@cd $(LARADOCK_DIR) && docker compose build workspace php-fpm redis mariadb nginx
+	@cd $(LARADOCK_DIR) && docker compose build workspace php-fpm redis mariadb nginx minio
 	@echo "🚀 Starting Docker containers..."
-	@cd $(LARADOCK_DIR) && docker compose up -d workspace php-fpm redis mariadb nginx
+	@cd $(LARADOCK_DIR) && docker compose up -d workspace php-fpm redis mariadb nginx minio
 	@echo "⏳ Waiting for containers to be ready..."
 	@sleep 5
 	@echo "✅ Containers are running"

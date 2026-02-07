@@ -114,7 +114,7 @@ This initializes env files, builds containers, starts the minimal set, creates D
 cd laradock
 
 # Start ONLY the services this project uses
-docker compose -p bp up -d workspace php-fpm nginx mariadb redis
+docker compose -p bp up -d workspace php-fpm nginx mariadb redis minio
 
 # Stop
 docker compose -p bp down
@@ -213,7 +213,7 @@ Fix:
 ```bash
 cd laradock
 docker compose -p bp down --remove-orphans
-docker compose -p bp up -d workspace php-fpm nginx mariadb redis
+docker compose -p bp up -d workspace php-fpm nginx mariadb redis minio
 ```
 
 ### Still slow after moving to WSL?

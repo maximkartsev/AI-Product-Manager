@@ -38,7 +38,7 @@ Once initialized, you can manage containers with:
 cd laradock
 # IMPORTANT: Laradock contains many optional services.
 # Always start ONLY what this project needs:
-docker compose -p bp up -d workspace php-fpm nginx mariadb redis
+docker compose -p bp up -d workspace php-fpm nginx mariadb redis minio
 ```
 
 **Stop containers:**
@@ -73,7 +73,7 @@ The backend uses Laradock which includes:
 **Start backend containers:**
 ```bash
 cd laradock
-docker compose -p bp up -d workspace php-fpm nginx mariadb redis
+docker compose -p bp up -d workspace php-fpm nginx mariadb redis minio
 ```
 
 **Stop backend containers:**
@@ -85,8 +85,8 @@ docker compose -p bp down
 **Rebuild containers (after changes):**
 ```bash
 cd laradock
-docker compose -p bp build workspace php-fpm nginx mariadb redis
-docker compose -p bp up -d workspace php-fpm nginx mariadb redis
+docker compose -p bp build workspace php-fpm nginx mariadb redis minio
+docker compose -p bp up -d workspace php-fpm nginx mariadb redis minio
 ```
 
 ### Frontend Containers

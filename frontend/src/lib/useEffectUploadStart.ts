@@ -5,6 +5,11 @@ import { savePendingUpload } from "@/lib/uploadPreviewStore";
 
 type UploadState = { status: "idle" } | { status: "error"; message: string };
 
+type UploadPromptContext = {
+  positivePrompt?: string | null;
+  negativePrompt?: string | null;
+};
+
 type UseEffectUploadStartArgs = {
   slug: string | null;
   autoUpload?: boolean;
@@ -13,7 +18,7 @@ type UseEffectUploadStartArgs = {
 
 type UseEffectUploadStartReturn = {
   fileInputRef: React.RefObject<HTMLInputElement>;
-  startUpload: (slugOverride?: string | null) => void;
+  startUpload: (slugOverride?: string | null, context?: UploadPromptContext | null) => void;
   onFileSelected: (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
   authOpen: boolean;
   closeAuth: () => void;
@@ -31,6 +36,7 @@ export default function useEffectUploadStart({
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoUploadRef = useRef(false);
+  const pendingContextRef = useRef<UploadPromptContext | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [pendingUpload, setPendingUpload] = useState(false);
@@ -68,11 +74,12 @@ export default function useEffectUploadStart({
     setPendingUpload(false);
   }
 
-  function startUpload(slugOverride?: string | null) {
+  function startUpload(slugOverride?: string | null, context?: UploadPromptContext | null) {
     const targetSlug = slugOverride ?? slug;
     if (!targetSlug) {
       return;
     }
+    pendingContextRef.current = context ?? null;
     setPendingSlug(targetSlug);
     const nextToken = token ?? getAccessToken();
     if (!nextToken) {
@@ -103,6 +110,23 @@ export default function useEffectUploadStart({
     try {
       const uploadId = `upload_${crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
       await savePendingUpload(uploadId, file);
+      const context = pendingContextRef.current;
+      pendingContextRef.current = null;
+      const positive = typeof context?.positivePrompt === "string" ? context.positivePrompt.trim() : "";
+      const negative = typeof context?.negativePrompt === "string" ? context.negativePrompt.trim() : "";
+      if (positive || negative) {
+        try {
+          window.sessionStorage.setItem(
+            `upload_ctx_${uploadId}`,
+            JSON.stringify({
+              ...(positive ? { positive_prompt: positive } : {}),
+              ...(negative ? { negative_prompt: negative } : {}),
+            }),
+          );
+        } catch {
+          // ignore storage issues
+        }
+      }
       clearUploadError();
       router.push(`/effects/${encodeURIComponent(targetSlug)}/processing?uploadId=${uploadId}`);
     } catch (err) {

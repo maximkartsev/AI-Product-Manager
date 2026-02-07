@@ -7,6 +7,8 @@ export type Effect = {
   id: string;
   name: string;
   tagline: string;
+  type?: string | null;
+  is_premium?: boolean;
   thumbnail_url?: string | null;
   badge?: string;
   stats: {

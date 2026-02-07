@@ -171,6 +171,12 @@ class AiJobController extends BaseController
             throw new \RuntimeException('Workflow JSON is invalid or empty.');
         }
 
+        // TODO: Read positive_prompt and negative_prompt from request input_payload.
+        // After loading the workflow, scan workflow nodes and override existing input keys:
+        // - If node inputs contains prompt (or text), replace with positive prompt.
+        // - If node inputs contains negative_prompt, replace with negative prompt.
+        // Keep behavior safe: only overwrite keys that already exist in inputs.
+
         $inputPayload['input_path_placeholder'] = $inputPayload['input_path_placeholder']
             ?? ($effect->comfyui_input_path_placeholder ?: '__INPUT_PATH__');
         $inputPayload['output_extension'] = $inputPayload['output_extension']

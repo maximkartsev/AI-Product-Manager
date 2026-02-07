@@ -355,10 +355,31 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         void savePreview(video.id, pendingFile);
 
         const idempotencyKey = `effect_${effectState.data.id}_${uploadId}`;
+        let promptPayload: Record<string, string> | null = null;
+        if (uploadId) {
+          try {
+            const raw = window.sessionStorage.getItem(`upload_ctx_${uploadId}`);
+            if (raw) {
+              const parsed = JSON.parse(raw) as Record<string, unknown>;
+              const positive = typeof parsed.positive_prompt === "string" ? parsed.positive_prompt.trim() : "";
+              const negative = typeof parsed.negative_prompt === "string" ? parsed.negative_prompt.trim() : "";
+              const nextPayload: Record<string, string> = {};
+              if (positive) nextPayload.positive_prompt = positive;
+              if (negative) nextPayload.negative_prompt = negative;
+              if (Object.keys(nextPayload).length > 0) {
+                promptPayload = nextPayload;
+              }
+            }
+          } catch {
+            // ignore prompt payload errors
+          }
+        }
+
         const job = await submitAiJob({
           effect_id: effectState.data.id,
           video_id: video.id,
           idempotency_key: idempotencyKey,
+          input_payload: promptPayload ?? undefined,
         });
 
         if (job.status === "failed") {
@@ -375,6 +396,9 @@ export default function ProcessingClient({ slug }: { slug: string }) {
 
         try {
           window.sessionStorage.setItem(guardKey, String(video.id));
+          if (uploadId) {
+            window.sessionStorage.removeItem(`upload_ctx_${uploadId}`);
+          }
         } catch {
           // ignore storage issues
         }

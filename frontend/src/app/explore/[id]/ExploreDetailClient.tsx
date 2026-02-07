@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import AuthModal from "@/app/_components/landing/AuthModal";
 import { ApiError, getPublicGalleryItem, type GalleryVideo } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
+import { Textarea } from "@/components/ui/textarea";
 import { IconSparkles } from "@/app/_components/landing/icons";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Info, SlidersHorizontal } from "lucide-react";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 
 type GalleryDetailState =
@@ -19,6 +20,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const router = useRouter();
   const [state, setState] = useState<GalleryDetailState>({ status: "loading" });
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [positivePrompt, setPositivePrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
   const effectSlug = state.status === "success" ? state.data.effect?.slug ?? null : null;
   const {
     fileInputRef,
@@ -32,8 +35,14 @@ export default function ExploreDetailClient({ id }: { id: number }) {
     onError: setUploadError,
   });
 
+  const isConfigurable = state.status === "success" && state.data.effect?.type === "configurable";
+
   const onUploadClick = () => {
     clearUploadError();
+    if (isConfigurable) {
+      startUpload(effectSlug, { positivePrompt, negativePrompt });
+      return;
+    }
     startUpload(effectSlug);
   };
 
@@ -61,6 +70,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const data = state.status === "success" ? state.data : null;
   const title = useMemo(() => data?.title?.trim() || "Untitled", [data?.title]);
   const effectName = data?.effect?.name ?? "AI Effect";
+  const effectDescription = useMemo(() => (data?.effect?.description ?? "").trim(), [data?.effect?.description]);
+  const isPremium = Boolean(data?.effect?.is_premium);
   const effectDescription = useMemo(() => (data?.effect?.description ?? "").trim(), [data?.effect?.description]);
 
   return (
@@ -139,15 +150,66 @@ export default function ExploreDetailClient({ id }: { id: number }) {
                     dzzzs.com • {effectName}
                   </div>
                 </div>
+                {isPremium ? (
+                  <span className="absolute left-3 top-3 inline-flex items-center rounded-full border border-white/20 bg-black/45 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
+                    Premium
+                  </span>
+                ) : null}
+                {isConfigurable ? (
+                  <span className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white/85 backdrop-blur-sm">
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                  </span>
+                ) : null}
               </section>
 
               <div className="mt-5 text-center">
                 <div className="text-lg font-semibold text-white">{title}</div>
                 <div className="mt-1 text-xs text-white/55">{effectName}</div>
-                {effectDescription ? (
-                  <div className="mt-2 text-xs leading-5 text-white/60">{effectDescription}</div>
-                ) : null}
+                {effectDescription ? <div className="mt-2 text-xs leading-5 text-white/60">{effectDescription}</div> : null}
               </div>
+
+              {isConfigurable ? (
+                <div className="mt-6 space-y-3 rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <div>
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+                      <span>Positive prompt</span>
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
+                        title="Describe what you want to see in the output."
+                        aria-label="Positive prompt info"
+                      >
+                        <Info className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <Textarea
+                      value={positivePrompt}
+                      onChange={(event) => setPositivePrompt(event.target.value)}
+                      placeholder="Describe the look, style, or details to add..."
+                      className="mt-2 min-h-[84px] text-xs"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+                      <span>Negative prompt</span>
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
+                        title="Describe what you want to avoid."
+                        aria-label="Negative prompt info"
+                      >
+                        <Info className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <Textarea
+                      value={negativePrompt}
+                      onChange={(event) => setNegativePrompt(event.target.value)}
+                      placeholder="Describe elements to avoid..."
+                      className="mt-2 min-h-[84px] text-xs"
+                    />
+                  </div>
+                </div>
+              ) : null}
 
               <div className="mt-6">
                 <button

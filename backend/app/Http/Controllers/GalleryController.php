@@ -32,7 +32,7 @@ class GalleryController extends BaseController
 
         [$totalRows, $items] = $this->addCountQueryAndExecute($orderStr, $query, $from, $perPage);
 
-        $items->load(['effect:id,slug,name,description']);
+        $items->load(['effect:id,slug,name,description,type,is_premium']);
 
         $response = [
             'items' => GalleryVideoResource::collection($items),
@@ -58,7 +58,7 @@ class GalleryController extends BaseController
     {
         $item = GalleryVideo::query()
             ->where('is_public', true)
-            ->with(['effect:id,slug,name,description'])
+            ->with(['effect:id,slug,name,description,type,is_premium'])
             ->find($id);
 
         if (is_null($item)) {

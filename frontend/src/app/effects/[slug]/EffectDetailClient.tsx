@@ -5,8 +5,10 @@ import { IconPlay, IconSparkles, IconWand } from "@/app/_components/landing/icon
 import { ApiError, getEffect, getWallet, type ApiEffect } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
+import { Textarea } from "@/components/ui/textarea";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Info, SlidersHorizontal } from "lucide-react";
 
 type LoadState =
   | { status: "loading" }
@@ -134,6 +136,8 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
 
   const [plansOpen, setPlansOpen] = useState(false);
   const [walletState, setWalletState] = useState<WalletState>({ status: "idle" });
+  const [positivePrompt, setPositivePrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
   const {
     fileInputRef,
     startUpload,
@@ -227,6 +231,16 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
 
   const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
   const disableUpload: boolean = false;
+  const isConfigurable = state.status === "success" && state.data.type === "configurable";
+
+  const handleStartUpload = () => {
+    clearUploadError();
+    if (isConfigurable) {
+      startUpload(slug, { positivePrompt, negativePrompt });
+      return;
+    }
+    startUpload(slug);
+  };
 
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
@@ -328,16 +342,21 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
                     </div>
                   </>
                 ) : null}
+                {state.data.is_premium ? (
+                  <span className="absolute left-3 top-3 inline-flex items-center rounded-full border border-white/20 bg-black/45 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
+                    Premium
+                  </span>
+                ) : null}
+                {isConfigurable ? (
+                  <span className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white/85 backdrop-blur-sm">
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                  </span>
+                ) : null}
               </div>
 
               <div className="p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h1 className="text-2xl font-semibold tracking-tight text-white">{state.data.name}</h1>
-                  {state.data.is_premium ? (
-                    <span className="inline-flex items-center rounded-full border border-white/15 bg-black/35 px-3 py-1 text-xs font-semibold text-white/80">
-                      Premium
-                    </span>
-                  ) : null}
                 </div>
 
                 {state.data.description ? (
@@ -376,6 +395,49 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
                 ) : null}
               </div>
 
+              {isConfigurable ? (
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+                      <span>Positive prompt</span>
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
+                        title="Describe what you want to see in the output."
+                        aria-label="Positive prompt info"
+                      >
+                        <Info className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <Textarea
+                      value={positivePrompt}
+                      onChange={(event) => setPositivePrompt(event.target.value)}
+                      placeholder="Describe the look, style, or details to add..."
+                      className="mt-2 min-h-[84px] text-xs"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+                      <span>Negative prompt</span>
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
+                        title="Describe what you want to avoid."
+                        aria-label="Negative prompt info"
+                      >
+                        <Info className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <Textarea
+                      value={negativePrompt}
+                      onChange={(event) => setNegativePrompt(event.target.value)}
+                      placeholder="Describe elements to avoid..."
+                      className="mt-2 min-h-[84px] text-xs"
+                    />
+                  </div>
+                </div>
+              ) : null}
+
               {uploadState.status === "error" ? (
                 <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
                   {uploadState.message}
@@ -397,8 +459,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
               <button
                 type="button"
                 onClick={() => {
-                  clearUploadError();
-                  startUpload(slug);
+                  handleStartUpload();
                 }}
                 disabled={disableUpload}
                 className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 disabled:pointer-events-none disabled:opacity-70"

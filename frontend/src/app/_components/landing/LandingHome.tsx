@@ -10,12 +10,14 @@ import {
   type GalleryVideo,
 } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
+import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import AuthModal from "./AuthModal";
 import { brand, features, hero, trustBadges, type Effect, type GalleryItem } from "./landingData";
 import { IconArrowRight, IconBolt, IconGallery, IconPlay, IconSparkles, IconWand } from "./icons";
+import { SlidersHorizontal } from "lucide-react";
 
 function gradientClass(from: string, to: string) {
   return `${from} ${to}`;
@@ -72,9 +74,11 @@ function toLandingEffect(effect: ApiEffect): LandingEffect {
     slug: effect.slug,
     name: effect.name,
     tagline: taglineForDescription(effect.description),
+    type: effect.type ?? null,
+    is_premium: effect.is_premium,
     thumbnail_url: effect.thumbnail_url ?? null,
-    badge: effect.is_premium ? "Premium" : undefined,
-    stats: { uses: effect.is_premium ? "Premium" : "Tokens" },
+    badge: undefined,
+    stats: { uses: "Tokens" },
     gradient: gradientForSlug(effect.slug),
   };
 }
@@ -182,6 +186,16 @@ function EffectCard({ effect, onTry }: { effect: Effect; onTry: () => void }) {
               alt={effect.name}
             />
           ) : null}
+          {effect.is_premium ? (
+            <span className="absolute left-3 top-3 inline-flex items-center rounded-full border border-white/20 bg-black/45 px-2.5 py-1 text-[10px] font-semibold text-white/90 backdrop-blur-sm">
+              Premium
+            </span>
+          ) : null}
+          {effect.type === "configurable" ? (
+            <span className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white/85 backdrop-blur-sm">
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+            </span>
+          ) : null}
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_40%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_60%)]" />
           <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
 
@@ -201,17 +215,16 @@ function EffectCard({ effect, onTry }: { effect: Effect; onTry: () => void }) {
               <div className="truncate text-sm font-semibold text-white">{effect.name}</div>
               <div className="truncate text-xs text-white/75">{effect.tagline}</div>
             </div>
-            <div className="shrink-0 rounded-full border border-white/15 bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/80">
-              {effect.stats.uses}
-            </div>
+            {!effect.is_premium ? (
+              <div className="shrink-0 rounded-full border border-white/15 bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/80">
+                {effect.stats.uses}
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div className="p-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-white/60">
-              {effect.badge ? <span className="font-medium text-white/80">{effect.badge}</span> : "Trending now"}
-            </div>
             <button
               type="button"
               onClick={onTry}
@@ -228,6 +241,7 @@ function EffectCard({ effect, onTry }: { effect: Effect; onTry: () => void }) {
 
 function GalleryCard({ item, onUse }: { item: GalleryItem; onUse: () => void }) {
   const g = gradientClass(item.gradient.from, item.gradient.to);
+  const showPlayOverlay = !item.processed_file_url || Boolean(item.thumbnail_url);
   return (
     <button
       type="button"
@@ -252,11 +266,13 @@ function GalleryCard({ item, onUse }: { item: GalleryItem; onUse: () => void }) 
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.28),transparent_45%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_65%)]" />
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/75" />
 
-        <div className="absolute inset-0 grid place-items-center">
-          <span className="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
-            <IconPlay className="h-6 w-6 translate-x-0.5 text-white/90" />
-          </span>
-        </div>
+        {showPlayOverlay ? (
+          <div className="absolute inset-0 grid place-items-center">
+            <span className="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
+              <IconPlay className="h-6 w-6 translate-x-0.5 text-white/90" />
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <div className="p-3">
@@ -326,15 +342,36 @@ export default function LandingHome() {
   const [galleryReload, setGalleryReload] = useState(0);
   const [token, setToken] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const {
+    fileInputRef,
+    startUpload,
+    onFileSelected,
+    authOpen: uploadAuthOpen,
+    closeAuth: closeUploadAuth,
+    clearUploadError,
+  } = useEffectUploadStart({
+    slug: null,
+  });
+  const combinedAuthOpen = authOpen || uploadAuthOpen;
 
   const openAuth = () => setAuthOpen(true);
   const closeAuth = () => {
+    closeUploadAuth();
     setAuthOpen(false);
     setToken(getAccessToken());
   };
 
   const goToEffect = (slug: string) => {
     router.push(`/effects/${encodeURIComponent(slug)}`);
+  };
+
+  const handleEffectTry = (effect: LandingEffect) => {
+    if (effect.type === "configurable") {
+      goToEffect(effect.slug);
+      return;
+    }
+    clearUploadError();
+    startUpload(effect.slug);
   };
 
   useEffect(() => {
@@ -437,6 +474,13 @@ export default function LandingHome() {
 
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/*"
+        className="hidden"
+        onChange={onFileSelected}
+      />
       <div className="relative mx-auto w-full max-w-md sm:max-w-xl lg:max-w-4xl">
         <header className="absolute inset-x-0 top-0 z-20 px-4 pt-4">
           <div className="flex items-center justify-between">
@@ -552,7 +596,7 @@ export default function LandingHome() {
                 <div className="flex gap-3">
                   {effectsState.status === "success"
                     ? effectsState.data.map((effect) => (
-                        <EffectCard key={effect.slug} effect={effect} onTry={() => goToEffect(effect.slug)} />
+                        <EffectCard key={effect.slug} effect={effect} onTry={() => handleEffectTry(effect)} />
                       ))
                     : EFFECT_GRADIENTS.slice(0, 4).map((g, idx) => <EffectCardSkeleton key={idx} gradient={g} />)}
                 </div>
@@ -683,7 +727,7 @@ export default function LandingHome() {
         </div>
       </div>
 
-      <AuthModal open={authOpen} onClose={closeAuth} />
+      <AuthModal open={combinedAuthOpen} onClose={closeAuth} />
     </div>
   );
 }

@@ -31,6 +31,8 @@ class GalleryVideoResource extends JsonResource
                 'slug' => $effect->slug,
                 'name' => $effect->name,
                 'description' => $effect->description,
+                'type' => $effect->type,
+                'is_premium' => $effect->is_premium,
             ] : null,
         ];
     }

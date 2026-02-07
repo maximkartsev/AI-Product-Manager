@@ -84,6 +84,8 @@ export type GalleryEffect = {
   slug: string;
   name: string;
   description?: string | null;
+  type?: string | null;
+  is_premium?: boolean;
 };
 
 export type GalleryVideo = {
@@ -129,6 +131,7 @@ export type ApiEffect = {
   name: string;
   slug: string;
   description?: string | null;
+  type?: string | null;
   tags?: string[] | null;
   thumbnail_url?: string | null;
   preview_video_url?: string | null;

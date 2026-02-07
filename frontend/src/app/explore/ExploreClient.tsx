@@ -41,6 +41,8 @@ function GalleryCard({
 }) {
   const title = item.title?.trim() || "Untitled";
   const effectName = item.effect?.name ?? "AI Effect";
+  const showPlayOverlay = !item.processed_file_url || Boolean(item.thumbnail_url);
+  const isConfigurable = item.effect?.type === "configurable";
 
   return (
     <div
@@ -87,12 +89,19 @@ function GalleryCard({
           </span>
           Try This
         </button>
-
-        <div className="absolute inset-0 grid place-items-center">
-          <span className="grid h-12 w-12 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
-            <Play className="h-5 w-5 translate-x-0.5 text-white/90" />
+        {isConfigurable ? (
+          <span className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white/85 backdrop-blur-sm">
+            <SlidersHorizontal className="h-3.5 w-3.5" />
           </span>
-        </div>
+        ) : null}
+
+        {showPlayOverlay ? (
+          <div className="absolute inset-0 grid place-items-center">
+            <span className="grid h-12 w-12 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
+              <Play className="h-5 w-5 translate-x-0.5 text-white/90" />
+            </span>
+          </div>
+        ) : null}
 
         <div className="absolute bottom-3 left-3 right-3">
           <div className="text-[11px] text-white/60">{effectName}</div>
@@ -313,7 +322,15 @@ export default function ExploreClient() {
                   onOpen={() => router.push(`/explore/${item.id}`)}
                   onTry={() => {
                     clearUploadError();
-                    startUpload(item.effect?.slug ?? null);
+                    if (item.effect?.type === "configurable") {
+                      router.push(`/explore/${item.id}`);
+                      return;
+                    }
+                    if (item.effect?.slug) {
+                      startUpload(item.effect.slug);
+                      return;
+                    }
+                    router.push(`/explore/${item.id}`);
                   }}
                 />
               ))}
@@ -335,6 +352,7 @@ export default function ExploreClient() {
           ) : null}
         </main>
       </div>
+      <AuthModal open={authOpen} onClose={closeAuth} initialMode="signin" />
     </div>
   );
 }

@@ -1,0 +1,9 @@
+{
+	"name": "Bunny character",
+	"slug": "bunny-character",
+	"description": "Replacing people with a bunny character.",
+	"is_premium": true,
+	"is_new": true,
+	"sort_order": 40,
+	"popularity_score": 85
+}

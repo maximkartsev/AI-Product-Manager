@@ -320,7 +320,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
             href="/"
             className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
           >
-            <span aria-hidden="true">?</span> Back
+            <span aria-hidden="true">←</span> Back
           </Link>
 
           <div className="inline-flex items-center gap-2 text-xs text-white/55">
@@ -393,14 +393,18 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
                     alt={state.data.name}
                   />
                 ) : null}
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(255,255,255,0.18),transparent_55%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_65%)]" />
-                <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/80" />
+                {!state.data.preview_video_url ? (
+                  <>
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(255,255,255,0.18),transparent_55%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_65%)]" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/80" />
 
-                <div className="absolute inset-0 grid place-items-center">
-                  <span className="grid h-16 w-16 place-items-center rounded-full border border-white/25 bg-black/35 backdrop-blur-sm shadow-lg">
-                    <IconPlay className="h-7 w-7 translate-x-0.5 text-white/90" />
-                  </span>
-                </div>
+                    <div className="absolute inset-0 grid place-items-center">
+                      <span className="grid h-16 w-16 place-items-center rounded-full border border-white/25 bg-black/35 backdrop-blur-sm shadow-lg">
+                        <IconPlay className="h-7 w-7 translate-x-0.5 text-white/90" />
+                      </span>
+                    </div>
+                  </>
+                ) : null}
               </div>
 
               <div className="p-5">

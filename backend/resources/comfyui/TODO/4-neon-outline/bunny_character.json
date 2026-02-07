@@ -1,0 +1,59 @@
+{
+  "1": {
+    "inputs": {
+      "filename_prefix": "video/kling-omni-t2v",
+      "format": "auto",
+      "codec": "auto",
+      "video-preview": "",
+      "video": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": "blue_shirt_rabbit.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "6": {
+    "inputs": {
+      "model_name": "kling-video-o1",
+      "prompt": "Transform the dancing person into the anthropomorphic rabbit character from the reference image. The rabbit character, dressed in a light blue knitted cardigan over a white shirt and light brown pants, should replicate all the dancing movements and poses from the original video. Keep the same background, camera movement, and dance sequence, but replace the human character with the rabbit character while maintaining the same energetic and dynamic dancing style.",
+      "aspect_ratio": "1:1",
+      "duration": 3,
+      "keep_original_sound": true,
+      "resolution": "1080p",
+      "reference_video": [
+        "7",
+        0
+      ],
+      "reference_images": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "KlingOmniProVideoToVideoNode",
+    "_meta": {
+      "title": "Kling Omni Video to Video (Pro)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "file": "__INPUT_PATH__",
+      "video-preview": ""
+    },
+    "class_type": "LoadVideo",
+    "_meta": {
+      "title": "Load Video"
+    }
+  }
+}

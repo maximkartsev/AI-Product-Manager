@@ -14,13 +14,13 @@ class UsersSeeder extends Seeder
         $usersData = [
             [
                 'name' => 'Test User',
-                'email' => 'test@test.com',
-                'password' => bcrypt('123456'),
+                'email' => 'user@user.com',
+                'password' => bcrypt('user'),
             ],
             [
                 'name' => 'Admin User',
-                'email' => 'test@gmail.com',
-                'password' => bcrypt('654321'),
+                'email' => 'admin@admin.com',
+                'password' => bcrypt('admin'),
                 'is_admin' => true,
             ],
         ];

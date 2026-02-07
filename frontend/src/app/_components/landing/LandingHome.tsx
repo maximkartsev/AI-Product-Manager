@@ -57,6 +57,7 @@ function toLandingEffect(effect: ApiEffect): LandingEffect {
     slug: effect.slug,
     name: effect.name,
     tagline: taglineForDescription(effect.description),
+    thumbnail_url: effect.thumbnail_url ?? null,
     badge: effect.is_premium ? "Premium" : undefined,
     stats: { uses: effect.is_premium ? "Premium" : "Tokens" },
     gradient: gradientForSlug(effect.slug),
@@ -143,6 +144,13 @@ function EffectCard({ effect, onTry }: { effect: Effect; onTry: () => void }) {
     <div className="snap-start">
       <div className="w-44 overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
         <div className={`relative aspect-[9/12] bg-gradient-to-br ${g}`}>
+          {effect.thumbnail_url ? (
+            <img
+              className="absolute inset-0 h-full w-full object-cover"
+              src={effect.thumbnail_url}
+              alt={effect.name}
+            />
+          ) : null}
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_40%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_60%)]" />
           <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
 

@@ -156,6 +156,27 @@ export type ApiCategory = {
   name: string;
   slug: string;
   description?: string | null;
+  sort_order?: number | null;
+};
+
+export type CategoriesIndexData = {
+  items: ApiCategory[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
+};
+
+export type EffectsIndexData = {
+  items: ApiEffect[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
 };
 
 export type Article = {
@@ -425,8 +446,25 @@ export function submitAiJob(payload: AiJobRequest): Promise<AiJobData> {
   return apiPost<AiJobData>("/ai-jobs", payload);
 }
 
+export function getEffectsIndex(params?: {
+  page?: number;
+  perPage?: number;
+  order?: string | null;
+  search?: string | null;
+  category?: string | null;
+}): Promise<EffectsIndexData> {
+  const query: Query = {
+    page: params?.page ?? 1,
+    perPage: params?.perPage ?? 20,
+    order: params?.order ?? undefined,
+    search: params?.search ?? undefined,
+    category: params?.category ?? undefined,
+  };
+  return apiGet<EffectsIndexData>("/effects", query);
+}
+
 export function getEffects(): Promise<ApiEffect[]> {
-  return apiGet<ApiEffect[]>("/effects");
+  return getEffectsIndex().then((data) => data.items ?? []);
 }
 
 export function getEffect(slug: string): Promise<ApiEffect> {
@@ -456,6 +494,25 @@ export function getPublicGallery(params?: {
   appendFilterParams(query, params?.filters);
 
   return apiRequest<GalleryIndexData>(`/gallery?${query.toString()}`, { method: "GET" });
+}
+
+export function getCategories(params?: {
+  page?: number;
+  perPage?: number;
+  order?: string | null;
+  search?: string | null;
+}): Promise<CategoriesIndexData> {
+  const query: Query = {
+    page: params?.page ?? 1,
+    perPage: params?.perPage ?? 5,
+    order: params?.order ?? undefined,
+    search: params?.search ?? undefined,
+  };
+  return apiGet<CategoriesIndexData>("/categories", query);
+}
+
+export function getCategory(slugOrId: string | number): Promise<ApiCategory> {
+  return apiGet<ApiCategory>(`/categories/${encodeURIComponent(slugOrId)}`);
 }
 
 export function getPublicGalleryItem(id: number): Promise<GalleryVideo> {
@@ -554,6 +611,7 @@ export type AdminCategory = {
   name?: string;
   slug?: string;
   description?: string | null;
+  sort_order?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 };

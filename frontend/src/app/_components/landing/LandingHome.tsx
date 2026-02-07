@@ -3,7 +3,7 @@
 import {
   ApiError,
   getAccessToken,
-  getEffects,
+  getEffectsIndex,
   getMe,
   getPublicGallery,
   type ApiEffect,
@@ -415,10 +415,10 @@ export default function LandingHome() {
       setEffectsState({ status: "loading" });
 
       try {
-        const data = await getEffects();
+        const data = await getEffectsIndex({ perPage: 8, order: "popularity_score:desc" });
         if (cancelled) return;
 
-        const items = (data ?? []).filter((e) => e && e.is_active).map(toLandingEffect);
+        const items = (data.items ?? []).filter((e) => e && e.is_active).map(toLandingEffect);
         if (items.length === 0) {
           setEffectsState({ status: "empty" });
           return;

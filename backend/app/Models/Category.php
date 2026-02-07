@@ -12,6 +12,11 @@ class Category extends CentralModel
         'name',
         'slug',
         'description',
+        'sort_order',
+    ];
+
+    protected $casts = [
+        'sort_order' => 'integer',
     ];
 
     public static function getRules($id = null)
@@ -20,6 +25,7 @@ class Category extends CentralModel
             'name' => 'string|required|max:255',
             'slug' => 'string|required|max:255',
             'description' => 'string|nullable',
+            'sort_order' => 'numeric|required',
             'deleted_at' => 'date_format:Y-m-d H:i:s|nullable',
         ];
     }

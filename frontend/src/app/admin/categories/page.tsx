@@ -11,16 +11,23 @@ import {
 } from "@/lib/api";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 
+function parseNumber(value: string): number | null {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
 type CategoryFormState = {
   name: string;
   slug: string;
   description: string;
+  sort_order: string;
 };
 
 const initialFormState: CategoryFormState = {
   name: "",
   slug: "",
   description: "",
+  sort_order: "0",
 };
 
 export default function AdminCategoriesPage() {
@@ -60,6 +67,7 @@ export default function AdminCategoriesPage() {
     { key: "name", label: "Name", type: "text", required: true, placeholder: "Category name" },
     { key: "slug", label: "Slug", type: "text", required: true, placeholder: "category-slug" },
     { key: "description", label: "Description", type: "textarea", placeholder: "Category description" },
+    { key: "sort_order", label: "Sort Order", type: "number", required: true, placeholder: "0" },
   ];
 
   const getFormData = (formState: Record<string, any>): AdminCategoryPayload => {
@@ -67,12 +75,14 @@ export default function AdminCategoriesPage() {
       name: String(formState.name || "").trim(),
       slug: String(formState.slug || "").trim(),
       description: formState.description ? String(formState.description).trim() || null : null,
+      sort_order: parseNumber(String(formState.sort_order || "")) ?? 0,
     };
   };
 
   const validateForm = (formState: Record<string, any>): string | null => {
     if (!formState.name?.trim()) return "Name is required.";
     if (!formState.slug?.trim()) return "Slug is required.";
+    if (parseNumber(String(formState.sort_order || "")) === null) return "Sort order must be a number.";
     return null;
   };
 

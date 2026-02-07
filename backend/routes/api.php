@@ -23,6 +23,7 @@ use \App\Http\Controllers\ReviewController as ReviewController;
 use \App\Http\Controllers\MeController as MeController;
 use \App\Http\Controllers\WalletController as WalletController;
 use \App\Http\Controllers\EffectController as EffectController;
+use \App\Http\Controllers\CategoryController as CategoryController;
 use \App\Http\Controllers\VideoController as VideoController;
 use \App\Http\Controllers\GalleryController as GalleryController;
 use \App\Http\Controllers\Admin\EffectsController as AdminEffectsController;
@@ -39,6 +40,8 @@ Route::post('password/reset/confirm', [PasswordController::class,'reset']);
 // Public catalog endpoints (no tenant init required).
 Route::get('effects', [EffectController::class,'index']);
 Route::get('effects/{slugOrId}', [EffectController::class,'show']);
+Route::get('categories', [CategoryController::class,'index']);
+Route::get('categories/{slugOrId}', [CategoryController::class,'show']);
 Route::get('gallery', [GalleryController::class,'index']);
 Route::get('gallery/{id}', [GalleryController::class,'show']);
 

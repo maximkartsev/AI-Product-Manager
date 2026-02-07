@@ -1,0 +1,12 @@
+{
+	"name": "Cinematic Color Grade",
+	"slug": "cinematic-color-grade14",
+	"description": "Film-like contrast and color for a cinematic look.",
+	"type": "simple",
+	"category": "Style",
+	"tags": ["cinematic", "color", "grade"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

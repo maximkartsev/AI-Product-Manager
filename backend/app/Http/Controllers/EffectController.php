@@ -17,13 +17,43 @@ class EffectController extends BaseController
      */
     public function index(Request $request): JsonResponse
     {
-        $items = Effect::query()
+        $query = Effect::query()
             ->where('is_active', true)
-            ->with(['category'])
-            ->orderBy('id', 'asc')
-            ->get();
+            ->with(['category']);
 
-        return $this->sendResponse(EffectResource::collection($items), trans('Effects retrieved successfully'));
+        $categorySlug = $request->get('category');
+        if (is_string($categorySlug) && $categorySlug !== '') {
+            $query->whereHas('category', function ($q) use ($categorySlug) {
+                $q->where('slug', $categorySlug);
+            });
+        }
+
+        [$perPage, $page, $fieldsToSelect, $searchStr, $from] = $this->buildParamsFromRequest($request, $query);
+
+        $query->select($fieldsToSelect);
+
+        $this->addSearchCriteria($searchStr, $query, ['name', 'slug', 'description', 'type']);
+
+        $orderStr = $request->get('order', 'id:desc');
+
+        $filters = $this->extractFilters($request, Effect::class);
+
+        $this->addFiltersCriteria($query, $filters, Effect::class);
+
+        [$totalRows, $items] = $this->addCountQueryAndExecute($orderStr, $query, $from, $perPage);
+
+        $response = [
+            'items' => EffectResource::collection($items),
+            'totalItems' => $totalRows,
+            'totalPages' => (int) ceil($totalRows / $perPage),
+            'page' => $page,
+            'perPage' => $perPage,
+            'order' => $orderStr,
+            'search' => $searchStr,
+            'filters' => $filters,
+        ];
+
+        return $this->sendResponse($response, trans('Effects retrieved successfully'));
     }
 
 

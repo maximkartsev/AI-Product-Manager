@@ -1,25 +1,33 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState, type UIEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { ApiError, getEffects, type ApiEffect } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import {
+  ApiError,
+  getCategories,
+  getEffectsIndex,
+  type ApiCategory,
+  type ApiEffect,
+} from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import { IconPlay, IconSparkles } from "@/app/_components/landing/icons";
 import { brand } from "@/app/_components/landing/landingData";
 
-type EffectsState =
+type PopularState =
   | { status: "loading" }
   | { status: "success"; data: ApiEffect[] }
   | { status: "empty" }
   | { status: "error"; message: string };
 
-type CategoryGroup = {
-  id: number | null;
-  slug: string;
-  name: string;
-  description?: string | null;
-  items: ApiEffect[];
+type CategoryRowState = {
+  category: ApiCategory;
+  effects: ApiEffect[];
+  page: number;
+  totalPages: number;
+  loading: boolean;
+  loadingMore: boolean;
+  error?: string | null;
 };
 
 const EFFECT_GRADIENTS = [
@@ -30,13 +38,6 @@ const EFFECT_GRADIENTS = [
   { from: "from-cyan-400", to: "to-blue-500" },
   { from: "from-fuchsia-500", to: "to-violet-500" },
 ] as const;
-
-const FALLBACK_CATEGORY = {
-  id: null,
-  slug: "other",
-  name: "Other",
-  description: "More effects to explore.",
-};
 
 function gradientClass(from: string, to: string) {
   return `${from} ${to}`;
@@ -53,30 +54,6 @@ function hashString(value: string): number {
 function gradientForSlug(slug: string) {
   const idx = Math.abs(hashString(slug)) % EFFECT_GRADIENTS.length;
   return EFFECT_GRADIENTS[idx]!;
-}
-
-function sortedByPopularity(effects: ApiEffect[]): ApiEffect[] {
-  const items = [...effects];
-  const hasPopularity = items.some((effect) => (effect.popularity_score ?? 0) > 0);
-  const hasSortOrder = items.some((effect) => (effect.sort_order ?? 0) !== 0);
-
-  items.sort((a, b) => {
-    const popA = a.popularity_score ?? 0;
-    const popB = b.popularity_score ?? 0;
-    if (popA !== popB) return popB - popA;
-
-    const orderA = a.sort_order ?? 0;
-    const orderB = b.sort_order ?? 0;
-    if (orderA !== orderB) return orderB - orderA;
-
-    return a.id - b.id;
-  });
-
-  if (!hasPopularity && !hasSortOrder) {
-    items.sort((a, b) => hashString(a.slug) - hashString(b.slug));
-  }
-
-  return items;
 }
 
 function formatUses(effect: ApiEffect): string | null {
@@ -168,133 +145,214 @@ function EffectCardSkeleton({ gradient }: { gradient: { from: string; to: string
   );
 }
 
-function CarouselRow({
-  id,
-  title,
-  icon,
-  subtitle,
-  seeAllHref,
-  isActive,
-  effects,
+function CategoryRow({
+  row,
   onTry,
+  onLoadMore,
 }: {
-  id?: string;
-  title: string;
-  icon?: string | null;
-  subtitle?: string;
-  seeAllHref?: string;
-  isActive?: boolean;
-  effects: ApiEffect[];
+  row: CategoryRowState;
   onTry: (effect: ApiEffect) => void;
+  onLoadMore: (slug: string) => void;
 }) {
-  if (effects.length === 0) return null;
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  const canLoadMore = row.page < row.totalPages && !row.loadingMore && !row.loading;
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    if (!canLoadMore) return;
+    const target = event.currentTarget;
+    const threshold = 32;
+    if (target.scrollLeft + target.clientWidth >= target.scrollWidth - threshold) {
+      onLoadMore(row.category.slug);
+    }
+  };
+
   return (
-    <section className="mt-8" id={id}>
+    <section className="mt-8" id={row.category.slug}>
       <div className="flex items-center justify-between gap-6">
         <div className="flex items-center gap-2">
-          {icon ? <span className="text-base">{icon}</span> : null}
+          <span className="text-base">{categoryEmoji(row.category.slug)}</span>
           <div>
-            <h2 className="text-sm font-semibold text-white">{title}</h2>
-            {subtitle ? <p className="mt-0.5 text-[11px] text-white/50">{subtitle}</p> : null}
+            <h2 className="text-sm font-semibold text-white">{row.category.name}</h2>
+            {row.category.description ? (
+              <p className="mt-0.5 text-[11px] text-white/50">{row.category.description}</p>
+            ) : null}
           </div>
         </div>
-        {seeAllHref && !isActive ? (
-          <Link
-            href={seeAllHref}
-            className="text-xs font-semibold text-fuchsia-300 transition hover:text-fuchsia-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-          >
-            See All
-          </Link>
-        ) : null}
+        <Link
+          href={`/effects/categories/${encodeURIComponent(row.category.slug)}`}
+          className="text-xs font-semibold text-fuchsia-300 transition hover:text-fuchsia-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+        >
+          See All
+        </Link>
       </div>
 
-      <div className="mt-3 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4">
+      <div
+        ref={scrollerRef}
+        onScroll={handleScroll}
+        className="mt-3 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4"
+      >
         <div className="flex gap-3">
-          {effects.map((effect) => (
-            <EffectCard key={effect.slug} effect={effect} onTry={() => onTry(effect)} />
-          ))}
+          {row.effects.length === 0 && row.loading
+            ? EFFECT_GRADIENTS.map((g, idx) => <EffectCardSkeleton key={idx} gradient={g} />)
+            : row.effects.map((effect) => (
+                <EffectCard key={effect.slug} effect={effect} onTry={() => onTry(effect)} />
+              ))}
+          {row.loadingMore ? <EffectCardSkeleton gradient={EFFECT_GRADIENTS[0]} /> : null}
         </div>
       </div>
 
-      {effects.length > 1 ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+      {row.effects.length > 1 ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
     </section>
   );
 }
 
 export default function EffectsLibraryClient() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const [effectsState, setEffectsState] = useState<EffectsState>({ status: "loading" });
-  const [reload, setReload] = useState(0);
+  const [popularState, setPopularState] = useState<PopularState>({ status: "loading" });
+  const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
+  const [categoryRows, setCategoryRows] = useState<Record<string, CategoryRowState>>({});
+  const [categoriesPage, setCategoriesPage] = useState(0);
+  const [categoriesTotalPages, setCategoriesTotalPages] = useState(1);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const categoryRowsRef = useRef<Record<string, CategoryRowState>>({});
 
   useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      setEffectsState({ status: "loading" });
-      try {
-        const data = await getEffects();
-        if (cancelled) return;
-        const items = (data ?? []).filter((effect) => effect && effect.is_active);
-        if (items.length === 0) {
-          setEffectsState({ status: "empty" });
-          return;
-        }
-        setEffectsState({ status: "success", data: items });
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof ApiError) {
-          setEffectsState({ status: "error", message: err.message });
-          return;
-        }
-        setEffectsState({ status: "error", message: "Unexpected error while loading effects." });
+    categoryRowsRef.current = categoryRows;
+  }, [categoryRows]);
+
+  const loadPopular = async () => {
+    setPopularState({ status: "loading" });
+    try {
+      const data = await getEffectsIndex({ perPage: 8, order: "popularity_score:desc" });
+      const items = (data.items ?? []).filter((effect) => effect && effect.is_active);
+      if (items.length === 0) {
+        setPopularState({ status: "empty" });
+        return;
       }
+      setPopularState({ status: "success", data: items });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setPopularState({ status: "error", message: err.message });
+        return;
+      }
+      setPopularState({ status: "error", message: "Unexpected error while loading popular effects." });
     }
+  };
 
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [reload]);
-
-  const sortedEffects = useMemo(() => {
-    if (effectsState.status !== "success") return [];
-    return sortedByPopularity(effectsState.data);
-  }, [effectsState]);
-
-  const topEffects = useMemo(() => sortedEffects.slice(0, 8), [sortedEffects]);
-  const activeCategorySlug = (searchParams?.get("category") ?? "").trim().toLowerCase() || null;
-  const showTopEffects = !activeCategorySlug || activeCategorySlug === "popular";
-
-  const categories = useMemo(() => {
-    if (effectsState.status !== "success") return [];
-    const buckets = new Map<string, CategoryGroup>();
-
-    for (const effect of sortedEffects) {
-      const category = effect.category ?? null;
-      const slug = category?.slug ?? FALLBACK_CATEGORY.slug;
-      const group = buckets.get(slug) ?? {
-        id: category?.id ?? FALLBACK_CATEGORY.id,
-        slug,
-        name: category?.name ?? FALLBACK_CATEGORY.name,
-        description: category?.description ?? FALLBACK_CATEGORY.description,
-        items: [],
-      };
-      group.items.push(effect);
-      buckets.set(slug, group);
-    }
-
-    const groups = Array.from(buckets.values());
-    groups.sort((a, b) => {
-      if (a.slug === FALLBACK_CATEGORY.slug) return 1;
-      if (b.slug === FALLBACK_CATEGORY.slug) return -1;
-      return a.name.localeCompare(b.name);
+  const setRowState = (slug: string, updater: (row: CategoryRowState) => CategoryRowState) => {
+    setCategoryRows((prev) => {
+      const current = prev[slug];
+      if (!current) return prev;
+      return { ...prev, [slug]: updater(current) };
     });
-    if (activeCategorySlug && activeCategorySlug !== "popular") {
-      const match = groups.filter((group) => group.slug.toLowerCase() === activeCategorySlug);
-      return match.length > 0 ? match : groups;
+  };
+
+  const loadCategoryEffects = async (slug: string, page: number) => {
+    setRowState(slug, (row) => ({
+      ...row,
+      loading: page === 1 ? true : row.loading,
+      loadingMore: page > 1 ? true : row.loadingMore,
+      error: null,
+    }));
+    try {
+      const data = await getEffectsIndex({
+        page,
+        perPage: 5,
+        order: "id:desc",
+        category: slug,
+      });
+      setRowState(slug, (row) => ({
+        ...row,
+        effects: page === 1 ? data.items : [...row.effects, ...data.items],
+        page: data.page,
+        totalPages: data.totalPages,
+        loading: false,
+        loadingMore: false,
+      }));
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Unable to load effects.";
+      setRowState(slug, (row) => ({
+        ...row,
+        loading: false,
+        loadingMore: false,
+        error: message,
+      }));
     }
-    return groups;
-  }, [effectsState, sortedEffects, activeCategorySlug]);
+  };
+
+  const loadCategories = async (page: number) => {
+    setCategoriesLoading(true);
+    setCategoriesError(null);
+    try {
+      const data = await getCategories({ page, perPage: 5, order: "sort_order:asc,name:asc" });
+      const existing = categoryRowsRef.current;
+      const newSlugs = (data.items ?? [])
+        .map((category) => category.slug)
+        .filter((slug) => !existing[slug]);
+
+      setCategoryRows((prev) => {
+        const next = { ...prev };
+        for (const category of data.items ?? []) {
+          if (next[category.slug]) continue;
+          next[category.slug] = {
+            category,
+            effects: [],
+            page: 0,
+            totalPages: 1,
+            loading: true,
+            loadingMore: false,
+          };
+        }
+        return next;
+      });
+
+      if (newSlugs.length > 0) {
+        setCategoryOrder((prev) => [...prev, ...newSlugs]);
+      }
+      setCategoriesPage(data.page);
+      setCategoriesTotalPages(data.totalPages);
+
+      await Promise.all(newSlugs.map((slug) => loadCategoryEffects(slug, 1)));
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Unable to load categories.";
+      setCategoriesError(message);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadPopular();
+    void loadCategories(1);
+  }, []);
+
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (categoriesLoading) return;
+        if (categoriesPage >= categoriesTotalPages) return;
+        void loadCategories(categoriesPage + 1);
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [categoriesLoading, categoriesPage, categoriesTotalPages]);
+
+  const handleLoadMoreEffects = (slug: string) => {
+    const row = categoryRows[slug];
+    if (!row) return;
+    if (row.loadingMore) return;
+    if (row.page >= row.totalPages) return;
+    void loadCategoryEffects(slug, row.page + 1);
+  };
 
   const handleOpenEffect = (effect: ApiEffect) => {
     router.push(`/effects/${encodeURIComponent(effect.slug)}`);
@@ -324,7 +382,7 @@ export default function EffectsLibraryClient() {
           </p>
         </section>
 
-        {effectsState.status === "loading" ? (
+        {popularState.status === "loading" ? (
           <section className="mt-8">
             <div className="flex items-end justify-between gap-6">
               <div>
@@ -342,14 +400,14 @@ export default function EffectsLibraryClient() {
           </section>
         ) : null}
 
-        {effectsState.status === "error" ? (
+        {popularState.status === "error" ? (
           <section className="mt-8">
             <div className="rounded-3xl border border-red-500/25 bg-red-500/10 p-4">
-              <div className="text-sm font-semibold text-red-100">Could not load effects</div>
-              <div className="mt-1 text-xs text-red-100/70">{effectsState.message}</div>
+              <div className="text-sm font-semibold text-red-100">Could not load popular effects</div>
+              <div className="mt-1 text-xs text-red-100/70">{popularState.message}</div>
               <button
                 type="button"
-                onClick={() => setReload((v) => v + 1)}
+                onClick={loadPopular}
                 className="mt-3 inline-flex h-10 items-center justify-center rounded-2xl bg-white px-4 text-xs font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
               >
                 Retry
@@ -358,7 +416,7 @@ export default function EffectsLibraryClient() {
           </section>
         ) : null}
 
-        {effectsState.status === "empty" ? (
+        {popularState.status === "empty" ? (
           <section className="mt-8">
             <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
               No effects yet.
@@ -366,33 +424,52 @@ export default function EffectsLibraryClient() {
           </section>
         ) : null}
 
-        {effectsState.status === "success" ? (
-          <>
-            {showTopEffects ? (
-              <CarouselRow
-                id="popular"
-                title="Popular Effects"
-                icon={categoryEmoji("popular")}
-                subtitle="Trending transformations loved by creators."
-                effects={topEffects}
-                onTry={handleOpenEffect}
-              />
+        {popularState.status === "success" ? (
+          <section className="mt-8" id="popular">
+            <div className="flex items-center justify-between gap-6">
+              <div className="flex items-center gap-2">
+                <span className="text-base">{categoryEmoji("popular")}</span>
+                <div>
+                  <h2 className="text-sm font-semibold text-white">Popular Effects</h2>
+                  <p className="mt-0.5 text-[11px] text-white/50">Trending transformations loved by creators.</p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4">
+              <div className="flex gap-3">
+                {popularState.data.map((effect) => (
+                  <EffectCard key={effect.slug} effect={effect} onTry={() => handleOpenEffect(effect)} />
+                ))}
+              </div>
+            </div>
+            {popularState.data.length > 1 ? (
+              <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
             ) : null}
-            {categories.map((category) => (
-              <CarouselRow
-                key={category.slug}
-                id={category.slug}
-                title={category.name}
-                icon={categoryEmoji(category.slug)}
-                subtitle={category.description ?? undefined}
-                seeAllHref={`/effects?category=${encodeURIComponent(category.slug)}`}
-                isActive={activeCategorySlug === category.slug.toLowerCase()}
-                effects={category.items}
-                onTry={handleOpenEffect}
-              />
-            ))}
-          </>
+          </section>
         ) : null}
+
+        {categoryOrder.length === 0 && categoriesLoading ? (
+          <div className="mt-6 text-center text-xs text-white/50">Loading categories…</div>
+        ) : null}
+        {categoryOrder.length === 0 && !categoriesLoading && !categoriesError ? (
+          <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
+            No categories available yet.
+          </div>
+        ) : null}
+
+        {categoryOrder.map((slug) => {
+          const row = categoryRows[slug];
+          if (!row) return null;
+          return <CategoryRow key={slug} row={row} onTry={handleOpenEffect} onLoadMore={handleLoadMoreEffects} />;
+        })}
+
+        {categoriesError ? (
+          <div className="mt-6 rounded-3xl border border-red-500/25 bg-red-500/10 p-4 text-xs text-red-100">
+            {categoriesError}
+          </div>
+        ) : null}
+        {categoriesLoading ? <div className="mt-4 text-center text-xs text-white/50">Loading more categories…</div> : null}
+        <div ref={loadMoreRef} className="h-8" />
       </div>
     </div>
   );

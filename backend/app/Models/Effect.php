@@ -15,6 +15,7 @@ class Effect extends CentralModel
         'name',
         'slug',
         'description',
+        'tags',
         'ai_model_id',
         'type',
         'preview_url',
@@ -39,6 +40,7 @@ class Effect extends CentralModel
 
     protected $casts = [
         'ai_model_id' => 'integer',
+        'tags' => 'array',
         'credits_cost' => 'float',
         'processing_time_estimate' => 'integer',
         'last_processing_time_seconds' => 'integer',
@@ -56,6 +58,8 @@ class Effect extends CentralModel
             'name' => 'string|required|max:255',
             'slug' => 'string|required|max:255',
             'description' => 'string|nullable',
+            'tags' => 'array|nullable',
+            'tags.*' => 'string|max:64',
             'ai_model_id' => 'numeric|nullable|exists:ai_models,id',
             'type' => 'string|required|max:255',
             'preview_url' => 'string|nullable|max:2048',

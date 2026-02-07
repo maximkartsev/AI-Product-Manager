@@ -27,7 +27,7 @@
   "6": {
     "inputs": {
       "model_name": "kling-video-o1",
-      "prompt": "Save people from the source video. Save faces from the source video! SAVE all clothing and details from the source video! Strongly keep the same movements and characters of people movements and dancing if any! Colorize the source video in the style of the input image. Save people, background, and all elements from the source video, colorize the video in the same style as the image, and preserve camera movement and motion sequences.",
+      "prompt": "Save people from the source video. Save faces from the source video! SAVE all clothing and details from the source video! Strongly keep the same movements and characters of people movements and dancing if any! Colorize the source video in the style of the input image. Save people, background, and all elements from the source video, colorize the video in the same style as the image, and preserve camera movement and motion sequences. Pay special attention to the movement of your legs and arms - repeat their movements as much as possible",
       "aspect_ratio": "9:16",
       "duration": 3,
       "keep_original_sound": true,

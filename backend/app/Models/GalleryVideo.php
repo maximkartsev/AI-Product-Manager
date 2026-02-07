@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class GalleryVideo extends CentralModel
 {
@@ -29,4 +30,9 @@ class GalleryVideo extends CentralModel
         'is_public' => 'boolean',
         'tags' => 'array',
     ];
+
+    public function effect(): BelongsTo
+    {
+        return $this->belongsTo(Effect::class);
+    }
 }

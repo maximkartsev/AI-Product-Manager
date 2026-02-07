@@ -2,6 +2,7 @@
 	"name": "Bunny character",
 	"slug": "bunny-character",
 	"description": "Replacing people with a bunny character.",
+	"tags": ["bunny", "character", "cute"],
 	"is_premium": true,
 	"is_new": true,
 	"sort_order": 40,

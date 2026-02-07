@@ -2,6 +2,7 @@
 	"name": "Clean Beauty",
 	"slug": "clean-beauty",
 	"description": "Soft skin smoothing and subtle enhancement for portrait video.",
+	"tags": ["beauty", "soft", "portrait"],
 	"is_premium": true,
 	"is_new": true,
 	"sort_order": 40,

@@ -1,11 +1,20 @@
 "use client";
 
-import { ApiError, getAccessToken, getEffects, getMe, type ApiEffect } from "@/lib/api";
+import {
+  ApiError,
+  getAccessToken,
+  getEffects,
+  getMe,
+  getPublicGallery,
+  type ApiEffect,
+  type GalleryVideo,
+} from "@/lib/api";
+import VideoPlayer from "@/components/video/VideoPlayer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import AuthModal from "./AuthModal";
-import { brand, features, hero, publicGallery, trustBadges, type Effect, type GalleryItem } from "./landingData";
+import { brand, features, hero, trustBadges, type Effect, type GalleryItem } from "./landingData";
 import { IconArrowRight, IconBolt, IconGallery, IconPlay, IconSparkles, IconWand } from "./icons";
 
 function gradientClass(from: string, to: string) {
@@ -17,6 +26,12 @@ type LandingEffect = Effect & { slug: string };
 type EffectsState =
   | { status: "loading" }
   | { status: "success"; data: LandingEffect[] }
+  | { status: "empty" }
+  | { status: "error"; message: string };
+
+type PublicGalleryState =
+  | { status: "loading" }
+  | { status: "success"; data: GalleryItem[] }
   | { status: "empty" }
   | { status: "error"; message: string };
 
@@ -61,6 +76,22 @@ function toLandingEffect(effect: ApiEffect): LandingEffect {
     badge: effect.is_premium ? "Premium" : undefined,
     stats: { uses: effect.is_premium ? "Premium" : "Tokens" },
     gradient: gradientForSlug(effect.slug),
+  };
+}
+
+function toLandingGalleryItem(item: GalleryVideo): GalleryItem {
+  const title = (item.title ?? "").trim() || "Untitled";
+  const effectName = item.effect?.name ?? "AI Effect";
+  const seed = item.effect?.slug ?? String(item.id);
+
+  return {
+    id: String(item.id),
+    title,
+    effect: effectName,
+    gradient: gradientForSlug(seed),
+    thumbnail_url: item.thumbnail_url ?? null,
+    processed_file_url: item.processed_file_url ?? null,
+    effect_slug: item.effect?.slug ?? null,
   };
 }
 
@@ -205,6 +236,19 @@ function GalleryCard({ item, onUse }: { item: GalleryItem; onUse: () => void }) 
       aria-label={`Open public gallery item: ${item.title}`}
     >
       <div className={`relative aspect-[9/13] bg-gradient-to-br ${g}`}>
+        {item.thumbnail_url ? (
+          <img className="absolute inset-0 h-full w-full object-cover" src={item.thumbnail_url} alt={item.title} />
+        ) : item.processed_file_url ? (
+          <VideoPlayer
+            className="absolute inset-0 h-full w-full object-cover"
+            src={item.processed_file_url}
+            playsInline
+            autoPlay
+            loop
+            muted
+            preload="metadata"
+          />
+        ) : null}
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.28),transparent_45%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_65%)]" />
         <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/75" />
 
@@ -219,14 +263,35 @@ function GalleryCard({ item, onUse }: { item: GalleryItem; onUse: () => void }) 
         <div className="truncate text-sm font-semibold text-white">{item.title}</div>
         <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-white/60">
           <span className="truncate">{item.effect}</span>
-          <span className="inline-flex shrink-0 items-center gap-1 text-white/65">
-            <span aria-hidden="true">♥</span>
-            <span>{item.stats.likes}</span>
-          </span>
+          {item.stats?.likes ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-white/65">
+              <span aria-hidden="true">♥</span>
+              <span>{item.stats.likes}</span>
+            </span>
+          ) : null}
         </div>
-        <div className="mt-0.5 text-[11px] text-white/45">{item.stats.views}</div>
+        {item.stats?.views ? <div className="mt-0.5 text-[11px] text-white/45">{item.stats.views}</div> : null}
       </div>
     </button>
+  );
+}
+
+function GalleryCardSkeleton({ gradient }: { gradient: { from: string; to: string } }) {
+  const g = gradientClass(gradient.from, gradient.to);
+  return (
+    <div className="animate-pulse overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+      <div className={`relative aspect-[9/13] bg-gradient-to-br ${g}`}>
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
+        <div className="absolute bottom-3 left-3 right-3">
+          <div className="h-3 w-24 rounded bg-white/15" />
+          <div className="mt-2 h-3 w-16 rounded bg-white/10" />
+        </div>
+      </div>
+      <div className="p-3">
+        <div className="h-3 w-20 rounded bg-white/10" />
+        <div className="mt-2 h-3 w-24 rounded bg-white/5" />
+      </div>
+    </div>
   );
 }
 
@@ -257,6 +322,8 @@ export default function LandingHome() {
   const [authOpen, setAuthOpen] = useState(false);
   const [effectsState, setEffectsState] = useState<EffectsState>({ status: "loading" });
   const [effectsReload, setEffectsReload] = useState(0);
+  const [galleryState, setGalleryState] = useState<PublicGalleryState>({ status: "loading" });
+  const [galleryReload, setGalleryReload] = useState(0);
   const [token, setToken] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -305,6 +372,41 @@ export default function LandingHome() {
       cancelled = true;
     };
   }, [effectsReload]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      setGalleryState({ status: "loading" });
+      try {
+        const data = await getPublicGallery({ perPage: 4 });
+        if (cancelled) return;
+
+        const items = (data.items ?? []).map(toLandingGalleryItem);
+        if (items.length === 0) {
+          setGalleryState({ status: "empty" });
+          return;
+        }
+
+        setGalleryState({ status: "success", data: items });
+      } catch (err) {
+        if (cancelled) return;
+
+        if (err instanceof ApiError) {
+          setGalleryState({ status: "error", message: err.message });
+          return;
+        }
+
+        setGalleryState({ status: "error", message: "Unexpected error while loading gallery." });
+      }
+    }
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [galleryReload]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setToken(getAccessToken()), 0);
@@ -470,28 +572,50 @@ export default function LandingHome() {
               </div>
               <button
                 type="button"
-                onClick={openAuth}
+                onClick={() => router.push("/explore")}
                 className="inline-flex items-center gap-1 text-xs font-semibold text-white/70 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
               >
                 View all <IconArrowRight className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {publicGallery.map((item) => (
-                <GalleryCard key={item.id} item={item} onUse={openAuth} />
-              ))}
-            </div>
+            {galleryState.status === "error" ? (
+              <div className="mt-4 rounded-3xl border border-red-500/25 bg-red-500/10 p-4">
+                <div className="text-sm font-semibold text-red-100">Couldn&apos;t load gallery</div>
+                <div className="mt-1 text-xs text-red-100/70">{galleryState.message}</div>
+                <button
+                  type="button"
+                  onClick={() => setGalleryReload((v) => v + 1)}
+                  className="mt-3 inline-flex h-10 items-center justify-center rounded-2xl bg-white px-4 text-xs font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : null}
+
+            {galleryState.status === "empty" ? (
+              <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4 text-center text-sm text-white/60">
+                No public videos yet.
+              </div>
+            ) : (
+              <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {galleryState.status === "success"
+                  ? galleryState.data.map((item) => (
+                      <GalleryCard key={item.id} item={item} onUse={() => router.push(`/explore/${item.id}`)} />
+                    ))
+                  : EFFECT_GRADIENTS.slice(0, 4).map((g, idx) => <GalleryCardSkeleton key={idx} gradient={g} />)}
+              </div>
+            )}
 
             <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-4 text-center">
-              <p className="text-sm text-white/70">Sign in to explore the full gallery and access your creations</p>
+              <p className="text-sm text-white/70">Explore the full gallery and discover new effects.</p>
               <button
                 type="button"
-                onClick={openAuth}
+                onClick={() => router.push("/explore")}
                 className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
               >
                 <IconGallery className="h-5 w-5" />
-                Sign in to explore
+                Open Explore
               </button>
             </div>
           </section>

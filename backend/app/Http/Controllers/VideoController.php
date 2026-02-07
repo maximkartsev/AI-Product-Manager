@@ -10,6 +10,7 @@ use App\Models\Video;
 use App\Services\PresignedUrlService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -255,8 +256,33 @@ class VideoController extends BaseController
         }
 
         $file = $video->processed_file_id ? File::query()->find($video->processed_file_id) : null;
-        if (!$file || !$file->url) {
+        if (!$file) {
             return $this->sendError('Processed file is missing.', [], 422);
+        }
+
+        $processedUrl = $file->url;
+        if (!$processedUrl && $file->disk && $file->path) {
+            $processedUrl = Storage::disk($file->disk)->url($file->path);
+        }
+        if (!$processedUrl) {
+            return $this->sendError('Processed file is missing.', [], 422);
+        }
+
+        $thumbnailUrl = data_get($video->processing_details, 'thumbnail_url');
+        if (!is_string($thumbnailUrl) || trim($thumbnailUrl) === '') {
+            $thumbnailPath = data_get($video->processing_details, 'thumbnail_path')
+                ?? data_get($video->processing_details, 'thumbnail_key');
+            if (is_string($thumbnailPath) && trim($thumbnailPath) !== '') {
+                $thumbnailPath = trim($thumbnailPath);
+                if (Str::startsWith($thumbnailPath, ['http://', 'https://'])) {
+                    $thumbnailUrl = $thumbnailPath;
+                } else {
+                    $disk = $file->disk ?: (string) config('filesystems.default', 's3');
+                    $thumbnailUrl = Storage::disk($disk)->url(ltrim($thumbnailPath, '/'));
+                }
+            } else {
+                $thumbnailUrl = null;
+            }
         }
 
         $title = (string) ($request->input('title') ?: $video->title ?: 'Untitled');
@@ -271,8 +297,8 @@ class VideoController extends BaseController
             'title' => $title,
             'tags' => $tags,
             'is_public' => true,
-            'processed_file_url' => $file->url,
-            'thumbnail_url' => data_get($video->processing_details, 'thumbnail_url'),
+            'processed_file_url' => $processedUrl,
+            'thumbnail_url' => $thumbnailUrl,
         ]);
 
         if ($gallery->trashed()) {

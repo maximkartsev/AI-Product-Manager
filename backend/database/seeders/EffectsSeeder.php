@@ -54,6 +54,7 @@ class EffectsSeeder extends Seeder
             $sortOrder = $this->parseInt($info['sort_order'] ?? null) ?? 0;
             $type = isset($info['type']) ? trim((string) $info['type']) : '';
             $type = $type !== '' ? $type : 'transform';
+            $tags = $this->parseTags($info['tags'] ?? null);
 
             $workflowFullPath = $this->findWorkflowJson($folder);
             if (!$workflowFullPath) {
@@ -72,6 +73,7 @@ class EffectsSeeder extends Seeder
                 [
                     'name' => $name,
                     'description' => $description,
+                    'tags' => !empty($tags) ? array_values($tags) : null,
                     'type' => $type,
                     'preview_url' => null,
                     'thumbnail_url' => $assetMeta['thumbnail_url'] ?? null,
@@ -208,6 +210,45 @@ class EffectsSeeder extends Seeder
             return null;
         }
         return is_numeric($value) ? (float) $value : null;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function parseTags(mixed $value): array
+    {
+        if ($value === null) {
+            return [];
+        }
+
+        $raw = [];
+        if (is_string($value)) {
+            $raw = preg_split('/[,;]/', $value) ?: [];
+        } elseif (is_array($value)) {
+            $raw = $value;
+        } else {
+            return [];
+        }
+
+        $tags = [];
+        $seen = [];
+        foreach ($raw as $tag) {
+            if (!is_scalar($tag)) {
+                continue;
+            }
+            $trimmed = trim((string) $tag);
+            if ($trimmed === '') {
+                continue;
+            }
+            $key = strtolower($trimmed);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $tags[] = $trimmed;
+        }
+
+        return $tags;
     }
 
     private function contentTypeForExtension(string $extension): string

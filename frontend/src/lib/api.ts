@@ -79,6 +79,33 @@ export type VideoData = {
   error?: string | null;
 };
 
+export type GalleryEffect = {
+  id: number;
+  slug: string;
+  name: string;
+  description?: string | null;
+};
+
+export type GalleryVideo = {
+  id: number;
+  title: string;
+  tags?: string[] | null;
+  created_at?: string | null;
+  processed_file_url?: string | null;
+  thumbnail_url?: string | null;
+  effect?: GalleryEffect | null;
+};
+
+export type GalleryIndexData = {
+  items: GalleryVideo[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
+};
+
 export type AiJobRequest = {
   effect_id: number;
   idempotency_key: string;
@@ -102,6 +129,7 @@ export type ApiEffect = {
   name: string;
   slug: string;
   description?: string | null;
+  tags?: string[] | null;
   thumbnail_url?: string | null;
   preview_video_url?: string | null;
   credits_cost?: number | null;
@@ -363,6 +391,17 @@ export function getVideo(id: number): Promise<VideoData> {
   return apiGet<VideoData>(`/videos/${id}`);
 }
 
+export function publishVideo(
+  videoId: number,
+  payload?: { title?: string | null; tags?: string[] | null },
+): Promise<GalleryVideo> {
+  return apiPost<GalleryVideo>(`/videos/${videoId}/publish`, payload ?? {});
+}
+
+export function unpublishVideo(videoId: number): Promise<VideoData> {
+  return apiPost<VideoData>(`/videos/${videoId}/unpublish`);
+}
+
 export function submitAiJob(payload: AiJobRequest): Promise<AiJobData> {
   return apiPost<AiJobData>("/ai-jobs", payload);
 }
@@ -373,6 +412,35 @@ export function getEffects(): Promise<ApiEffect[]> {
 
 export function getEffect(slug: string): Promise<ApiEffect> {
   return apiGet<ApiEffect>(`/effects/${encodeURIComponent(slug)}`);
+}
+
+export function getPublicGallery(params?: {
+  page?: number;
+  perPage?: number;
+  search?: string | null;
+  order?: string | null;
+  filters?: FilterValue[];
+}): Promise<GalleryIndexData> {
+  const query = new URLSearchParams({
+    page: String(params?.page ?? 1),
+    perPage: String(params?.perPage ?? 20),
+  });
+
+  if (params?.search) {
+    query.set("search", params.search);
+  }
+
+  if (params?.order) {
+    query.set("order", params.order);
+  }
+
+  appendFilterParams(query, params?.filters);
+
+  return apiRequest<GalleryIndexData>(`/gallery?${query.toString()}`, { method: "GET" });
+}
+
+export function getPublicGalleryItem(id: number): Promise<GalleryVideo> {
+  return apiGet<GalleryVideo>(`/gallery/${id}`);
 }
 
 export function getArticles(
@@ -420,6 +488,7 @@ export type AdminEffect = {
   name?: string;
   slug?: string;
   description?: string | null;
+  tags?: string[] | null;
   type?: string | null;
   preview_url?: string | null;
   thumbnail_url?: string | null;

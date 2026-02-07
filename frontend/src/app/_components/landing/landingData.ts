@@ -19,11 +19,14 @@ export type GalleryItem = {
   id: string;
   title: string;
   effect: string;
-  stats: {
-    likes: string;
-    views: string;
+  stats?: {
+    likes?: string;
+    views?: string;
   };
   gradient: Gradient;
+  thumbnail_url?: string | null;
+  processed_file_url?: string | null;
+  effect_slug?: string | null;
 };
 
 export type Feature = {

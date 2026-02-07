@@ -2,6 +2,7 @@
 	"name": "Anime Glow Up",
 	"slug": "anime-glow-up",
 	"description": "Anime-inspired glow-up with vibrant color and clean lines.",
+	"tags": ["anime", "glow", "vibrant"],
 	"is_premium": true,
 	"is_new": true,
 	"sort_order": 10,

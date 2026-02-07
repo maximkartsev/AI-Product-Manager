@@ -483,6 +483,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
     videoState.status === "ready" ? (videoState.data.processed_file_url ?? null) : null;
   const originalFileUrl: string | null =
     videoState.status === "ready" ? (videoState.data.original_file_url ?? null) : null;
+  const isPublic = videoState.status === "ready" ? Boolean(videoState.data.is_public) : false;
 
   const fallbackPreviewVideoUrl =
     effectState.status === "success" ? (effectState.data.preview_video_url ?? null) : null;
@@ -507,6 +508,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const resultSubtitle =
     effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Comic Book effect applied successfully";
   const watermarkLabel = effectState.status === "success" ? effectState.data.name : "AI Effect";
+  const effectTags = effectState.status === "success" ? (effectState.data.tags ?? null) : null;
 
   const handlePreviewError = () => {
     if (previewKey) {
@@ -757,6 +759,9 @@ export default function ProcessingClient({ slug }: { slug: string }) {
                   effectName={effectName}
                   subtitle={resultSubtitle}
                   watermarkLabel={watermarkLabel}
+                  videoId={videoId}
+                  isPublic={isPublic}
+                  effectTags={effectTags}
                 />
               ) : isUploadPhase ? (
                 <ProcessingStepUpload

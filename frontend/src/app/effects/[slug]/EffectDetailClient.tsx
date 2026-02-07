@@ -2,18 +2,11 @@
 
 import AuthModal from "@/app/_components/landing/AuthModal";
 import { IconPlay, IconSparkles, IconWand } from "@/app/_components/landing/icons";
-import {
-  ApiError,
-  getAccessToken,
-  getEffect,
-  getWallet,
-  type ApiEffect,
-} from "@/lib/api";
-import { savePendingUpload } from "@/lib/uploadPreviewStore";
+import { ApiError, getEffect, getWallet, type ApiEffect } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
+import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type LoadState =
   | { status: "loading" }
@@ -25,10 +18,6 @@ type WalletState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; balance: number }
-  | { status: "error"; message: string };
-
-type UploadState =
-  | { status: "idle" }
   | { status: "error"; message: string };
 
 type Plan = {
@@ -140,24 +129,24 @@ function PlansModal({
 }
 
 export default function EffectDetailClient({ slug }: { slug: string }) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [reload, setReload] = useState(0);
 
-  const [authOpen, setAuthOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
   const [walletState, setWalletState] = useState<WalletState>({ status: "idle" });
-  const [uploadState, setUploadState] = useState<UploadState>({ status: "idle" });
-  const [pendingUpload, setPendingUpload] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const autoUploadRef = useRef(false);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setToken(getAccessToken()), 0);
-    return () => window.clearTimeout(t);
-  }, []);
+  const {
+    fileInputRef,
+    startUpload,
+    onFileSelected,
+    authOpen,
+    closeAuth,
+    token,
+    uploadState,
+    clearUploadError,
+  } = useEffectUploadStart({
+    slug,
+    autoUpload: true,
+  });
 
   useEffect(() => {
     if (!token) {
@@ -228,10 +217,6 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   const hasEnoughTokens =
     creditsCost === 0 || (walletState.status === "ready" && walletState.balance >= creditsCost);
 
-  function openAuth() {
-    setAuthOpen(true);
-  }
-
   function openPlans() {
     setPlansOpen(true);
   }
@@ -240,69 +225,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
     setPlansOpen(false);
   }
 
-  function closeAuth() {
-    setAuthOpen(false);
-    const nextToken = getAccessToken();
-    setToken(nextToken);
-    if (pendingUpload && nextToken) {
-      window.setTimeout(() => fileInputRef.current?.click(), 0);
-    }
-    setPendingUpload(false);
-  }
-
-  function onUploadClick() {
-    const nextToken = token ?? getAccessToken();
-    if (!nextToken) {
-      setPendingUpload(true);
-      openAuth();
-      return;
-    }
-
-    if (!token) {
-      setToken(nextToken);
-    }
-    fileInputRef.current?.click();
-  }
-
-  useEffect(() => {
-    if (autoUploadRef.current) return;
-    if (searchParams.get("upload") !== "1") return;
-    autoUploadRef.current = true;
-    onUploadClick();
-  }, [searchParams, token]);
-
-  async function onFileSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    if (!token) {
-      setUploadState({ status: "error", message: "Sign in to upload a video." });
-      return;
-    }
-
-    if (state.status !== "success") {
-      setUploadState({ status: "error", message: "Effect data is not ready yet." });
-      return;
-    }
-
-    try {
-      const uploadId = `upload_${crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
-      await savePendingUpload(uploadId, file);
-      setUploadState({ status: "idle" });
-      router.push(`/effects/${encodeURIComponent(slug)}/processing?uploadId=${uploadId}`);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setUploadState({ status: "error", message: err.message });
-        return;
-      }
-      setUploadState({ status: "error", message: "Unexpected error while preparing the upload." });
-    }
-  }
-
-  const uploadLabel = !token
-    ? "Sign in to try"
-    : "Try This Effect";
+  const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
   const disableUpload: boolean = false;
 
   return (
@@ -473,7 +396,10 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
             <div className="rounded-3xl border border-white/10 bg-black/70 p-2 backdrop-blur-md supports-[backdrop-filter]:bg-black/40">
               <button
                 type="button"
-                onClick={onUploadClick}
+                onClick={() => {
+                  clearUploadError();
+                  startUpload(slug);
+                }}
                 disabled={disableUpload}
                 className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 disabled:pointer-events-none disabled:opacity-70"
               >

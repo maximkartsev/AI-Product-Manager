@@ -36,7 +36,9 @@ Once initialized, you can manage containers with:
 **Start containers:**
 ```bash
 cd laradock
-docker compose -p bp up -d
+# IMPORTANT: Laradock contains many optional services.
+# Always start ONLY what this project needs:
+docker compose -p bp up -d workspace php-fpm nginx mariadb redis
 ```
 
 **Stop containers:**

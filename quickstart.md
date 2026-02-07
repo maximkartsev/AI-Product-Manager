@@ -1,3 +1,28 @@
+“migrate → seed” flow for this repo (pooled tenancy)
+
+	cd C:\Projects\AI-Product-Management\AI-Product-Manager\laradock
+
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan tenancy:pools-migrate"
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan db:seed"
+
+
+only want to rerun the failing seeder
+
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan db:seed --class=Database\\Seeders\\WorkflowsToS3Seeder"
+
+drops all tables (central + tenant pools) and recreates them:
+
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan tenancy:pools-migrate --fresh"
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan db:seed"
+
+For normal (non-destructive) updates:
+
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan tenancy:pools-migrate"
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan db:seed"
+	
+	
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan config:clear"
+
 # Quick Start Guide
 
 This guide provides the essential steps to get your project up and running quickly.

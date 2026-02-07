@@ -210,7 +210,7 @@ class ComfyUiWorkerController extends BaseController
             return $this->sendError('Lease not found.', [], 404);
         }
 
-        $errorMessage = $this->sanitizeWorkerError((string) $request->input('error_message', 'Worker failure'));
+        $errorMessage = $this->sanitizeWorkerError((string) $request->input('error_message', 'Processing failed. Try another video'));
 
         $this->withTenant($dispatch->tenant_id, function () use ($dispatch, $ledger, $errorMessage, $request) {
             $job = AiJob::query()->find($dispatch->tenant_job_id);

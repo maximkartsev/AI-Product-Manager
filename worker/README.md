@@ -44,3 +44,14 @@ Required env vars for cloud mode:
 ```
 python comfyui_worker.py
 ```
+
+## Stub worker (testing)
+The stub worker downloads the input and re-uploads it as the output, marking the job complete without calling ComfyUI.
+
+```
+python stub_worker.py
+
+OR
+
+run_stub_worker.bat
+```

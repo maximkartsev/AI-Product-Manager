@@ -2,7 +2,6 @@
 
 import {
   ApiError,
-  getAccessToken,
   getEffectsIndex,
   getPublicGallery,
   type ApiEffect,
@@ -10,11 +9,10 @@ import {
 } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
-import useAuthToken from "@/lib/useAuthToken";
+import useUiGuards from "@/components/guards/useUiGuards";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import AuthModal from "./AuthModal";
 import { features, hero, trustBadges, type Effect, type GalleryItem } from "./landingData";
 import { IconArrowRight, IconBolt, IconGallery, IconSparkles, IconWand } from "./icons";
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
@@ -22,7 +20,11 @@ import { EffectCard, EffectCardSkeleton } from "@/components/cards/EffectCard";
 import { PublicGalleryCard, PublicGalleryCardSkeleton } from "@/components/cards/PublicGalleryCard";
 import { EFFECT_GRADIENTS, gradientClass, gradientForSlug } from "@/lib/gradients";
 
-type LandingEffect = Effect & { slug: string; preview_video_url?: string | null };
+type LandingEffect = Effect & {
+  slug: string;
+  preview_video_url?: string | null;
+  credits_cost?: number | null;
+};
 
 type EffectsState =
   | { status: "loading" }
@@ -59,6 +61,7 @@ function toLandingEffect(effect: ApiEffect): LandingEffect {
     badge: undefined,
     stats: { uses: "Tokens" },
     gradient: gradientForSlug(effect.slug),
+    credits_cost: effect.credits_cost ?? null,
   };
 }
 
@@ -135,78 +138,75 @@ function FeatureRow({
 
 export default function LandingHome() {
   const router = useRouter();
-  const [authOpen, setAuthOpen] = useState(false);
+  const { requireAuth, requireAuthForNavigation, ensureTokens } = useUiGuards();
   const [effectsState, setEffectsState] = useState<EffectsState>({ status: "loading" });
   const [effectsReload, setEffectsReload] = useState(0);
   const [featuredEffect, setFeaturedEffect] = useState<LandingEffect | null>(null);
-  const [pendingDoSameSlug, setPendingDoSameSlug] = useState<string | null>(null);
   const [galleryState, setGalleryState] = useState<PublicGalleryState>({ status: "loading" });
   const [galleryReload, setGalleryReload] = useState(0);
-  const token = useAuthToken();
   const {
     fileInputRef,
     startUpload,
     onFileSelected,
-    authOpen: uploadAuthOpen,
-    closeAuth: closeUploadAuth,
     clearUploadError,
   } = useEffectUploadStart({
     slug: null,
   });
-  const combinedAuthOpen = authOpen || uploadAuthOpen;
 
-  const closeAuth = () => {
-    closeUploadAuth();
-    setAuthOpen(false);
-    const nextToken = getAccessToken();
-    if (pendingDoSameSlug) {
-      if (nextToken) {
-        goToEffect(pendingDoSameSlug);
-      }
-      setPendingDoSameSlug(null);
-    }
-  };
+  const resolveCreditsCost = (raw?: number | null) => Math.max(0, Math.ceil(Number(raw ?? 0)));
 
-  const goToEffect = (slug: string) => {
-    router.push(`/effects/${encodeURIComponent(slug)}`);
-  };
-
-  const handleEffectTry = (effect: LandingEffect) => {
+  const handleEffectTry = async (effect: LandingEffect) => {
     if (effect.type === "configurable") {
-      goToEffect(effect.slug);
+      requireAuthForNavigation(`/effects/${encodeURIComponent(effect.slug)}`);
       return;
     }
+    if (!requireAuth()) return;
+    const creditsCost = resolveCreditsCost(effect.credits_cost);
+    const okTokens = await ensureTokens(creditsCost);
+    if (!okTokens) return;
     clearUploadError();
-    startUpload(effect.slug);
+    const result = startUpload(effect.slug);
+    if (!result.ok && result.reason === "unauthenticated") {
+      requireAuth();
+    }
   };
 
-  const handleDoSameClick = () => {
+  const handleDoSameClick = async () => {
     if (!featuredEffect) return;
-    const activeToken = token ?? getAccessToken();
-    if (!activeToken) {
-      setPendingDoSameSlug(featuredEffect.slug);
-      setAuthOpen(true);
-      return;
-    }
     if (featuredEffect.type === "configurable") {
-      goToEffect(featuredEffect.slug);
+      requireAuthForNavigation(`/effects/${encodeURIComponent(featuredEffect.slug)}`);
       return;
     }
+    if (!requireAuth()) return;
+    const creditsCost = resolveCreditsCost(featuredEffect.credits_cost);
+    const okTokens = await ensureTokens(creditsCost);
+    if (!okTokens) return;
     clearUploadError();
-    startUpload(featuredEffect.slug);
+    const result = startUpload(featuredEffect.slug);
+    if (!result.ok && result.reason === "unauthenticated") {
+      requireAuth();
+    }
   };
 
   const handleGalleryTry = (item: GalleryItem) => {
     if (item.effect_type === "configurable") {
-      router.push(`/explore/${encodeURIComponent(item.id)}`);
+      requireAuthForNavigation(`/explore/${encodeURIComponent(item.id)}`);
       return;
     }
     if (item.effect_slug) {
       clearUploadError();
-      startUpload(item.effect_slug);
+      if (!requireAuth()) return;
+      const result = startUpload(item.effect_slug);
+      if (!result.ok && result.reason === "unauthenticated") {
+        requireAuth();
+      }
       return;
     }
-    router.push(`/explore/${encodeURIComponent(item.id)}`);
+    requireAuthForNavigation(`/explore/${encodeURIComponent(item.id)}`);
+  };
+
+  const handleGalleryOpen = (item: GalleryItem) => {
+    requireAuthForNavigation(`/explore/${encodeURIComponent(item.id)}`);
   };
 
   useEffect(() => {
@@ -498,7 +498,7 @@ export default function LandingHome() {
                         key={item.id}
                         variant="landing"
                         item={item}
-                        onOpen={() => router.push(`/explore/${encodeURIComponent(item.id)}`)}
+                        onOpen={() => handleGalleryOpen(item)}
                         onTry={() => handleGalleryTry(item)}
                       />
                     ))
@@ -570,7 +570,6 @@ export default function LandingHome() {
 
       </div>
 
-      <AuthModal open={combinedAuthOpen} onClose={closeAuth} />
     </div>
   );
 }

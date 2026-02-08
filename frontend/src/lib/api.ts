@@ -116,7 +116,7 @@ export type GalleryEffect = {
 
 export type GalleryVideo = {
   id: number;
-  title: string;
+  title?: string | null;
   tags?: string[] | null;
   input_payload?: VideoInputPayload | null;
   created_at?: string | null;
@@ -490,11 +490,8 @@ export function getVideosIndex(params?: {
   return apiGet<VideosIndexData>("/videos", query);
 }
 
-export function publishVideo(
-  videoId: number,
-  payload?: { title?: string | null; tags?: string[] | null },
-): Promise<GalleryVideo> {
-  return apiPost<GalleryVideo>(`/videos/${videoId}/publish`, payload ?? {});
+export function publishVideo(videoId: number): Promise<GalleryVideo> {
+  return apiPost<GalleryVideo>(`/videos/${videoId}/publish`);
 }
 
 export function unpublishVideo(videoId: number): Promise<VideoData> {

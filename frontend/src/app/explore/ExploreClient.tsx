@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import AuthModal from "@/app/_components/landing/AuthModal";
 import { ApiError, getPublicGallery, type GalleryIndexData, type GalleryVideo } from "@/lib/api";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import { cn } from "@/lib/utils";
@@ -11,6 +9,7 @@ import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
 import SegmentedToggle from "@/components/ui/SegmentedToggle";
 import { groupByOrdered } from "@/lib/grouping";
 import { PublicGalleryCard } from "@/components/cards/PublicGalleryCard";
+import useUiGuards from "@/components/guards/useUiGuards";
 
 const SORT_OPTIONS = [
   { id: "trending", label: "Trending" },
@@ -27,7 +26,7 @@ type GalleryState =
 type ViewMode = "grid" | "category";
 
 export default function ExploreClient() {
-  const router = useRouter();
+  const { requireAuth, requireAuthForNavigation } = useUiGuards();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortOpen, setSortOpen] = useState(false);
@@ -40,8 +39,6 @@ export default function ExploreClient() {
     fileInputRef,
     startUpload,
     onFileSelected,
-    authOpen,
-    closeAuth,
     clearUploadError,
   } = useEffectUploadStart({
     slug: null,
@@ -116,20 +113,24 @@ export default function ExploreClient() {
   );
 
   const handleOpenItem = (item: GalleryVideo) => {
-    router.push(`/explore/${item.id}`);
+    requireAuthForNavigation(`/explore/${item.id}`);
   };
 
   const handleTryItem = (item: GalleryVideo) => {
     clearUploadError();
     if (item.effect?.type === "configurable") {
-      router.push(`/explore/${item.id}`);
+      requireAuthForNavigation(`/explore/${item.id}`);
       return;
     }
     if (item.effect?.slug) {
-      startUpload(item.effect.slug);
+      if (!requireAuth()) return;
+      const result = startUpload(item.effect.slug);
+      if (!result.ok && result.reason === "unauthenticated") {
+        requireAuth();
+      }
       return;
     }
-    router.push(`/explore/${item.id}`);
+    requireAuthForNavigation(`/explore/${item.id}`);
   };
 
   useEffect(() => {
@@ -272,7 +273,6 @@ export default function ExploreClient() {
           <div ref={loadMoreRef} className="h-8" />
         </main>
       </div>
-      <AuthModal open={authOpen} onClose={closeAuth} initialMode="signin" />
     </div>
   );
 }

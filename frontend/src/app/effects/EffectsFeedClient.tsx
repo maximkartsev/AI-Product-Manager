@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ApiError,
   getCategories,
@@ -13,6 +12,7 @@ import {
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
 import { EffectCard, EffectCardSkeleton } from "@/components/cards/EffectCard";
 import { EFFECT_GRADIENTS } from "@/lib/gradients";
+import useUiGuards from "@/components/guards/useUiGuards";
 
 type PopularState =
   | { status: "loading" }
@@ -96,7 +96,7 @@ function CategoryRow({
 }
 
 export default function EffectsFeedClient({ showPopularSeeAll = false }: EffectsFeedClientProps) {
-  const router = useRouter();
+  const { requireAuthForNavigation } = useUiGuards();
   const [popularState, setPopularState] = useState<PopularState>({ status: "loading" });
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
   const [categoryRows, setCategoryRows] = useState<Record<string, CategoryRowState>>({});
@@ -243,7 +243,7 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
   };
 
   const handleOpenEffect = (effect: ApiEffect) => {
-    router.push(`/effects/${encodeURIComponent(effect.slug)}`);
+    requireAuthForNavigation(`/effects/${encodeURIComponent(effect.slug)}`);
   };
 
   return (

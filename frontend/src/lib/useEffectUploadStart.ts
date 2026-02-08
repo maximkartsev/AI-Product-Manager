@@ -18,10 +18,11 @@ type UseEffectUploadStartArgs = {
 
 type UseEffectUploadStartReturn = {
   fileInputRef: React.RefObject<HTMLInputElement>;
-  startUpload: (slugOverride?: string | null, context?: UploadPromptContext | null) => void;
+  startUpload: (slugOverride?: string | null, context?: UploadPromptContext | null) => {
+    ok: boolean;
+    reason?: "unauthenticated" | "missing_slug";
+  };
   onFileSelected: (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
-  authOpen: boolean;
-  closeAuth: () => void;
   token: string | null;
   uploadState: UploadState;
   clearUploadError: () => void;
@@ -37,9 +38,7 @@ export default function useEffectUploadStart({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoUploadRef = useRef(false);
   const pendingContextRef = useRef<UploadPromptContext | null>(null);
-  const [authOpen, setAuthOpen] = useState(false);
   const [token, setToken] = useState<string | null>(null);
-  const [pendingUpload, setPendingUpload] = useState(false);
   const [pendingSlug, setPendingSlug] = useState<string | null>(slug ?? null);
   const [uploadState, setUploadState] = useState<UploadState>({ status: "idle" });
 
@@ -64,31 +63,20 @@ export default function useEffectUploadStart({
     setUploadState({ status: "idle" });
   }
 
-  function closeAuth() {
-    setAuthOpen(false);
-    const nextToken = getAccessToken();
-    setToken(nextToken);
-    if (pendingUpload && nextToken) {
-      window.setTimeout(() => fileInputRef.current?.click(), 0);
-    }
-    setPendingUpload(false);
-  }
-
   function startUpload(slugOverride?: string | null, context?: UploadPromptContext | null) {
     const targetSlug = slugOverride ?? slug;
     if (!targetSlug) {
-      return;
+      return { ok: false, reason: "missing_slug" };
     }
     pendingContextRef.current = context ?? null;
     setPendingSlug(targetSlug);
     const nextToken = token ?? getAccessToken();
     if (!nextToken) {
-      setPendingUpload(true);
-      setAuthOpen(true);
-      return;
+      return { ok: false, reason: "unauthenticated" };
     }
     if (!token) setToken(nextToken);
     fileInputRef.current?.click();
+    return { ok: true };
   }
 
   async function onFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
@@ -140,8 +128,6 @@ export default function useEffectUploadStart({
     fileInputRef,
     startUpload,
     onFileSelected,
-    authOpen,
-    closeAuth,
     token,
     uploadState,
     clearUploadError,

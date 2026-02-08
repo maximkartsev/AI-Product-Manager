@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import AuthModal from "@/app/_components/landing/AuthModal";
+import useUiGuards from "@/components/guards/useUiGuards";
 import EffectsFeedClient from "@/app/effects/EffectsFeedClient";
 import {
   ApiError,
@@ -40,7 +40,7 @@ function isTerminalVideoStatus(status?: string | null): boolean {
 export default function UserVideosClient() {
   const router = useRouter();
   const token = useAuthToken();
-  const [authOpen, setAuthOpen] = useState(false);
+  const { openAuth } = useUiGuards();
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [drawerVideo, setDrawerVideo] = useState<VideoData | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -145,9 +145,7 @@ export default function UserVideosClient() {
     setPublishLoading(true);
     setPublishError(null);
     try {
-      const effectName = drawerVideo.effect?.name?.trim();
-      const title = effectName ? `${effectName} Creation` : "My Creation";
-      await publishVideo(drawerVideo.id, { title });
+      await publishVideo(drawerVideo.id);
       setDrawerVideo((prev) => (prev ? { ...prev, is_public: true } : prev));
       setVideosState((prev) => ({
         ...prev,
@@ -335,7 +333,7 @@ export default function UserVideosClient() {
               </div>
               <button
                 type="button"
-                onClick={() => setAuthOpen(true)}
+                onClick={openAuth}
                 className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
               >
                 Sign in
@@ -417,14 +415,6 @@ export default function UserVideosClient() {
           <EffectsFeedClient showPopularSeeAll />
         </div>
       </div>
-
-      <AuthModal
-        open={authOpen}
-        onClose={() => {
-          setAuthOpen(false);
-        }}
-        initialMode="signin"
-      />
 
       {drawerVideo ? (
         <div className="fixed inset-0 z-50">

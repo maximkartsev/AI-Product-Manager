@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, getCategory, getEffectsIndex, type ApiCategory, type ApiEffect } from "@/lib/api";
 import EffectGridCard from "@/app/effects/_components/EffectGridCard";
+import useUiGuards from "@/components/guards/useUiGuards";
 
 type CategoryState =
   | { status: "loading" }
@@ -21,6 +22,7 @@ type EffectsState = {
 
 export default function CategoryEffectsClient({ slug }: { slug: string }) {
   const router = useRouter();
+  const { requireAuthForNavigation } = useUiGuards();
   const [categoryState, setCategoryState] = useState<CategoryState>({ status: "loading" });
   const [effectsState, setEffectsState] = useState<EffectsState>({
     items: [],
@@ -144,7 +146,7 @@ export default function CategoryEffectsClient({ slug }: { slug: string }) {
               <EffectGridCard
                 key={effect.slug}
                 effect={effect}
-                onOpen={() => router.push(`/effects/${encodeURIComponent(effect.slug)}`)}
+                onOpen={() => requireAuthForNavigation(`/effects/${encodeURIComponent(effect.slug)}`)}
               />
             ))}
           </div>

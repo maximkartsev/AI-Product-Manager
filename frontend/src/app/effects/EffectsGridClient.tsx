@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ApiError, getEffectsIndex, type ApiEffect } from "@/lib/api";
 import EffectGridCard from "@/app/effects/_components/EffectGridCard";
+import useUiGuards from "@/components/guards/useUiGuards";
 
 type EffectsState = {
   items: ApiEffect[];
@@ -15,7 +15,7 @@ type EffectsState = {
 };
 
 export default function EffectsGridClient() {
-  const router = useRouter();
+  const { requireAuthForNavigation } = useUiGuards();
   const [state, setState] = useState<EffectsState>({
     items: [],
     page: 0,
@@ -24,6 +24,9 @@ export default function EffectsGridClient() {
     loadingMore: false,
   });
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const handleOpenEffect = (effect: ApiEffect) => {
+    requireAuthForNavigation(`/effects/${encodeURIComponent(effect.slug)}`);
+  };
 
   const loadEffects = async (page: number) => {
     setState((prev) => ({
@@ -99,7 +102,7 @@ export default function EffectsGridClient() {
             <EffectGridCard
               key={effect.slug}
               effect={effect}
-              onOpen={() => router.push(`/effects/${encodeURIComponent(effect.slug)}`)}
+              onOpen={() => handleOpenEffect(effect)}
             />
           ))}
         </div>

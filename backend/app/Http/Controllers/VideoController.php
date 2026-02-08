@@ -340,15 +340,6 @@ class VideoController extends BaseController
 
     public function publish(Request $request, Video $video): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'title' => 'string|nullable|max:255',
-            'tags' => 'array|nullable',
-        ]);
-
-        if ($validator->fails()) {
-            return $this->sendError('Validation error.', $validator->errors(), 422);
-        }
-
         if ((int) $video->user_id !== (int) $request->user()->id) {
             return $this->sendError('Video ownership mismatch.', [], 403);
         }
@@ -387,8 +378,15 @@ class VideoController extends BaseController
             }
         }
 
-        $title = (string) ($request->input('title') ?: $video->title ?: 'Untitled');
-        $tags = $request->input('tags');
+        $effect = $video->effect_id ? Effect::query()->find($video->effect_id) : null;
+        $effectTags = $effect?->tags;
+        $tags = null;
+        if (is_array($effectTags)) {
+            $tags = array_values(array_filter($effectTags, static fn ($tag) => is_string($tag) && trim($tag) !== ''));
+            if (empty($tags)) {
+                $tags = null;
+            }
+        }
 
         $inputPayload = $video->input_payload;
         if (!is_array($inputPayload)) {
@@ -401,7 +399,6 @@ class VideoController extends BaseController
         ], [
             'user_id' => $video->user_id,
             'effect_id' => $video->effect_id,
-            'title' => $title,
             'tags' => $tags,
             'is_public' => true,
             'processed_file_url' => $processedUrl,

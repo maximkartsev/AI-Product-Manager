@@ -116,11 +116,8 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
   }
 
   const { item, onOpen, onTry } = props;
-  const title = item.title?.trim() || "Untitled";
   const effectName = item.effect?.name ?? "AI Effect";
-  const normalizedEffect = effectName.trim().toLowerCase();
-  const normalizedTitle = title.trim().toLowerCase();
-  const isAutoTitle = normalizedTitle === normalizedEffect || normalizedTitle === `${normalizedEffect} creation`;
+  const title = effectName.trim() || "AI Effect";
   const showPlayOverlay = !item.processed_file_url || Boolean(item.thumbnail_url);
   const isConfigurable = item.effect?.type === "configurable";
 
@@ -185,14 +182,7 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
           ) : null}
 
           <div className="absolute bottom-3 left-3 right-3">
-            {isAutoTitle ? (
-              <div className="text-sm font-semibold text-white/80">{effectName}</div>
-            ) : (
-              <>
-                <div className="text-[11px] text-white/60">{effectName}</div>
-                <div className="mt-1 text-sm font-semibold text-white">{title}</div>
-              </>
-            )}
+            <div className="text-sm font-semibold text-white/80">{effectName}</div>
           </div>
         </>
       }

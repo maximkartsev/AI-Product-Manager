@@ -582,6 +582,7 @@ class VideoUploadProcessingTest extends TestCase
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
         $effect = $this->createEffect();
+        $effect->update(['tags' => ['neon', 'portrait']]);
         $processedFileId = $this->createTenantFile($tenant->id, $user->id, [
             'url' => 'https://example.com/output.mp4',
         ]);
@@ -598,9 +599,7 @@ class VideoUploadProcessingTest extends TestCase
 
         Sanctum::actingAs($user);
 
-        $response = $this->postJsonWithHost($domain, "/api/videos/{$videoId}/publish", [
-            'tags' => ['one', 'two'],
-        ]);
+        $response = $this->postJsonWithHost($domain, "/api/videos/{$videoId}/publish", []);
 
         $response->assertStatus(200)
             ->assertJsonPath('data.is_public', true);
@@ -612,6 +611,7 @@ class VideoUploadProcessingTest extends TestCase
 
         $this->assertNotNull($gallery);
         $this->assertSame('https://example.com/output.mp4', $gallery->processed_file_url);
+        $this->assertSame(['neon', 'portrait'], $gallery->tags);
         $this->assertIsArray($gallery->input_payload);
         $this->assertSame('Neon look', $gallery->input_payload['positive_prompt'] ?? null);
         $this->assertSame('blurry', $gallery->input_payload['negative_prompt'] ?? null);
@@ -635,7 +635,6 @@ class VideoUploadProcessingTest extends TestCase
             'user_id' => $user->id,
             'video_id' => $videoId,
             'effect_id' => $effect->id,
-            'title' => 'Video',
             'is_public' => true,
             'processed_file_url' => 'https://example.com/output.mp4',
         ]);
@@ -697,7 +696,6 @@ class VideoUploadProcessingTest extends TestCase
             'user_id' => $user->id,
             'video_id' => $videoId,
             'effect_id' => $effect->id,
-            'title' => 'Expired',
             'is_public' => true,
             'processed_file_url' => 'http://localhost/storage/expired/output.mp4',
         ]);

@@ -1,12 +1,12 @@
 "use client";
 
-import AuthModal from "@/app/_components/landing/AuthModal";
 import { IconPlay, IconSparkles, IconWand } from "@/app/_components/landing/icons";
-import { ApiError, getEffect, getWallet, type ApiEffect } from "@/lib/api";
+import { ApiError, getEffect, type ApiEffect } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import { Textarea } from "@/components/ui/textarea";
-import PlansModal from "@/components/billing/PlansModal";
+import useUiGuards from "@/components/guards/useUiGuards";
+import useAuthToken from "@/lib/useAuthToken";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Info, SlidersHorizontal } from "lucide-react";
@@ -17,29 +17,19 @@ type LoadState =
   | { status: "not_found" }
   | { status: "error"; message: string; code?: number };
 
-type WalletState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "ready"; balance: number }
-  | { status: "error"; message: string };
-
 export default function EffectDetailClient({ slug }: { slug: string }) {
   const searchParams = useSearchParams();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [reload, setReload] = useState(0);
   const autoUploadRef = useRef(false);
-
-  const [plansOpen, setPlansOpen] = useState(false);
-  const [walletState, setWalletState] = useState<WalletState>({ status: "idle" });
+  const { requireAuth, ensureTokens, openPlans, walletBalance, loadWalletBalance } = useUiGuards();
+  const token = useAuthToken();
   const [positivePrompt, setPositivePrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
   const {
     fileInputRef,
     startUpload,
     onFileSelected,
-    authOpen,
-    closeAuth,
-    token,
     uploadState,
     clearUploadError,
   } = useEffectUploadStart({
@@ -47,29 +37,9 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   });
 
   useEffect(() => {
-    if (!token) {
-      setWalletState({ status: "idle" });
-      return;
-    }
-
-    let cancelled = false;
-    setWalletState({ status: "loading" });
-
-    getWallet()
-      .then((data) => {
-        if (cancelled) return;
-        setWalletState({ status: "ready", balance: data.balance });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        const message = err instanceof ApiError ? err.message : "Unable to load token balance.";
-        setWalletState({ status: "error", message });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
+    if (!token) return;
+    void loadWalletBalance();
+  }, [loadWalletBalance, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,16 +82,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
     return Math.max(0, Math.ceil(Number(raw ?? 0)));
   }, [state]);
 
-  const hasEnoughTokens =
-    creditsCost === 0 || (walletState.status === "ready" && walletState.balance >= creditsCost);
-
-  function openPlans() {
-    setPlansOpen(true);
-  }
-
-  function closePlans() {
-    setPlansOpen(false);
-  }
+  const hasEnoughTokens = creditsCost === 0 || (walletBalance !== null && walletBalance >= creditsCost);
 
   const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
   const disableUpload: boolean = false;
@@ -134,20 +95,33 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
     if (isConfigurable) return;
     autoUploadRef.current = true;
     clearUploadError();
-    startUpload(slug);
-  }, [clearUploadError, isConfigurable, searchParams, slug, startUpload, state.status]);
+    if (!requireAuth()) return;
+    void (async () => {
+      const okTokens = await ensureTokens(creditsCost);
+      if (!okTokens) return;
+      const result = startUpload(slug);
+      if (!result.ok && result.reason === "unauthenticated") {
+        requireAuth();
+      }
+    })();
+  }, [clearUploadError, creditsCost, ensureTokens, isConfigurable, requireAuth, searchParams, slug, startUpload, state.status]);
 
-  const handleStartUpload = () => {
+  const handleStartUpload = async () => {
     clearUploadError();
-    if (token && walletState.status === "ready" && !hasEnoughTokens && creditsCost > 0) {
-      openPlans();
-      return;
-    }
+    if (!requireAuth()) return;
+    const okTokens = await ensureTokens(creditsCost);
+    if (!okTokens) return;
     if (isConfigurable) {
-      startUpload(slug, { positivePrompt, negativePrompt });
+      const result = startUpload(slug, { positivePrompt, negativePrompt });
+      if (!result.ok && result.reason === "unauthenticated") {
+        requireAuth();
+      }
       return;
     }
-    startUpload(slug);
+    const result = startUpload(slug);
+    if (!result.ok && result.reason === "unauthenticated") {
+      requireAuth();
+    }
   };
 
   return (
@@ -277,24 +251,20 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
               <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 px-3 py-2 text-[11px] text-white/65">
                 <div>Cost: {creditsCost} tokens</div>
                 {token ? (
-                  walletState.status === "loading" ? (
-                    <div>Checking balance...</div>
-                  ) : walletState.status === "ready" ? (
-                    <div>Balance: {walletState.balance} tokens</div>
-                  ) : walletState.status === "error" ? (
-                    <div>{walletState.message}</div>
+                  walletBalance !== null ? (
+                    <div>Balance: {walletBalance} tokens</div>
                   ) : (
                     <div>Balance: --</div>
                   )
                 ) : (
                   <div>Sign in to view your balance.</div>
                 )}
-        {token && walletState.status === "ready" && !hasEnoughTokens && creditsCost > 0 ? (
+        {token && walletBalance !== null && !hasEnoughTokens && creditsCost > 0 ? (
           <div className="mt-2 flex items-center justify-between gap-3">
             <div className="text-amber-200">Not enough tokens to upload.</div>
             <button
               type="button"
-              onClick={openPlans}
+              onClick={() => openPlans(creditsCost)}
               className="inline-flex h-7 items-center justify-center rounded-full bg-gradient-to-r from-fuchsia-500 to-violet-500 px-3 text-[11px] font-semibold text-white shadow-[0_10px_20px_rgba(124,58,237,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400"
             >
               Top up tokens
@@ -380,13 +350,6 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         </div>
       ) : null}
 
-      <PlansModal
-        open={plansOpen}
-        onClose={closePlans}
-        requiredTokens={creditsCost}
-        balance={walletState.status === "ready" ? walletState.balance : null}
-      />
-      <AuthModal open={authOpen} onClose={closeAuth} initialMode="signin" />
     </div>
   );
 }

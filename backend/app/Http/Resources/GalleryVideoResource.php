@@ -19,10 +19,12 @@ class GalleryVideoResource extends JsonResource
     {
         $effect = $this->relationLoaded('effect') ? $this->effect : null;
         $category = $effect && $effect->relationLoaded('category') ? $effect->category : null;
+        $effectName = $effect?->name;
+        $displayTitle = is_string($effectName) && trim($effectName) !== '' ? trim($effectName) : null;
 
         return [
             'id' => $this->id,
-            'title' => $this->title,
+            'title' => $displayTitle,
             'tags' => $this->tags,
             'input_payload' => $this->input_payload,
             'created_at' => $this->created_at,

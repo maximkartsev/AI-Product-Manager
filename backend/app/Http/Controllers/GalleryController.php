@@ -22,7 +22,7 @@ class GalleryController extends BaseController
 
         $query->select($fieldsToSelect);
 
-        $this->addSearchCriteria($searchStr, $query, ['title', 'tags', 'effect>name']);
+        $this->addSearchCriteria($searchStr, $query, ['tags', 'effect>name']);
 
         $orderStr = $request->get('order', 'created_at:desc');
 

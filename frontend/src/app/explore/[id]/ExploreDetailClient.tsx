@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import AuthModal from "@/app/_components/landing/AuthModal";
 import { ApiError, getPublicGalleryItem, type GalleryVideo } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import { Textarea } from "@/components/ui/textarea";
 import { Info, SlidersHorizontal } from "lucide-react";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
+import useUiGuards from "@/components/guards/useUiGuards";
 
 type GalleryDetailState =
   | { status: "loading" }
@@ -20,14 +21,13 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [positivePrompt, setPositivePrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
+  const { requireAuth } = useUiGuards();
   const seededPromptsRef = useRef(false);
   const effectSlug = state.status === "success" ? state.data.effect?.slug ?? null : null;
   const {
     fileInputRef,
     startUpload,
     onFileSelected,
-    authOpen,
-    closeAuth,
     clearUploadError,
   } = useEffectUploadStart({
     slug: effectSlug,
@@ -38,11 +38,18 @@ export default function ExploreDetailClient({ id }: { id: number }) {
 
   const onUploadClick = () => {
     clearUploadError();
+    if (!requireAuth()) return;
     if (isConfigurable) {
-      startUpload(effectSlug, { positivePrompt, negativePrompt });
+      const result = startUpload(effectSlug, { positivePrompt, negativePrompt });
+      if (!result.ok && result.reason === "unauthenticated") {
+        requireAuth();
+      }
       return;
     }
-    startUpload(effectSlug);
+    const result = startUpload(effectSlug);
+    if (!result.ok && result.reason === "unauthenticated") {
+      requireAuth();
+    }
   };
 
   useEffect(() => {
@@ -86,8 +93,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   }, [state]);
 
   const data = state.status === "success" ? state.data : null;
-  const title = useMemo(() => data?.title?.trim() || "Untitled", [data?.title]);
   const effectName = data?.effect?.name ?? "AI Effect";
+  const title = effectName;
   const effectDescription = useMemo(() => (data?.effect?.description ?? "").trim(), [data?.effect?.description]);
   const isPremium = Boolean(data?.effect?.is_premium);
 
@@ -228,7 +235,6 @@ export default function ExploreDetailClient({ id }: { id: number }) {
           ) : null}
         </main>
       </div>
-      <AuthModal open={authOpen} onClose={closeAuth} initialMode="signin" />
     </div>
   );
 }

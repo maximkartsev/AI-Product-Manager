@@ -111,6 +111,14 @@ function formatAuthError(err: ApiError): string {
 export default function AuthModal({ open, onClose, initialMode = "signup" }: Props) {
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollTrackRef = useRef<HTMLDivElement | null>(null);
+  const scrollThumbRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    startY: number;
+    startScrollTop: number;
+    scrollPerPx: number;
+  } | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [mode, setMode] = useState<"signup" | "signin">(initialMode);
   const [name, setName] = useState("");
@@ -203,6 +211,123 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     };
   }, [handleClose, open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    const track = scrollTrackRef.current;
+    const thumb = scrollThumbRef.current;
+    if (!el || !thumb || !track) return;
+
+    let frame = 0;
+    const update = () => {
+      const scrollHeight = el.scrollHeight;
+      const clientHeight = el.clientHeight;
+      const maxScroll = scrollHeight - clientHeight;
+
+      if (maxScroll <= 0) {
+        track.style.opacity = "0";
+        track.style.pointerEvents = "none";
+        thumb.style.opacity = "0";
+        thumb.style.height = "0px";
+        thumb.style.transform = "translateY(0)";
+        return;
+      }
+
+      track.style.opacity = "1";
+      track.style.pointerEvents = "auto";
+
+      const minThumb = 36;
+      const trackHeight = track.clientHeight;
+      const thumbHeight = Math.max(minThumb, (clientHeight / scrollHeight) * trackHeight);
+      const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+      const thumbTop = maxScroll > 0 ? (el.scrollTop / maxScroll) * maxThumbTop : 0;
+
+      thumb.style.opacity = "1";
+      thumb.style.height = `${thumbHeight}px`;
+      thumb.style.transform = `translateY(${thumbTop}px)`;
+    };
+
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        update();
+      });
+    };
+
+    update();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", update);
+
+    const resizeObserver = new ResizeObserver(() => update());
+    resizeObserver.observe(el);
+    if (el.firstElementChild) resizeObserver.observe(el.firstElementChild);
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", update);
+      resizeObserver.disconnect();
+    };
+  }, [open, mode, submitState.status]);
+
+  const handleThumbPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const el = scrollRef.current;
+    const track = scrollTrackRef.current;
+    const thumb = scrollThumbRef.current;
+    if (!el || !track || !thumb) return;
+
+    const scrollHeight = el.scrollHeight;
+    const clientHeight = el.clientHeight;
+    const maxScroll = Math.max(0, scrollHeight - clientHeight);
+    const trackHeight = track.clientHeight;
+    const thumbHeight = thumb.getBoundingClientRect().height;
+    const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+    const scrollPerPx = maxThumbTop > 0 ? maxScroll / maxThumbTop : 0;
+
+    dragRef.current = {
+      startY: event.clientY,
+      startScrollTop: el.scrollTop,
+      scrollPerPx,
+    };
+
+    thumb.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, []);
+
+  const handleThumbPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    const el = scrollRef.current;
+    if (!drag || !el) return;
+    el.scrollTop = drag.startScrollTop + (event.clientY - drag.startY) * drag.scrollPerPx;
+  }, []);
+
+  const handleThumbPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const thumb = scrollThumbRef.current;
+    dragRef.current = null;
+    if (thumb && thumb.hasPointerCapture(event.pointerId)) {
+      thumb.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const handleTrackPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.target === scrollThumbRef.current) return;
+    const el = scrollRef.current;
+    const track = scrollTrackRef.current;
+    const thumb = scrollThumbRef.current;
+    if (!el || !track || !thumb) return;
+
+    const trackRect = track.getBoundingClientRect();
+    const thumbHeight = thumb.getBoundingClientRect().height;
+    const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+    const maxThumbTop = Math.max(0, trackRect.height - thumbHeight);
+    if (maxThumbTop <= 0) return;
+
+    const offset = event.clientY - trackRect.top - thumbHeight / 2;
+    const clamped = Math.max(0, Math.min(maxThumbTop, offset));
+    el.scrollTop = (clamped / maxThumbTop) * maxScroll;
+  }, []);
+
   if (!open) return null;
 
   const title = mode === "signup" ? "Join the AI magic" : "Welcome back";
@@ -224,19 +349,22 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
       />
 
       <div className="relative w-full max-w-md">
-        <div className="relative max-h-[calc(100vh-2rem)] overflow-auto rounded-3xl border border-white/10 bg-zinc-950/90 shadow-2xl">
+        <div className="relative max-h-[calc(100vh-2rem)] overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/90 shadow-2xl">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(236,72,153,0.18),transparent_55%),radial-gradient(circle_at_70%_30%,rgba(99,102,241,0.14),transparent_60%)]" />
 
-          <div className="relative p-5">
-            <button
-              ref={closeRef}
-              type="button"
-              onClick={handleClose}
-              className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/5 text-white/70 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-              aria-label="Close"
-            >
-              <IconX className="h-5 w-5" />
-            </button>
+          <div className="relative overflow-hidden">
+            <div ref={scrollRef} className="auth-modal-scroll-body max-h-[calc(100vh-2rem)] overflow-y-auto p-5 pr-7">
+            <div className="flex justify-end">
+              <button
+                ref={closeRef}
+                type="button"
+                onClick={handleClose}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/5 text-white/70 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                aria-label="Close"
+              >
+                <IconX className="h-5 w-5" />
+              </button>
+            </div>
 
             <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-fuchsia-500/25 to-violet-500/20 text-fuchsia-200">
               <IconSparkles className="h-7 w-7" />
@@ -374,6 +502,23 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
               </a>
               .
             </p>
+            </div>
+            <div className="auth-modal-scrollbar pointer-events-auto absolute right-1 top-8 bottom-4 w-2">
+              <div
+                ref={scrollTrackRef}
+                onPointerDown={handleTrackPointerDown}
+                className="relative h-full w-full rounded-full bg-white/5"
+              >
+                <div
+                  ref={scrollThumbRef}
+                  onPointerDown={handleThumbPointerDown}
+                  onPointerMove={handleThumbPointerMove}
+                  onPointerUp={handleThumbPointerUp}
+                  className="absolute left-0 top-0 w-full rounded-full bg-gradient-to-b from-fuchsia-300/22 to-violet-300/22"
+                  style={{ touchAction: "none" }}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -39,3 +39,20 @@ body {
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* Auth modal custom scrollbar (hide native) */
+.auth-modal-scroll-body {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.auth-modal-scroll-body::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .auth-modal-scrollbar {
+    display: none;
+  }
+}
+

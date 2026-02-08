@@ -16,7 +16,6 @@ class GalleryVideo extends CentralModel
         'user_id',
         'video_id',
         'effect_id',
-        'title',
         'is_public',
         'tags',
         'input_payload',

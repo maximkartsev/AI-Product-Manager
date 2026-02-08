@@ -3,20 +3,20 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import AuthModal from "@/app/_components/landing/AuthModal";
 import { IconSparkles } from "@/app/_components/landing/icons";
 import { brand } from "@/app/_components/landing/landingData";
 import { ApiError, clearAccessToken, clearTenantDomain, getMe } from "@/lib/api";
 import useAuthToken from "@/lib/useAuthToken";
+import useUiGuards from "@/components/guards/useUiGuards";
 
 export default function AppHeader() {
   const router = useRouter();
   const pathname = usePathname();
   const token = useAuthToken();
-  const [authOpen, setAuthOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const { openAuth } = useUiGuards();
 
   useEffect(() => {
     if (!token) {
@@ -113,7 +113,7 @@ export default function AppHeader() {
                 aria-label="Go back"
               >
                 <span aria-hidden="true">←</span>
-                <span className="hidden sm:inline">Back</span>
+                <span className="hidden sm:inline">&nbsp;&nbsp;Back</span>
               </button>
             ) : null}
             <Link
@@ -192,7 +192,7 @@ export default function AppHeader() {
             ) : (
               <button
                 type="button"
-                onClick={() => setAuthOpen(true)}
+                onClick={openAuth}
                 className={buttonClass}
               >
                 Sign In
@@ -201,8 +201,6 @@ export default function AppHeader() {
           </div>
         </div>
       </div>
-
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} initialMode="signup" />
     </div>
   );
 }

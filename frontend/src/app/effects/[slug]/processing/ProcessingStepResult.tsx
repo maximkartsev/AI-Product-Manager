@@ -5,7 +5,7 @@ import { publishVideo, unpublishVideo } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Check, Download, Globe, Loader2, Settings2, Share2, Sparkles, Wand2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 type ProcessingStepResultProps = {
   processedFileUrl: string | null;
@@ -15,39 +15,7 @@ type ProcessingStepResultProps = {
   watermarkLabel: string;
   videoId: number | null;
   isPublic: boolean;
-  effectTags?: string[] | null;
 };
-
-function normalizeTagList(input: string[] | string | null | undefined): string[] {
-  if (!input) return [];
-  const raw = Array.isArray(input) ? input : input.split(",");
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  raw.forEach((tag) => {
-    if (typeof tag !== "string") return;
-    const trimmed = tag.trim();
-    if (!trimmed) return;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    result.push(trimmed);
-  });
-
-  return result;
-}
-
-function mergeTags(required: string[], extra: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  [...required, ...extra].forEach((tag) => {
-    const key = tag.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    result.push(tag);
-  });
-  return result;
-}
 
 export default function ProcessingStepResult({
   processedFileUrl,
@@ -57,28 +25,14 @@ export default function ProcessingStepResult({
   watermarkLabel,
   videoId,
   isPublic,
-  effectTags,
 }: ProcessingStepResultProps) {
   const router = useRouter();
   const [localIsPublic, setLocalIsPublic] = useState(isPublic);
-  const [publishOpen, setPublishOpen] = useState(false);
   const [publishLoading, setPublishLoading] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
-  const [publishTitle, setPublishTitle] = useState("");
-  const [publishTags, setPublishTags] = useState("");
   const [publishedOpen, setPublishedOpen] = useState(false);
 
   const publishEnabled = Boolean(videoId && processedFileUrl);
-  const defaultTitle = useMemo(() => {
-    const trimmed = effectName?.trim();
-    return trimmed ? `${trimmed} Creation` : "My Creation";
-  }, [effectName]);
-  const normalizedEffectTags = useMemo(() => normalizeTagList(effectTags), [effectTags]);
-  const extraTags = useMemo(() => normalizeTagList(publishTags), [publishTags]);
-  const combinedTags = useMemo(
-    () => mergeTags(normalizedEffectTags, extraTags),
-    [normalizedEffectTags, extraTags],
-  );
 
   useEffect(() => {
     const rafId = window.requestAnimationFrame(() => {
@@ -91,28 +45,13 @@ export default function ProcessingStepResult({
     setLocalIsPublic(isPublic);
   }, [isPublic]);
 
-  const openPublish = () => {
-    if (!publishEnabled) return;
-    if (!publishTitle.trim()) {
-      setPublishTitle(defaultTitle);
-    }
-    setPublishError(null);
-    setPublishOpen(true);
-  };
-
   const handlePublish = async () => {
     if (!videoId || !publishEnabled) return;
     setPublishLoading(true);
     setPublishError(null);
     try {
-      const title = publishTitle.trim() || defaultTitle;
-      const tags = combinedTags;
-      const result = await publishVideo(videoId, {
-        title,
-        tags: tags.length ? tags : null,
-      });
+      await publishVideo(videoId);
       setLocalIsPublic(true);
-      setPublishOpen(false);
       setPublishedOpen(true);
     } catch (err) {
       setPublishError(err instanceof Error ? err.message : "Unable to publish the video.");
@@ -198,7 +137,7 @@ export default function ProcessingStepResult({
 
       <button
         type="button"
-        onClick={localIsPublic ? undefined : openPublish}
+        onClick={localIsPublic ? undefined : handlePublish}
         disabled={!publishEnabled || localIsPublic || publishLoading}
         className={cn(
           "mb-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 text-sm font-semibold text-white transition",
@@ -209,6 +148,11 @@ export default function ProcessingStepResult({
         {publishLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Globe className="h-5 w-5" />}
         {localIsPublic ? "Published to Gallery" : "Publish to Gallery"}
       </button>
+      {publishError ? (
+        <div className="mb-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+          {publishError}
+        </div>
+      ) : null}
       {localIsPublic ? (
         <button
           type="button"
@@ -247,64 +191,6 @@ export default function ProcessingStepResult({
         <Wand2 className="h-4 w-4" />
         Create Another
       </button>
-
-      {publishOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4">
-          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0f0f14] p-5 text-white shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-semibold">Publish to Gallery</div>
-                <div className="mt-1 text-xs text-white/60">Share your creation with the community.</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPublishOpen(false)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
-                aria-label="Close"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              <label className="block text-[11px] font-semibold text-white/70">
-                Title
-                <input
-                  value={publishTitle}
-                  onChange={(event) => setPublishTitle(event.target.value)}
-                  className="mt-1 w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-                  placeholder={defaultTitle}
-                />
-              </label>
-              <label className="block text-[11px] font-semibold text-white/70">
-                Tags (comma separated)
-                <input
-                  value={publishTags}
-                  onChange={(event) => setPublishTags(event.target.value)}
-                  className="mt-1 w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-                  placeholder="neon, glow, portrait"
-                />
-              </label>
-            </div>
-
-            {publishError ? (
-              <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">
-                {publishError}
-              </div>
-            ) : null}
-
-            <button
-              type="button"
-              onClick={handlePublish}
-              disabled={publishLoading}
-              className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 disabled:opacity-70"
-            >
-              {publishLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />}
-              Publish
-            </button>
-          </div>
-        </div>
-      ) : null}
 
       {publishedOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4">

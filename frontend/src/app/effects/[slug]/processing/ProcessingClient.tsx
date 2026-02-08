@@ -1,12 +1,10 @@
 "use client";
 
-import AuthModal from "@/app/_components/landing/AuthModal";
 import {
   ApiError,
   createVideo,
   getEffect,
   getVideo,
-  getWallet,
   initVideoUpload,
   submitAiJob,
   type ApiEffect,
@@ -21,7 +19,8 @@ import { AlertTriangle, Film, Layers, Sparkles, UploadCloud, Wand2 } from "lucid
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
-import PlansModal from "@/components/billing/PlansModal";
+import useUiGuards from "@/components/guards/useUiGuards";
+import { getRequiredTokensFromError } from "@/lib/apiErrorTokens";
 
 type LoadState =
   | { status: "loading" }
@@ -136,13 +135,7 @@ function uploadWithProgress(opts: {
 
 function formatUploadError(err: ApiError): string {
   const base = err.message || "Upload failed.";
-  const payload = err.data as { data?: unknown } | undefined;
-  if (!payload || typeof payload !== "object" || !("data" in payload)) return base;
-
-  const data = payload.data as Record<string, unknown> | undefined;
-  if (!data) return base;
-
-  const requiredTokens = data.required_tokens;
+  const requiredTokens = getRequiredTokensFromError(err);
   if (typeof requiredTokens === "number") {
     return `${base} (required tokens: ${requiredTokens})`;
   }
@@ -153,6 +146,7 @@ function formatUploadError(err: ApiError): string {
 export default function ProcessingClient({ slug }: { slug: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { openAuth, openPlans } = useUiGuards();
   const videoId = useMemo(() => {
     const raw = searchParams.get("videoId");
     if (!raw) return null;
@@ -166,7 +160,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
     return raw.trim() || null;
   }, [searchParams]);
 
-  const [authOpen, setAuthOpen] = useState(false);
   const token = useAuthToken();
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [localPreviewReady, setLocalPreviewReady] = useState(false);
@@ -176,9 +169,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const [videoState, setVideoState] = useState<VideoPollState>({ status: "idle" });
   const [pollNotice, setPollNotice] = useState<string | null>(null);
   const [pollNonce, setPollNonce] = useState(0);
-  const [plansOpen, setPlansOpen] = useState(false);
   const [requiredTokens, setRequiredTokens] = useState<number | null>(null);
-  const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "uploading" | "error" | "done">("idle");
@@ -192,26 +183,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const [doneSteps, setDoneSteps] = useState(0);
   const [progressValue, setProgressValue] = useState(8);
   const processingStartMsRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!token) {
-      setWalletBalance(null);
-      return;
-    }
-    let cancelled = false;
-    getWallet()
-      .then((data) => {
-        if (cancelled) return;
-        setWalletBalance(data.balance);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setWalletBalance(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -449,15 +420,8 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         if (err instanceof ApiError) {
           const message = formatUploadError(err);
           setUploadError(message);
-          const payload = err.data as { data?: unknown } | undefined;
-          const data =
-            payload && typeof payload === "object" && "data" in payload
-              ? (payload.data as Record<string, unknown>)
-              : null;
-          const required = data?.required_tokens;
-          if (typeof required === "number") {
-            setRequiredTokens(required);
-          }
+          const required = getRequiredTokensFromError(err);
+          if (typeof required === "number") setRequiredTokens(required);
         } else if (err instanceof Error) {
           setUploadError(err.message || "Upload failed.");
         } else {
@@ -580,7 +544,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const resultSubtitle =
     effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Comic Book effect applied successfully";
   const watermarkLabel = effectState.status === "success" ? effectState.data.name : "AI Effect";
-  const effectTags = effectState.status === "success" ? (effectState.data.tags ?? null) : null;
   const uploadAnotherHref =
     effectState.status === "success" && effectState.data.type === "configurable"
       ? `/effects/${encodeURIComponent(slug)}`
@@ -757,26 +720,28 @@ export default function ProcessingClient({ slug }: { slug: string }) {
             {hasTokenShortage ? (
               <button
                 type="button"
-                onClick={() => setPlansOpen(true)}
+                onClick={() => openPlans(requiredTokens ?? 0)}
                 className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400"
               >
                 Top up tokens
               </button>
             ) : null}
             <div className="mt-4 flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  uploadInFlightRef.current = false;
-                  setUploadStatus("idle");
-                  setUploadError(null);
-                  setUploadProgress(0);
-                  setUploadAttempt((v) => v + 1);
-                }}
-                className="inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-              >
-                Retry upload
-              </button>
+              {!hasTokenShortage ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    uploadInFlightRef.current = false;
+                    setUploadStatus("idle");
+                    setUploadError(null);
+                    setUploadProgress(0);
+                    setUploadAttempt((v) => v + 1);
+                  }}
+                  className="inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                >
+                  Retry upload
+                </button>
+              ) : null}
               <Link
                 href={`/effects/${encodeURIComponent(slug)}`}
                 className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
@@ -795,7 +760,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
             </div>
             <button
               type="button"
-              onClick={() => setAuthOpen(true)}
+              onClick={openAuth}
               className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-white text-sm font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
             >
               Sign in
@@ -840,7 +805,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
                   watermarkLabel={watermarkLabel}
                   videoId={videoId}
                   isPublic={isPublic}
-                  effectTags={effectTags}
                 />
               ) : isUploadPhase ? (
                 <ProcessingStepUpload
@@ -877,22 +841,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         ) : null}
       </div>
 
-      <AuthModal
-        open={authOpen}
-        onClose={() => {
-          setAuthOpen(false);
-          setPollNonce((v) => v + 1);
-        }}
-      />
-      <PlansModal
-        open={plansOpen}
-        onClose={() => setPlansOpen(false)}
-        requiredTokens={
-          requiredTokens ??
-          Math.max(0, Math.ceil(Number(effectState.status === "success" ? effectState.data.credits_cost : 0)))
-        }
-        balance={walletBalance}
-      />
     </div>
   );
 }

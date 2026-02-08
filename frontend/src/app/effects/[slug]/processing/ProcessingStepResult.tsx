@@ -234,8 +234,8 @@ export default function ProcessingStepResult({
       </a>
       <button
         type="button"
-        disabled
-        className="mb-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white"
+        onClick={() => router.push("/user-videos")}
+        className="mb-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white transition hover:bg-white/10"
       >
         View My Videos
       </button>

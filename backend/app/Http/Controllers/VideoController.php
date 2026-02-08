@@ -121,6 +121,101 @@ class VideoController extends BaseController
         ], 'Upload initialized');
     }
 
+    public function index(Request $request, PresignedUrlService $presigned): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->sendError('Unauthorized.', [], 401);
+        }
+
+        $query = Video::query()->where('user_id', (int) $user->id);
+
+        [$perPage, $page, $fieldsToSelect, $searchStr, $from] = $this->buildParamsFromRequest($request, $query);
+
+        $query->select($fieldsToSelect);
+
+        $this->addSearchCriteria($searchStr, $query, ['title', 'status']);
+
+        $orderStr = $request->get('order', 'created_at:desc');
+
+        $filters = $this->extractFilters($request, Video::class);
+        $this->addFiltersCriteria($query, $filters, Video::class);
+
+        [$totalRows, $items] = $this->addCountQueryAndExecute($orderStr, $query, $from, $perPage);
+
+        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+
+        $fileIds = $items
+            ->flatMap(fn ($video) => [$video->original_file_id, $video->processed_file_id])
+            ->filter()
+            ->unique()
+            ->values();
+        $filesById = $fileIds->isEmpty()
+            ? collect()
+            : File::withTrashed()->whereIn('id', $fileIds)->get()->keyBy('id');
+
+        $effectIds = $items->pluck('effect_id')->filter()->unique()->values();
+        $effectsById = $effectIds->isEmpty()
+            ? collect()
+            : Effect::query()->whereIn('id', $effectIds)->get()->keyBy('id');
+
+        $payloadItems = $items->map(function ($video) use ($filesById, $effectsById, $presigned, $ttlSeconds) {
+            $originalFile = $video->original_file_id ? $filesById->get($video->original_file_id) : null;
+            $processedFile = $video->processed_file_id ? $filesById->get($video->processed_file_id) : null;
+
+            $originalFileUrl = $this->resolveFileUrl($originalFile, $presigned, $ttlSeconds, false);
+            $processedFileUrl = $this->resolveFileUrl($processedFile, $presigned, $ttlSeconds, true);
+
+            $error = null;
+            $details = $video->processing_details;
+            if (is_array($details)) {
+                $raw = $details['error'] ?? null;
+                if (is_string($raw) && trim($raw) !== '') {
+                    $error = trim($raw);
+                }
+            }
+            if (!$error && $video->status === 'failed') {
+                $error = 'Processing failed.';
+            }
+
+            $effect = null;
+            if ($video->effect_id) {
+                $effectModel = $effectsById->get($video->effect_id);
+                if ($effectModel) {
+                    $effect = [
+                        'id' => $effectModel->id,
+                        'slug' => $effectModel->slug,
+                        'name' => $effectModel->name,
+                        'description' => $effectModel->description,
+                        'type' => $effectModel->type,
+                        'is_premium' => $effectModel->is_premium,
+                    ];
+                }
+            }
+
+            $payload = $video->toArray();
+            $payload['original_file_url'] = $originalFileUrl;
+            $payload['processed_file_url'] = $processedFileUrl;
+            $payload['error'] = $error;
+            $payload['effect'] = $effect;
+
+            return $payload;
+        });
+
+        $response = [
+            'items' => $payloadItems,
+            'totalItems' => $totalRows,
+            'totalPages' => (int) ceil($totalRows / $perPage),
+            'page' => $page,
+            'perPage' => $perPage,
+            'order' => $orderStr,
+            'search' => $searchStr,
+            'filters' => $filters,
+        ];
+
+        return $this->sendResponse($response, 'Videos retrieved');
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -326,6 +421,38 @@ class VideoController extends BaseController
         $video->save();
 
         return $this->sendResponse($video, 'Video unpublished');
+    }
+
+    private function resolveFileUrl(?File $file, PresignedUrlService $presigned, int $ttlSeconds, bool $preferPresigned): ?string
+    {
+        if (!$file) {
+            return null;
+        }
+
+        $disk = $file->disk;
+        $path = $file->path;
+
+        if ($preferPresigned && $disk && $path) {
+            try {
+                return $presigned->downloadUrl($disk, $path, $ttlSeconds);
+            } catch (\Throwable $e) {
+                // ignore URL generation issues
+            }
+        }
+
+        if ($file->url) {
+            return (string) $file->url;
+        }
+
+        if (!$preferPresigned && $disk && $path) {
+            try {
+                return $presigned->downloadUrl($disk, $path, $ttlSeconds);
+            } catch (\Throwable $e) {
+                // ignore URL generation issues
+            }
+        }
+
+        return null;
     }
 
     private function isSafeFilename(string $filename): bool

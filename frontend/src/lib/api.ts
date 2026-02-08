@@ -77,6 +77,18 @@ export type VideoData = {
   expires_at?: string | null;
   processed_file_url?: string | null;
   error?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  effect?: VideoEffectSummary | null;
+};
+
+export type VideoEffectSummary = {
+  id: number;
+  slug: string;
+  name: string;
+  description?: string | null;
+  type?: string | null;
+  is_premium?: boolean;
 };
 
 export type GalleryEffect = {
@@ -100,6 +112,16 @@ export type GalleryVideo = {
 
 export type GalleryIndexData = {
   items: GalleryVideo[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
+};
+
+export type VideosIndexData = {
+  items: VideoData[];
   totalItems: number;
   totalPages: number;
   page: number;
@@ -429,6 +451,19 @@ export function createVideo(payload: VideoCreateRequest): Promise<VideoData> {
 
 export function getVideo(id: number): Promise<VideoData> {
   return apiGet<VideoData>(`/videos/${id}`);
+}
+
+export function getVideosIndex(params?: {
+  page?: number;
+  perPage?: number;
+  order?: string | null;
+}): Promise<VideosIndexData> {
+  const query: Query = {
+    page: params?.page ?? 1,
+    perPage: params?.perPage ?? 20,
+    order: params?.order ?? undefined,
+  };
+  return apiGet<VideosIndexData>("/videos", query);
 }
 
 export function publishVideo(

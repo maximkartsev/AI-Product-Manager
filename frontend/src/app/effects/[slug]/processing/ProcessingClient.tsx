@@ -59,6 +59,17 @@ function isTerminalStatus(status: string | undefined | null): boolean {
   return status === "completed" || status === "failed" || status === "expired";
 }
 
+const FORBIDDEN_UPLOAD_HEADERS = new Set([
+  "accept-encoding",
+  "connection",
+  "content-length",
+  "cookie",
+  "host",
+  "origin",
+  "referer",
+  "user-agent",
+]);
+
 function normalizeUploadHeaders(
   headers: Record<string, string | string[]> | undefined,
   fallbackContentType: string,
@@ -66,15 +77,19 @@ function normalizeUploadHeaders(
   const normalized: Record<string, string> = {};
   if (headers) {
     for (const [key, value] of Object.entries(headers)) {
+      const trimmedKey = key.trim();
+      if (!trimmedKey) continue;
+      if (FORBIDDEN_UPLOAD_HEADERS.has(trimmedKey.toLowerCase())) continue;
       if (Array.isArray(value)) {
-        if (value[0]) normalized[key] = value[0];
+        if (value[0]) normalized[trimmedKey] = value[0];
         continue;
       }
-      if (value) normalized[key] = value;
+      if (value) normalized[trimmedKey] = value;
     }
   }
 
-  if (!normalized["Content-Type"]) {
+  const hasContentType = Object.keys(normalized).some((header) => header.toLowerCase() === "content-type");
+  if (!hasContentType) {
     normalized["Content-Type"] = fallbackContentType;
   }
 
@@ -346,15 +361,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
 
         setUploadProgress(100);
 
-        const video = await createVideo({
-          effect_id: effectState.data.id,
-          original_file_id: init.file.id,
-          title: pendingFile.name,
-        });
-
-        void savePreview(video.id, pendingFile);
-
-        const idempotencyKey = `effect_${effectState.data.id}_${uploadId}`;
         let promptPayload: Record<string, string> | null = null;
         if (uploadId) {
           try {
@@ -375,6 +381,16 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           }
         }
 
+        const video = await createVideo({
+          effect_id: effectState.data.id,
+          original_file_id: init.file.id,
+          title: pendingFile.name,
+          input_payload: promptPayload ?? undefined,
+        });
+
+        void savePreview(video.id, pendingFile);
+
+        const idempotencyKey = `effect_${effectState.data.id}_${uploadId}`;
         const job = await submitAiJob({
           effect_id: effectState.data.id,
           video_id: video.id,
@@ -533,6 +549,10 @@ export default function ProcessingClient({ slug }: { slug: string }) {
     effectState.status === "success" ? subtitleFromEffect(effectState.data) : "Comic Book effect applied successfully";
   const watermarkLabel = effectState.status === "success" ? effectState.data.name : "AI Effect";
   const effectTags = effectState.status === "success" ? (effectState.data.tags ?? null) : null;
+  const uploadAnotherHref =
+    effectState.status === "success" && effectState.data.type === "configurable"
+      ? `/effects/${encodeURIComponent(slug)}`
+      : `/effects/${encodeURIComponent(slug)}?upload=1`;
 
   const handlePreviewError = () => {
     if (previewKey) {
@@ -814,7 +834,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
                   stepStatuses={stepStatuses}
                   showError={videoStatus === "failed"}
                   errorMessage={errorMessage}
-                  uploadAnotherHref={`/effects/${encodeURIComponent(slug)}?upload=1`}
+                  uploadAnotherHref={uploadAnotherHref}
                 />
               )}
             </div>

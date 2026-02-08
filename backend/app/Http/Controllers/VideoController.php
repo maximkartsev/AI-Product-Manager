@@ -222,6 +222,7 @@ class VideoController extends BaseController
             'effect_id' => 'numeric|required|exists:effects,id',
             'original_file_id' => 'numeric|required',
             'title' => 'string|nullable|max:255',
+            'input_payload' => 'array|nullable',
         ]);
 
         if ($validator->fails()) {
@@ -247,6 +248,11 @@ class VideoController extends BaseController
             return $this->sendError('Effect not found.', [], 404);
         }
 
+        $inputPayload = $request->input('input_payload');
+        if (!is_array($inputPayload)) {
+            $inputPayload = null;
+        }
+
         $video = Video::query()->create([
             'tenant_id' => (string) tenant()->getKey(),
             'user_id' => (int) $request->user()->id,
@@ -255,6 +261,7 @@ class VideoController extends BaseController
             'title' => $request->input('title'),
             'status' => 'queued',
             'is_public' => false,
+            'input_payload' => $inputPayload,
         ]);
 
         return $this->sendResponse($video, 'Video created');
@@ -383,6 +390,11 @@ class VideoController extends BaseController
         $title = (string) ($request->input('title') ?: $video->title ?: 'Untitled');
         $tags = $request->input('tags');
 
+        $inputPayload = $video->input_payload;
+        if (!is_array($inputPayload)) {
+            $inputPayload = null;
+        }
+
         $gallery = GalleryVideo::withTrashed()->updateOrCreate([
             'tenant_id' => (string) $video->tenant_id,
             'video_id' => $video->id,
@@ -394,6 +406,7 @@ class VideoController extends BaseController
             'is_public' => true,
             'processed_file_url' => $processedUrl,
             'thumbnail_url' => $thumbnailUrl,
+            'input_payload' => $inputPayload,
         ]);
 
         if ($gallery->trashed()) {

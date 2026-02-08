@@ -18,6 +18,7 @@ class Video extends TenantModel
         'status',
         'is_public',
         'processing_details',
+        'input_payload',
         'expires_at',
     ];
 
@@ -28,6 +29,7 @@ class Video extends TenantModel
         'processed_file_id' => 'integer',
         'is_public' => 'boolean',
         'processing_details' => 'array',
+        'input_payload' => 'array',
         'expires_at' => 'datetime',
     ];
 }

@@ -24,6 +24,7 @@ class GalleryVideoResource extends JsonResource
             'id' => $this->id,
             'title' => $this->title,
             'tags' => $this->tags,
+            'input_payload' => $this->input_payload,
             'created_at' => $this->created_at,
             'processed_file_url' => $this->presignAsset($this->processed_file_url),
             'thumbnail_url' => $this->presignAsset($this->thumbnail_url),
@@ -75,7 +76,7 @@ class GalleryVideoResource extends JsonResource
         }
 
         if (!Str::startsWith($raw, ['http://', 'https://'])) {
-            return ltrim($raw, '/');
+            return $this->normalizeAssetPath($raw);
         }
 
         $base = '';
@@ -87,7 +88,7 @@ class GalleryVideoResource extends JsonResource
         $base = $base !== '' ? rtrim($base, '/') . '/' : '';
 
         if ($base !== '' && Str::startsWith($raw, $base)) {
-            return ltrim(substr($raw, strlen($base)), '/');
+            return $this->normalizeAssetPath(substr($raw, strlen($base)));
         }
 
         $path = parse_url($raw, PHP_URL_PATH);
@@ -95,11 +96,17 @@ class GalleryVideoResource extends JsonResource
             return null;
         }
 
+        return $this->normalizeAssetPath($path);
+    }
+
+    private function normalizeAssetPath(string $path): ?string
+    {
         $trimmed = ltrim($path, '/');
+        if (Str::startsWith($trimmed, 'storage/')) {
+            $trimmed = substr($trimmed, strlen('storage/'));
+        }
         if (Str::startsWith($trimmed, 'bp-media/')) {
             $trimmed = substr($trimmed, strlen('bp-media/'));
-        } elseif (Str::startsWith($trimmed, 'tenants/')) {
-            return $trimmed;
         }
 
         return $trimmed ?: null;

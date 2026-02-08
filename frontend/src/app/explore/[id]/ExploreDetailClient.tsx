@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthModal from "@/app/_components/landing/AuthModal";
@@ -22,6 +22,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [positivePrompt, setPositivePrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
+  const seededPromptsRef = useRef(false);
   const effectSlug = state.status === "success" ? state.data.effect?.slug ?? null : null;
   const {
     fileInputRef,
@@ -66,6 +67,25 @@ export default function ExploreDetailClient({ id }: { id: number }) {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    seededPromptsRef.current = false;
+    setPositivePrompt("");
+    setNegativePrompt("");
+  }, [id]);
+
+  useEffect(() => {
+    if (state.status !== "success") return;
+    if (seededPromptsRef.current) return;
+    const payload = state.data.input_payload;
+    const positive = typeof payload?.positive_prompt === "string" ? payload.positive_prompt.trim() : "";
+    const negative = typeof payload?.negative_prompt === "string" ? payload.negative_prompt.trim() : "";
+    if (positive || negative) {
+      setPositivePrompt(positive);
+      setNegativePrompt(negative);
+    }
+    seededPromptsRef.current = true;
+  }, [state]);
 
   const data = state.status === "success" ? state.data : null;
   const title = useMemo(() => data?.title?.trim() || "Untitled", [data?.title]);
@@ -209,6 +229,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
                   </div>
                 </div>
               ) : null}
+
 
               <div className="mt-6">
                 <button

@@ -127,7 +127,11 @@ export default function UserVideosClient() {
   const handleRepeatVideo = (video: VideoData) => {
     const slug = video.effect?.slug;
     if (!slug) return;
-    router.push(`/effects/${encodeURIComponent(slug)}?upload=1`);
+    const isConfigurable = video.effect?.type === "configurable";
+    const href = isConfigurable
+      ? `/effects/${encodeURIComponent(slug)}`
+      : `/effects/${encodeURIComponent(slug)}?upload=1`;
+    router.push(href);
   };
 
   const handlePublishToGallery = async () => {

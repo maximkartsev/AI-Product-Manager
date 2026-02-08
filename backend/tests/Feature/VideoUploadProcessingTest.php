@@ -590,6 +590,10 @@ class VideoUploadProcessingTest extends TestCase
             'status' => 'completed',
             'processed_file_id' => $processedFileId,
             'title' => 'Video title',
+            'input_payload' => json_encode([
+                'positive_prompt' => 'Neon look',
+                'negative_prompt' => 'blurry',
+            ]),
         ]);
 
         Sanctum::actingAs($user);
@@ -608,6 +612,9 @@ class VideoUploadProcessingTest extends TestCase
 
         $this->assertNotNull($gallery);
         $this->assertSame('https://example.com/output.mp4', $gallery->processed_file_url);
+        $this->assertIsArray($gallery->input_payload);
+        $this->assertSame('Neon look', $gallery->input_payload['positive_prompt'] ?? null);
+        $this->assertSame('blurry', $gallery->input_payload['negative_prompt'] ?? null);
     }
 
     public function test_unpublish_sets_gallery_private(): void

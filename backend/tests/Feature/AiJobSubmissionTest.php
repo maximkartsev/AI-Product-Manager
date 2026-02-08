@@ -117,6 +117,72 @@ class AiJobSubmissionTest extends TestCase
         $this->assertArrayHasKey('workflow', $inputPayload);
     }
 
+    public function test_ai_job_submission_replaces_workflow_prompt_placeholders_from_input_payload(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $workflowPath = 'resources/comfyui/workflows/test_prompt_override.json';
+
+        Storage::disk('s3')->put($workflowPath, json_encode([
+            '1' => [
+                'inputs' => [
+                    'prompt' => '__POSITIVE_PROMPT__',
+                    'negative_prompt' => '__NEGATIVE_PROMPT__',
+                ],
+                'class_type' => 'TestNode',
+            ],
+            '2' => [
+                'inputs' => [
+                    'text' => 'prefix __POSITIVE_PROMPT__ suffix',
+                ],
+                'class_type' => 'TextNode',
+            ],
+        ]));
+
+        $effect->update([
+            'comfyui_workflow_path' => $workflowPath,
+        ]);
+
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+            'input_payload' => [
+                'positive_prompt' => 'updated positive',
+                'negative_prompt' => 'updated negative',
+            ],
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $jobId = $response->json('data.id');
+        $this->assertNotNull($jobId);
+
+        $job = $this->fetchTenantJob($tenant->id, $jobId);
+        $payloadRaw = $job['input_payload'] ?? null;
+        $inputPayload = is_string($payloadRaw) ? json_decode($payloadRaw, true) : $payloadRaw;
+        $this->assertIsArray($inputPayload);
+
+        $workflow = $inputPayload['workflow'] ?? null;
+        $this->assertIsArray($workflow);
+
+        $nodeOneInputs = $workflow['1']['inputs'] ?? null;
+        $this->assertIsArray($nodeOneInputs);
+        $this->assertSame('updated positive', $nodeOneInputs['prompt'] ?? null);
+        $this->assertSame('updated negative', $nodeOneInputs['negative_prompt'] ?? null);
+
+        $nodeTwoInputs = $workflow['2']['inputs'] ?? null;
+        $this->assertIsArray($nodeTwoInputs);
+        $this->assertSame('prefix updated positive suffix', $nodeTwoInputs['text'] ?? null);
+    }
+
     public function test_ai_job_submission_fails_when_tokens_insufficient(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();

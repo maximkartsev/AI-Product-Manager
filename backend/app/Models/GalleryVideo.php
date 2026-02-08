@@ -19,6 +19,7 @@ class GalleryVideo extends CentralModel
         'title',
         'is_public',
         'tags',
+        'input_payload',
         'processed_file_url',
         'thumbnail_url',
     ];
@@ -29,6 +30,7 @@ class GalleryVideo extends CentralModel
         'effect_id' => 'integer',
         'is_public' => 'boolean',
         'tags' => 'array',
+        'input_payload' => 'array',
     ];
 
     public function effect(): BelongsTo

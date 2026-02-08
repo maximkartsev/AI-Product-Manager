@@ -17,6 +17,9 @@ use Illuminate\Database\QueryException;
 
 class AiJobController extends BaseController
 {
+    private const POSITIVE_PROMPT_PLACEHOLDER = '__POSITIVE_PROMPT__';
+    private const NEGATIVE_PROMPT_PLACEHOLDER = '__NEGATIVE_PROMPT__';
+
     public function store(Request $request, TokenLedgerService $ledger): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -171,11 +174,34 @@ class AiJobController extends BaseController
             throw new \RuntimeException('Workflow JSON is invalid or empty.');
         }
 
-        // TODO: Read positive_prompt and negative_prompt from request input_payload.
-        // After loading the workflow, scan workflow nodes and override existing input keys:
-        // - If node inputs contains prompt (or text), replace with positive prompt.
-        // - If node inputs contains negative_prompt, replace with negative prompt.
-        // Keep behavior safe: only overwrite keys that already exist in inputs.
+        $positivePrompt = $this->normalizePrompt(data_get($inputPayload, 'positive_prompt'));
+        $negativePrompt = $this->normalizePrompt(data_get($inputPayload, 'negative_prompt'));
+        $workflowSerialized = json_encode($inputPayload['workflow']);
+        $hasPositivePlaceholder = is_string($workflowSerialized)
+            && str_contains($workflowSerialized, self::POSITIVE_PROMPT_PLACEHOLDER);
+        $hasNegativePlaceholder = is_string($workflowSerialized)
+            && str_contains($workflowSerialized, self::NEGATIVE_PROMPT_PLACEHOLDER);
+
+        if ($hasPositivePlaceholder || $hasNegativePlaceholder) {
+            // Placeholder-style prompt injection (like __INPUT_PATH__):
+            // - Effect workflow contains __POSITIVE_PROMPT__ / __NEGATIVE_PROMPT__
+            // - We replace them with user-provided prompts (or empty string if unset).
+            $inputPayload['workflow'] = $this->replacePromptPlaceholdersInValue(
+                $inputPayload['workflow'],
+                self::POSITIVE_PROMPT_PLACEHOLDER,
+                self::NEGATIVE_PROMPT_PLACEHOLDER,
+                $positivePrompt ?? '',
+                $negativePrompt ?? ''
+            );
+        } elseif ($positivePrompt || $negativePrompt) {
+            // Backward compatibility: if no placeholders exist, fall back to the
+            // previous behavior that overrides known prompt keys when present.
+            $inputPayload['workflow'] = $this->overrideWorkflowPrompts(
+                $inputPayload['workflow'],
+                $positivePrompt,
+                $negativePrompt
+            );
+        }
 
         $inputPayload['input_path_placeholder'] = $inputPayload['input_path_placeholder']
             ?? ($effect->comfyui_input_path_placeholder ?: '__INPUT_PATH__');
@@ -198,6 +224,88 @@ class AiJobController extends BaseController
         }
 
         return $inputPayload;
+    }
+
+    private function normalizePrompt(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $trimmed = trim($value);
+        return $trimmed !== '' ? $trimmed : null;
+    }
+
+    private function replacePromptPlaceholdersInValue(
+        mixed $value,
+        string $positivePlaceholder,
+        string $negativePlaceholder,
+        string $positivePrompt,
+        string $negativePrompt
+    ): mixed
+    {
+        if (is_string($value)) {
+            if ($positivePlaceholder !== '') {
+                $value = str_replace($positivePlaceholder, $positivePrompt, $value);
+            }
+            if ($negativePlaceholder !== '') {
+                $value = str_replace($negativePlaceholder, $negativePrompt, $value);
+            }
+            return $value;
+        }
+
+        if (is_array($value)) {
+            foreach ($value as $key => $nested) {
+                $value[$key] = $this->replacePromptPlaceholdersInValue(
+                    $nested,
+                    $positivePlaceholder,
+                    $negativePlaceholder,
+                    $positivePrompt,
+                    $negativePrompt
+                );
+            }
+        }
+
+        return $value;
+    }
+
+    private function overrideWorkflowPrompts(array $workflow, ?string $positivePrompt, ?string $negativePrompt): array
+    {
+        if (!$positivePrompt && !$negativePrompt) {
+            return $workflow;
+        }
+
+        foreach ($workflow as $nodeId => $node) {
+            if (!is_array($node)) {
+                continue;
+            }
+            $inputs = $node['inputs'] ?? null;
+            if (!is_array($inputs)) {
+                continue;
+            }
+
+            $updated = false;
+            if ($positivePrompt) {
+                if (array_key_exists('prompt', $inputs)) {
+                    $inputs['prompt'] = $positivePrompt;
+                    $updated = true;
+                }
+                if (array_key_exists('text', $inputs)) {
+                    $inputs['text'] = $positivePrompt;
+                    $updated = true;
+                }
+            }
+            if ($negativePrompt && array_key_exists('negative_prompt', $inputs)) {
+                $inputs['negative_prompt'] = $negativePrompt;
+                $updated = true;
+            }
+
+            if ($updated) {
+                $node['inputs'] = $inputs;
+                $workflow[$nodeId] = $node;
+            }
+        }
+
+        return $workflow;
     }
 
     private function loadWorkflowFromEffect(Effect $effect): array

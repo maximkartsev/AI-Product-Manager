@@ -7,7 +7,8 @@ import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import { Textarea } from "@/components/ui/textarea";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Info, SlidersHorizontal } from "lucide-react";
 
 type LoadState =
@@ -131,8 +132,10 @@ function PlansModal({
 }
 
 export default function EffectDetailClient({ slug }: { slug: string }) {
+  const searchParams = useSearchParams();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [reload, setReload] = useState(0);
+  const autoUploadRef = useRef(false);
 
   const [plansOpen, setPlansOpen] = useState(false);
   const [walletState, setWalletState] = useState<WalletState>({ status: "idle" });
@@ -149,7 +152,6 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
     clearUploadError,
   } = useEffectUploadStart({
     slug,
-    autoUpload: true,
   });
 
   useEffect(() => {
@@ -232,6 +234,16 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
   const disableUpload: boolean = false;
   const isConfigurable = state.status === "success" && state.data.type === "configurable";
+
+  useEffect(() => {
+    if (autoUploadRef.current) return;
+    if (searchParams.get("upload") !== "1") return;
+    if (state.status !== "success") return;
+    if (isConfigurable) return;
+    autoUploadRef.current = true;
+    clearUploadError();
+    startUpload(slug);
+  }, [clearUploadError, isConfigurable, searchParams, slug, startUpload, state.status]);
 
   const handleStartUpload = () => {
     clearUploadError();

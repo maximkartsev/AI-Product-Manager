@@ -58,10 +58,17 @@ export type UploadInitData = {
   expires_in: number;
 };
 
+export type VideoInputPayload = {
+  positive_prompt?: string;
+  negative_prompt?: string;
+  [key: string]: unknown;
+};
+
 export type VideoCreateRequest = {
   effect_id: number;
   original_file_id: number;
   title?: string | null;
+  input_payload?: VideoInputPayload | null;
 };
 
 export type VideoData = {
@@ -74,6 +81,7 @@ export type VideoData = {
   title?: string | null;
   is_public?: boolean;
   processing_details?: Record<string, unknown> | null;
+  input_payload?: VideoInputPayload | null;
   expires_at?: string | null;
   processed_file_url?: string | null;
   error?: string | null;
@@ -110,6 +118,7 @@ export type GalleryVideo = {
   id: number;
   title: string;
   tags?: string[] | null;
+  input_payload?: VideoInputPayload | null;
   created_at?: string | null;
   processed_file_url?: string | null;
   thumbnail_url?: string | null;

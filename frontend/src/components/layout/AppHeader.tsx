@@ -113,7 +113,7 @@ export default function AppHeader() {
                 aria-label="Go back"
               >
                 <span aria-hidden="true">←</span>
-                <span className="hidden sm:inline">&nbsp;&nbsp;Back</span>
+                <span className="hidden sm:inline">Back</span>
               </button>
             ) : null}
             <Link

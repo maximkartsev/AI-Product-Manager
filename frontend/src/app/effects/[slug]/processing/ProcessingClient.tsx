@@ -6,6 +6,7 @@ import {
   createVideo,
   getEffect,
   getVideo,
+  getWallet,
   initVideoUpload,
   submitAiJob,
   type ApiEffect,
@@ -20,6 +21,7 @@ import { AlertTriangle, Film, Layers, Sparkles, UploadCloud, Wand2 } from "lucid
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import PlansModal from "@/components/billing/PlansModal";
 
 type LoadState =
   | { status: "loading" }
@@ -174,6 +176,9 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const [videoState, setVideoState] = useState<VideoPollState>({ status: "idle" });
   const [pollNotice, setPollNotice] = useState<string | null>(null);
   const [pollNonce, setPollNonce] = useState(0);
+  const [plansOpen, setPlansOpen] = useState(false);
+  const [requiredTokens, setRequiredTokens] = useState<number | null>(null);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "loading" | "uploading" | "error" | "done">("idle");
@@ -181,11 +186,32 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadAttempt, setUploadAttempt] = useState(0);
   const uploadInFlightRef = useRef(false);
+  const hasTokenShortage = requiredTokens !== null;
 
   // UI simulation state (local per page instance)
   const [doneSteps, setDoneSteps] = useState(0);
   const [progressValue, setProgressValue] = useState(8);
   const processingStartMsRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!token) {
+      setWalletBalance(null);
+      return;
+    }
+    let cancelled = false;
+    getWallet()
+      .then((data) => {
+        if (cancelled) return;
+        setWalletBalance(data.balance);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWalletBalance(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,6 +220,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
       setLocalPreviewReady(false);
       setUploadStatus("loading");
       setUploadError(null);
+      setRequiredTokens(null);
 
       void (async () => {
         const file = await loadPendingUpload(uploadId);
@@ -420,7 +447,17 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         router.replace(`/effects/${encodeURIComponent(slug)}/processing?videoId=${video.id}`);
       } catch (err) {
         if (err instanceof ApiError) {
-          setUploadError(formatUploadError(err));
+          const message = formatUploadError(err);
+          setUploadError(message);
+          const payload = err.data as { data?: unknown } | undefined;
+          const data =
+            payload && typeof payload === "object" && "data" in payload
+              ? (payload.data as Record<string, unknown>)
+              : null;
+          const required = data?.required_tokens;
+          if (typeof required === "number") {
+            setRequiredTokens(required);
+          }
         } else if (err instanceof Error) {
           setUploadError(err.message || "Upload failed.");
         } else {
@@ -717,6 +754,15 @@ export default function ProcessingClient({ slug }: { slug: string }) {
             <div className="mt-1 text-xs text-red-100/75">
               {uploadError ?? "We couldn't upload your video. Please try again."}
             </div>
+            {hasTokenShortage ? (
+              <button
+                type="button"
+                onClick={() => setPlansOpen(true)}
+                className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400"
+              >
+                Top up tokens
+              </button>
+            ) : null}
             <div className="mt-4 flex flex-col gap-2">
               <button
                 type="button"
@@ -837,6 +883,15 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           setAuthOpen(false);
           setPollNonce((v) => v + 1);
         }}
+      />
+      <PlansModal
+        open={plansOpen}
+        onClose={() => setPlansOpen(false)}
+        requiredTokens={
+          requiredTokens ??
+          Math.max(0, Math.ceil(Number(effectState.status === "success" ? effectState.data.credits_cost : 0)))
+        }
+        balance={walletBalance}
       />
     </div>
   );

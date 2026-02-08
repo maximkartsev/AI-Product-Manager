@@ -18,6 +18,7 @@ class GalleryVideoResource extends JsonResource
     public function toArray($request)
     {
         $effect = $this->relationLoaded('effect') ? $this->effect : null;
+        $category = $effect && $effect->relationLoaded('category') ? $effect->category : null;
 
         return [
             'id' => $this->id,
@@ -33,6 +34,12 @@ class GalleryVideoResource extends JsonResource
                 'description' => $effect->description,
                 'type' => $effect->type,
                 'is_premium' => $effect->is_premium,
+                'category' => $category ? [
+                    'id' => $category->id,
+                    'slug' => $category->slug,
+                    'name' => $category->name,
+                    'description' => $category->description,
+                ] : null,
             ] : null,
         ];
     }

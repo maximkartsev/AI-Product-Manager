@@ -98,6 +98,12 @@ export type GalleryEffect = {
   description?: string | null;
   type?: string | null;
   is_premium?: boolean;
+  category?: {
+    id: number;
+    slug: string;
+    name: string;
+    description?: string | null;
+  } | null;
 };
 
 export type GalleryVideo = {

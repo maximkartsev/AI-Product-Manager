@@ -29,6 +29,7 @@ export type GalleryItem = {
   thumbnail_url?: string | null;
   processed_file_url?: string | null;
   effect_slug?: string | null;
+  effect_type?: string | null;
 };
 
 export type Feature = {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type UIEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -10,8 +10,9 @@ import {
   type ApiCategory,
   type ApiEffect,
 } from "@/lib/api";
-import VideoPlayer from "@/components/video/VideoPlayer";
-import { IconPlay } from "@/app/_components/landing/icons";
+import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
+import { EffectCard, EffectCardSkeleton } from "@/components/cards/EffectCard";
+import { EFFECT_GRADIENTS } from "@/lib/gradients";
 
 type PopularState =
   | { status: "loading" }
@@ -33,45 +34,6 @@ type EffectsFeedClientProps = {
   showPopularSeeAll?: boolean;
 };
 
-const EFFECT_GRADIENTS = [
-  { from: "from-fuchsia-500", to: "to-cyan-400" },
-  { from: "from-amber-400", to: "to-pink-500" },
-  { from: "from-sky-400", to: "to-indigo-500" },
-  { from: "from-lime-400", to: "to-emerald-500" },
-  { from: "from-cyan-400", to: "to-blue-500" },
-  { from: "from-fuchsia-500", to: "to-violet-500" },
-] as const;
-
-function gradientClass(from: string, to: string) {
-  return `${from} ${to}`;
-}
-
-function hashString(value: string): number {
-  let h = 0;
-  for (let i = 0; i < value.length; i++) {
-    h = (h * 31 + value.charCodeAt(i)) | 0;
-  }
-  return h;
-}
-
-function gradientForSlug(slug: string) {
-  const idx = Math.abs(hashString(slug)) % EFFECT_GRADIENTS.length;
-  return EFFECT_GRADIENTS[idx]!;
-}
-
-function formatUses(effect: ApiEffect): string | null {
-  const rawScore = effect.popularity_score ?? 0;
-  if (!Number.isFinite(rawScore) || rawScore <= 0) {
-    return null;
-  }
-  const count = Math.max(0, Math.round(rawScore * 100));
-  if (count >= 1000) {
-    const value = count >= 10000 ? (count / 1000).toFixed(0) : (count / 1000).toFixed(1);
-    return `${value}K uses`;
-  }
-  return `${count} uses`;
-}
-
 function categoryEmoji(slug: string): string | null {
   const key = slug.toLowerCase();
   if (["popular", "trending"].includes(key)) return "🔥";
@@ -84,70 +46,6 @@ function categoryEmoji(slug: string): string | null {
   return "⭐";
 }
 
-function EffectCard({ effect, onTry }: { effect: ApiEffect; onTry: () => void }) {
-  const gradient = gradientForSlug(effect.slug);
-  const g = gradientClass(gradient.from, gradient.to);
-  const usesLabel = formatUses(effect) ?? (effect.is_new ? "New" : "Try it");
-
-  return (
-    <div className="snap-start">
-      <button type="button" onClick={onTry} className="w-32 text-left sm:w-36">
-        <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.25)]">
-          <div className={`relative aspect-[3/4] bg-gradient-to-br ${g}`}>
-            {effect.thumbnail_url ? (
-              <img className="absolute inset-0 h-full w-full object-cover" src={effect.thumbnail_url} alt={effect.name} />
-            ) : effect.preview_video_url ? (
-              <VideoPlayer
-                className="absolute inset-0 h-full w-full object-cover"
-                src={effect.preview_video_url}
-                autoPlay
-                loop
-                muted
-                playsInline
-                preload="metadata"
-              />
-            ) : null}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/15 to-black/60" />
-            <div className="absolute inset-0 grid place-items-center text-white/90">
-              <span className="grid h-10 w-10 place-items-center rounded-full border border-white/25 bg-black/35 backdrop-blur-sm">
-                <IconPlay className="h-4 w-4 translate-x-0.5" />
-              </span>
-            </div>
-            {effect.is_premium ? (
-              <span className="absolute left-2 top-2 inline-flex items-center rounded-full border border-white/20 bg-black/50 px-2 py-0.5 text-[9px] font-semibold text-white/90">
-                Premium
-              </span>
-            ) : null}
-          </div>
-        </div>
-        <div className="mt-2">
-          <div className="truncate text-xs font-semibold text-white">{effect.name}</div>
-          <div className="text-[10px] text-white/50">{usesLabel}</div>
-        </div>
-      </button>
-    </div>
-  );
-}
-
-function EffectCardSkeleton({ gradient }: { gradient: { from: string; to: string } }) {
-  const g = gradientClass(gradient.from, gradient.to);
-  return (
-    <div className="snap-start animate-pulse">
-      <div className="w-32 sm:w-36">
-        <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.25)]">
-          <div className={`relative aspect-[3/4] bg-gradient-to-br ${g}`}>
-            <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
-          </div>
-        </div>
-        <div className="mt-2">
-          <div className="h-3 w-24 rounded bg-white/10" />
-          <div className="mt-1 h-3 w-16 rounded bg-white/5" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function CategoryRow({
   row,
   onTry,
@@ -157,19 +55,6 @@ function CategoryRow({
   onTry: (effect: ApiEffect) => void;
   onLoadMore: (slug: string) => void;
 }) {
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-
-  const canLoadMore = row.page < row.totalPages && !row.loadingMore && !row.loading;
-
-  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
-    if (!canLoadMore) return;
-    const target = event.currentTarget;
-    const threshold = 32;
-    if (target.scrollLeft + target.clientWidth >= target.scrollWidth - threshold) {
-      onLoadMore(row.category.slug);
-    }
-  };
-
   return (
     <section className="mt-8" id={row.category.slug}>
       <div className="flex items-center justify-between gap-6">
@@ -190,20 +75,20 @@ function CategoryRow({
         </Link>
       </div>
 
-      <div
-        ref={scrollerRef}
-        onScroll={handleScroll}
-        className="mt-3 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4"
+      <HorizontalCarousel
+        className="mt-3 -mx-4"
+        showRightFade
+        onReachEnd={() => onLoadMore(row.category.slug)}
       >
-        <div className="flex gap-3">
-          {row.effects.length === 0 && row.loading
-            ? EFFECT_GRADIENTS.map((g, idx) => <EffectCardSkeleton key={idx} gradient={g} />)
-            : row.effects.map((effect) => (
-                <EffectCard key={effect.slug} effect={effect} onTry={() => onTry(effect)} />
-              ))}
-          {row.loadingMore ? <EffectCardSkeleton gradient={EFFECT_GRADIENTS[0]} /> : null}
-        </div>
-      </div>
+        {row.effects.length === 0 && row.loading
+          ? EFFECT_GRADIENTS.map((g, idx) => (
+              <EffectCardSkeleton key={idx} variant="effectsFeed" gradient={g} />
+            ))
+          : row.effects.map((effect) => (
+              <EffectCard key={effect.slug} variant="effectsFeed" effect={effect} onTry={() => onTry(effect)} />
+            ))}
+        {row.loadingMore ? <EffectCardSkeleton variant="effectsFeed" gradient={EFFECT_GRADIENTS[0]} /> : null}
+      </HorizontalCarousel>
 
       {row.effects.length > 1 ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
     </section>
@@ -371,13 +256,11 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
               <p className="mt-1 text-xs text-white/50">Loading the most popular picks...</p>
             </div>
           </div>
-          <div className="mt-4 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4">
-            <div className="flex gap-3">
-              {EFFECT_GRADIENTS.map((g, idx) => (
-                <EffectCardSkeleton key={idx} gradient={g} />
-              ))}
-            </div>
-          </div>
+          <HorizontalCarousel className="mt-4 -mx-4">
+            {EFFECT_GRADIENTS.map((g, idx) => (
+              <EffectCardSkeleton key={idx} variant="effectsFeed" gradient={g} />
+            ))}
+          </HorizontalCarousel>
         </section>
       ) : null}
 
@@ -424,13 +307,11 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
               </Link>
             ) : null}
           </div>
-          <div className="mt-3 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4">
-            <div className="flex gap-3">
-              {popularState.data.map((effect) => (
-                <EffectCard key={effect.slug} effect={effect} onTry={() => handleOpenEffect(effect)} />
-              ))}
-            </div>
-          </div>
+          <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
+            {popularState.data.map((effect) => (
+              <EffectCard key={effect.slug} variant="effectsFeed" effect={effect} onTry={() => handleOpenEffect(effect)} />
+            ))}
+          </HorizontalCarousel>
           {popularState.data.length > 1 ? (
             <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
           ) : null}

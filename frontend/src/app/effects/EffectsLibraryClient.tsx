@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { IconSparkles } from "@/app/_components/landing/icons";
 import { brand } from "@/app/_components/landing/landingData";
 import EffectsFeedClient from "./EffectsFeedClient";
+import EffectsGridClient from "./EffectsGridClient";
+import SegmentedToggle from "@/components/ui/SegmentedToggle";
 
 export default function EffectsLibraryClient() {
+  const [viewMode, setViewMode] = useState<"grid" | "category">("category");
+
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl">
@@ -30,7 +35,19 @@ export default function EffectsLibraryClient() {
           </p>
         </section>
 
-        <EffectsFeedClient />
+        <div className="mt-6 flex items-center justify-between gap-3">
+          <div className="text-xs text-white/55">Browse</div>
+          <SegmentedToggle
+            value={viewMode}
+            onChange={setViewMode}
+            options={[
+              { id: "category", label: "By category" },
+              { id: "grid", label: "Grid" },
+            ]}
+          />
+        </div>
+
+        {viewMode === "category" ? <EffectsFeedClient /> : <EffectsGridClient />}
       </div>
     </div>
   );

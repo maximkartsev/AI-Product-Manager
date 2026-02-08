@@ -16,12 +16,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import AuthModal from "./AuthModal";
 import { brand, features, hero, trustBadges, type Effect, type GalleryItem } from "./landingData";
-import { IconArrowRight, IconBolt, IconGallery, IconPlay, IconSparkles, IconWand } from "./icons";
-import { SlidersHorizontal } from "lucide-react";
-
-function gradientClass(from: string, to: string) {
-  return `${from} ${to}`;
-}
+import { IconArrowRight, IconBolt, IconGallery, IconSparkles, IconWand } from "./icons";
+import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
+import { EffectCard, EffectCardSkeleton } from "@/components/cards/EffectCard";
+import { PublicGalleryCard, PublicGalleryCardSkeleton } from "@/components/cards/PublicGalleryCard";
+import { EFFECT_GRADIENTS, gradientClass, gradientForSlug } from "@/lib/gradients";
 
 type LandingEffect = Effect & { slug: string; preview_video_url?: string | null };
 
@@ -37,27 +36,6 @@ type PublicGalleryState =
   | { status: "empty" }
   | { status: "error"; message: string };
 
-const EFFECT_GRADIENTS = [
-  { from: "from-fuchsia-500", to: "to-cyan-400" },
-  { from: "from-amber-400", to: "to-pink-500" },
-  { from: "from-sky-400", to: "to-indigo-500" },
-  { from: "from-lime-400", to: "to-emerald-500" },
-  { from: "from-cyan-400", to: "to-blue-500" },
-  { from: "from-fuchsia-500", to: "to-violet-500" },
-] as const;
-
-function hashString(value: string): number {
-  let h = 0;
-  for (let i = 0; i < value.length; i++) {
-    h = (h * 31 + value.charCodeAt(i)) | 0;
-  }
-  return h;
-}
-
-function gradientForSlug(slug: string) {
-  const idx = Math.abs(hashString(slug)) % EFFECT_GRADIENTS.length;
-  return EFFECT_GRADIENTS[idx]!;
-}
 
 function taglineForDescription(description?: string | null): string {
   const d = (description ?? "").trim();
@@ -97,6 +75,7 @@ function toLandingGalleryItem(item: GalleryVideo): GalleryItem {
     thumbnail_url: item.thumbnail_url ?? null,
     processed_file_url: item.processed_file_url ?? null,
     effect_slug: item.effect?.slug ?? null,
+    effect_type: item.effect?.type ?? null,
   };
 }
 
@@ -105,30 +84,6 @@ function pickFeaturedEffect(effects: LandingEffect[]): LandingEffect | null {
   // TODO: Replace with usage-frequency ranking once available.
   const idx = Math.floor(Math.random() * effects.length);
   return effects[idx] ?? null;
-}
-
-function EffectCardSkeleton({ gradient }: { gradient: { from: string; to: string } }) {
-  const g = gradientClass(gradient.from, gradient.to);
-
-  return (
-    <div className="snap-start animate-pulse">
-      <div className="w-44 overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-        <div className={`relative aspect-[9/12] bg-gradient-to-br ${g}`}>
-          <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
-          <div className="absolute bottom-3 left-3 right-3">
-            <div className="h-3 w-24 rounded bg-white/15" />
-            <div className="mt-2 h-3 w-32 rounded bg-white/10" />
-          </div>
-        </div>
-        <div className="p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="h-3 w-20 rounded bg-white/10" />
-            <div className="h-7 w-16 rounded-full bg-white/15" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function AvatarStack() {
@@ -177,145 +132,6 @@ function PillButton({
     <button type="button" aria-label={ariaLabel} className={`${base} ${styles}`} onClick={onClick}>
       {children}
     </button>
-  );
-}
-
-function EffectCard({ effect, onTry }: { effect: Effect; onTry: () => void }) {
-  const g = gradientClass(effect.gradient.from, effect.gradient.to);
-
-  return (
-    <div className="snap-start">
-      <div className="w-44 overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-        <div className={`relative aspect-[9/12] bg-gradient-to-br ${g}`}>
-          {effect.thumbnail_url ? (
-            <img
-              className="absolute inset-0 h-full w-full object-cover"
-              src={effect.thumbnail_url}
-              alt={effect.name}
-            />
-          ) : null}
-          {effect.is_premium ? (
-            <span className="absolute left-3 top-3 inline-flex items-center rounded-full border border-white/20 bg-black/45 px-2.5 py-1 text-[10px] font-semibold text-white/90 backdrop-blur-sm">
-              Premium
-            </span>
-          ) : null}
-          {effect.type === "configurable" ? (
-            <span className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white/85 backdrop-blur-sm">
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-            </span>
-          ) : null}
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_40%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_60%)]" />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
-
-          <button
-            type="button"
-            aria-label={`Preview ${effect.name}`}
-            className="absolute inset-0 grid place-items-center text-white/90"
-            onClick={onTry}
-          >
-            <span className="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-black/35 backdrop-blur-sm shadow-lg">
-              <IconPlay className="h-6 w-6 translate-x-0.5" />
-            </span>
-          </button>
-
-          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-white">{effect.name}</div>
-              <div className="truncate text-xs text-white/75">{effect.tagline}</div>
-            </div>
-            {!effect.is_premium ? (
-              <div className="shrink-0 rounded-full border border-white/15 bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/80">
-                {effect.stats.uses}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="p-3">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={onTry}
-              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-            >
-              Try This
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GalleryCard({ item, onUse }: { item: GalleryItem; onUse: () => void }) {
-  const g = gradientClass(item.gradient.from, item.gradient.to);
-  const showPlayOverlay = !item.processed_file_url || Boolean(item.thumbnail_url);
-  return (
-    <button
-      type="button"
-      onClick={onUse}
-      className="group overflow-hidden rounded-3xl border border-white/10 bg-white/5 text-left shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-      aria-label={`Open public gallery item: ${item.title}`}
-    >
-      <div className={`relative aspect-[9/13] bg-gradient-to-br ${g}`}>
-        {item.thumbnail_url ? (
-          <img className="absolute inset-0 h-full w-full object-cover" src={item.thumbnail_url} alt={item.title} />
-        ) : item.processed_file_url ? (
-          <VideoPlayer
-            className="absolute inset-0 h-full w-full object-cover"
-            src={item.processed_file_url}
-            playsInline
-            autoPlay
-            loop
-            muted
-            preload="metadata"
-          />
-        ) : null}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.28),transparent_45%),radial-gradient(circle_at_70%_70%,rgba(0,0,0,0.35),transparent_65%)]" />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/75" />
-
-        {showPlayOverlay ? (
-          <div className="absolute inset-0 grid place-items-center">
-            <span className="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
-              <IconPlay className="h-6 w-6 translate-x-0.5 text-white/90" />
-            </span>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="p-3">
-        <div className="truncate text-sm font-semibold text-white">{item.title}</div>
-        <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-white/60">
-          <span className="truncate">{item.effect}</span>
-          {item.stats?.likes ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-white/65">
-              <span aria-hidden="true">♥</span>
-              <span>{item.stats.likes}</span>
-            </span>
-          ) : null}
-        </div>
-        {item.stats?.views ? <div className="mt-0.5 text-[11px] text-white/45">{item.stats.views}</div> : null}
-      </div>
-    </button>
-  );
-}
-
-function GalleryCardSkeleton({ gradient }: { gradient: { from: string; to: string } }) {
-  const g = gradientClass(gradient.from, gradient.to);
-  return (
-    <div className="animate-pulse overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-      <div className={`relative aspect-[9/13] bg-gradient-to-br ${g}`}>
-        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
-        <div className="absolute bottom-3 left-3 right-3">
-          <div className="h-3 w-24 rounded bg-white/15" />
-          <div className="mt-2 h-3 w-16 rounded bg-white/10" />
-        </div>
-      </div>
-      <div className="p-3">
-        <div className="h-3 w-20 rounded bg-white/10" />
-        <div className="mt-2 h-3 w-24 rounded bg-white/5" />
-      </div>
-    </div>
   );
 }
 
@@ -406,6 +222,19 @@ export default function LandingHome() {
     }
     clearUploadError();
     startUpload(featuredEffect.slug);
+  };
+
+  const handleGalleryTry = (item: GalleryItem) => {
+    if (item.effect_type === "configurable") {
+      router.push(`/explore/${encodeURIComponent(item.id)}`);
+      return;
+    }
+    if (item.effect_slug) {
+      clearUploadError();
+      startUpload(item.effect_slug);
+      return;
+    }
+    router.push(`/explore/${encodeURIComponent(item.id)}`);
   };
 
   useEffect(() => {
@@ -590,7 +419,7 @@ export default function LandingHome() {
                   </div>
                 </div>
 
-                <div className="absolute bottom-4 left-4 w-[calc(100%-2rem)] max-w-[340px]">
+                <div className="absolute bottom-4 left-1/2 w-[calc(100%-2rem)] max-w-[340px] -translate-x-1/2">
                   <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-black/45 px-3 py-2 backdrop-blur-sm">
                     <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10">
                       <IconSparkles className="h-4 w-4 text-fuchsia-200" />
@@ -666,15 +495,20 @@ export default function LandingHome() {
                 No effects yet.
               </div>
             ) : (
-              <div className="mt-4 -mx-4 overflow-x-auto px-4 pb-2 no-scrollbar snap-x snap-mandatory scroll-px-4">
-                <div className="flex gap-3">
-                  {effectsState.status === "success"
-                    ? effectsState.data.map((effect) => (
-                        <EffectCard key={effect.slug} effect={effect} onTry={() => handleEffectTry(effect)} />
-                      ))
-                    : EFFECT_GRADIENTS.slice(0, 4).map((g, idx) => <EffectCardSkeleton key={idx} gradient={g} />)}
-                </div>
-              </div>
+              <HorizontalCarousel className="mt-4 -mx-4" showRightFade>
+                {effectsState.status === "success"
+                  ? effectsState.data.map((effect) => (
+                      <EffectCard
+                        key={effect.slug}
+                        variant="landingPopular"
+                        effect={effect}
+                        onTry={() => handleEffectTry(effect)}
+                      />
+                    ))
+                  : EFFECT_GRADIENTS.slice(0, 4).map((g, idx) => (
+                      <EffectCardSkeleton key={idx} variant="landingPopular" gradient={g} />
+                    ))}
+              </HorizontalCarousel>
             )}
 
             {effectsState.status === "success" && effectsState.data.length > 1 ? (
@@ -719,9 +553,17 @@ export default function LandingHome() {
               <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                 {galleryState.status === "success"
                   ? galleryState.data.map((item) => (
-                      <GalleryCard key={item.id} item={item} onUse={() => router.push(`/explore/${item.id}`)} />
+                      <PublicGalleryCard
+                        key={item.id}
+                        variant="landing"
+                        item={item}
+                        onOpen={() => router.push(`/explore/${encodeURIComponent(item.id)}`)}
+                        onTry={() => handleGalleryTry(item)}
+                      />
                     ))
-                  : EFFECT_GRADIENTS.slice(0, 4).map((g, idx) => <GalleryCardSkeleton key={idx} gradient={g} />)}
+                  : EFFECT_GRADIENTS.slice(0, 4).map((g, idx) => (
+                      <PublicGalleryCardSkeleton key={idx} variant="landing" gradient={g} />
+                    ))}
               </div>
             )}
 

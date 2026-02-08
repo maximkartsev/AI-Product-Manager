@@ -1,22 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthModal from "@/app/_components/landing/AuthModal";
 import { ApiError, getPublicGallery, type GalleryIndexData, type GalleryVideo } from "@/lib/api";
-import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import { cn } from "@/lib/utils";
 import { IconSparkles } from "@/app/_components/landing/icons";
-import { ChevronLeft, Play, Search, SlidersHorizontal } from "lucide-react";
-
-const TAG_FILTERS = [
-  { id: "all", label: "All", tag: null },
-  { id: "style", label: "Style", tag: "style" },
-  { id: "weather", label: "Weather", tag: "weather" },
-  { id: "background", label: "Background", tag: "background" },
-];
+import { ChevronLeft, Search, SlidersHorizontal } from "lucide-react";
+import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
+import SegmentedToggle from "@/components/ui/SegmentedToggle";
+import { groupByOrdered } from "@/lib/grouping";
+import { PublicGalleryCard } from "@/components/cards/PublicGalleryCard";
 
 const SORT_OPTIONS = [
   { id: "trending", label: "Trending" },
@@ -30,95 +26,15 @@ type GalleryState =
   | { status: "success"; items: GalleryVideo[]; page: number; totalPages: number }
   | { status: "error"; message: string };
 
-function GalleryCard({
-  item,
-  onOpen,
-  onTry,
-}: {
-  item: GalleryVideo;
-  onOpen: () => void;
-  onTry: () => void;
-}) {
-  const title = item.title?.trim() || "Untitled";
-  const effectName = item.effect?.name ?? "AI Effect";
-  const showPlayOverlay = !item.processed_file_url || Boolean(item.thumbnail_url);
-  const isConfigurable = item.effect?.type === "configurable";
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-      className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 text-left shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-      aria-label={`Open public gallery item: ${title}`}
-    >
-      <div className="relative aspect-[9/13] w-full">
-        {item.thumbnail_url ? (
-          <img className="absolute inset-0 h-full w-full object-cover" src={item.thumbnail_url} alt={title} />
-        ) : item.processed_file_url ? (
-          <VideoPlayer
-            className="absolute inset-0 h-full w-full object-cover"
-            src={item.processed_file_url}
-            playsInline
-            autoPlay
-            loop
-            muted
-            preload="metadata"
-          />
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/40 via-violet-500/30 to-cyan-400/30" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/80" />
-
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onTry();
-          }}
-          className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/45 px-2.5 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition hover:bg-black/60"
-        >
-          <span className="grid h-4 w-4 place-items-center rounded-full bg-white/15 text-fuchsia-100">
-            <IconSparkles className="h-3 w-3" />
-          </span>
-          Try This
-        </button>
-        {isConfigurable ? (
-          <span className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white/85 backdrop-blur-sm">
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-          </span>
-        ) : null}
-
-        {showPlayOverlay ? (
-          <div className="absolute inset-0 grid place-items-center">
-            <span className="grid h-12 w-12 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
-              <Play className="h-5 w-5 translate-x-0.5 text-white/90" />
-            </span>
-          </div>
-        ) : null}
-
-        <div className="absolute bottom-3 left-3 right-3">
-          <div className="text-[11px] text-white/60">{effectName}</div>
-          <div className="mt-1 text-sm font-semibold text-white">{title}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
+type ViewMode = "grid" | "category";
 
 export default function ExploreClient() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [activeTag, setActiveTag] = useState("all");
   const [sortOpen, setSortOpen] = useState(false);
   const [sortId, setSortId] = useState("trending");
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [page, setPage] = useState(1);
   const [galleryState, setGalleryState] = useState<GalleryState>({ status: "idle" });
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -143,7 +59,7 @@ export default function ExploreClient() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, activeTag]);
+  }, [debouncedSearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,17 +72,6 @@ export default function ExploreClient() {
 
     void (async () => {
       try {
-        const filters =
-          activeTag === "all"
-            ? undefined
-            : [
-                {
-                  field: "tags",
-                  operator: "like",
-                  value: activeTag,
-                },
-              ];
-
         const order = sortId === "latest" ? "created_at:desc" : undefined;
 
         const data: GalleryIndexData = await getPublicGallery({
@@ -174,7 +79,6 @@ export default function ExploreClient() {
           perPage: 12,
           search: debouncedSearch || undefined,
           order,
-          filters,
         });
 
         if (cancelled) return;
@@ -194,14 +98,58 @@ export default function ExploreClient() {
     return () => {
       cancelled = true;
     };
-  }, [activeTag, debouncedSearch, page]);
+  }, [debouncedSearch, page, sortId]);
 
   const items = galleryState.status === "success" || galleryState.status === "loading" ? galleryState.items : [];
   const canLoadMore =
     (galleryState.status === "success" || galleryState.status === "loading") &&
     galleryState.page < galleryState.totalPages;
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   const activeSort = useMemo(() => SORT_OPTIONS.find((opt) => opt.id === sortId) ?? SORT_OPTIONS[0]!, [sortId]);
+  const grouped = useMemo(
+    () =>
+      groupByOrdered(
+        items,
+        (item) => `cat:${item.effect?.category?.slug ?? "other"}`,
+        (item) => item.effect?.category?.name ?? "Other",
+      ),
+    [items],
+  );
+
+  const handleOpenItem = (item: GalleryVideo) => {
+    router.push(`/explore/${item.id}`);
+  };
+
+  const handleTryItem = (item: GalleryVideo) => {
+    clearUploadError();
+    if (item.effect?.type === "configurable") {
+      router.push(`/explore/${item.id}`);
+      return;
+    }
+    if (item.effect?.slug) {
+      startUpload(item.effect.slug);
+      return;
+    }
+    router.push(`/explore/${item.id}`);
+  };
+
+  useEffect(() => {
+    if (!canLoadMore) return;
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (galleryState.status === "loading") return;
+        setPage((p) => p + 1);
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [canLoadMore, galleryState.status]);
 
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
@@ -274,27 +222,20 @@ export default function ExploreClient() {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search videos, effects, or tags..."
+            placeholder="Search videos or effects..."
             className="w-full bg-transparent text-xs text-white placeholder:text-white/40 focus:outline-none"
           />
         </div>
 
-        <div className="mt-4 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-          {TAG_FILTERS.map((filter) => (
-            <button
-              key={filter.id}
-              type="button"
-              onClick={() => setActiveTag(filter.id)}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-1.5 text-xs font-semibold transition",
-                activeTag === filter.id
-                  ? "bg-fuchsia-500 text-white"
-                  : "border border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
-              )}
-            >
-              {filter.label}
-            </button>
-          ))}
+        <div className="mt-4 flex items-center justify-end">
+          <SegmentedToggle
+            value={viewMode}
+            onChange={setViewMode}
+            options={[
+              { id: "grid", label: "Grid" },
+              { id: "category", label: "By category" },
+            ]}
+          />
         </div>
 
         <main className="mt-5">
@@ -313,43 +254,44 @@ export default function ExploreClient() {
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
               No public videos yet.
             </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-4">
+          ) : viewMode === "grid" ? (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {items.map((item) => (
-                <GalleryCard
+                <PublicGalleryCard
                   key={item.id}
+                  variant="explore"
                   item={item}
-                  onOpen={() => router.push(`/explore/${item.id}`)}
-                  onTry={() => {
-                    clearUploadError();
-                    if (item.effect?.type === "configurable") {
-                      router.push(`/explore/${item.id}`);
-                      return;
-                    }
-                    if (item.effect?.slug) {
-                      startUpload(item.effect.slug);
-                      return;
-                    }
-                    router.push(`/explore/${item.id}`);
-                  }}
+                  onOpen={() => handleOpenItem(item)}
+                  onTry={() => handleTryItem(item)}
                 />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {grouped.map((group) => (
+                <section key={group.key}>
+                  <div className="text-sm font-semibold text-white">{group.title}</div>
+                  <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
+                    {group.items.map((item) => (
+                      <div key={item.id} className="snap-start w-44 sm:w-52">
+                        <PublicGalleryCard
+                          item={item}
+                          variant="explore"
+                          onOpen={() => handleOpenItem(item)}
+                          onTry={() => handleTryItem(item)}
+                        />
+                      </div>
+                    ))}
+                  </HorizontalCarousel>
+                </section>
               ))}
             </div>
           )}
 
-          {canLoadMore ? (
-            <button
-              type="button"
-              onClick={() => setPage((p) => p + 1)}
-              className="mt-6 inline-flex h-11 w-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-xs font-semibold text-white/70 transition hover:bg-white/10"
-            >
-              Load more
-            </button>
-          ) : null}
-
           {galleryState.status === "loading" && items.length === 0 ? (
             <div className="mt-6 text-center text-xs text-white/50">Loading gallery…</div>
           ) : null}
+          <div ref={loadMoreRef} className="h-8" />
         </main>
       </div>
       <AuthModal open={authOpen} onClose={closeAuth} initialMode="signin" />

@@ -76,7 +76,7 @@ function CategoryRow({
       </div>
 
       <HorizontalCarousel
-        className="mt-3 -mx-4"
+        className="mt-3 -mx-4 lg:mx-0"
         showRightFade
         onReachEnd={() => onLoadMore(row.category.slug)}
       >
@@ -256,7 +256,7 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
               <p className="mt-1 text-xs text-white/50">Loading the most popular picks...</p>
             </div>
           </div>
-          <HorizontalCarousel className="mt-4 -mx-4">
+          <HorizontalCarousel className="mt-4 -mx-4 lg:mx-0">
             {EFFECT_GRADIENTS.map((g, idx) => (
               <EffectCardSkeleton key={idx} variant="effectsFeed" gradient={g} />
             ))}
@@ -307,7 +307,7 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
               </Link>
             ) : null}
           </div>
-          <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
+          <HorizontalCarousel className="mt-3 -mx-4 lg:mx-0" showRightFade>
             {popularState.data.map((effect) => (
               <EffectCard key={effect.slug} variant="effectsFeed" effect={effect} onTry={() => handleOpenEffect(effect)} />
             ))}

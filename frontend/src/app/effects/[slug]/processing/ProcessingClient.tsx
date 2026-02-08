@@ -4,7 +4,6 @@ import AuthModal from "@/app/_components/landing/AuthModal";
 import {
   ApiError,
   createVideo,
-  getAccessToken,
   getEffect,
   getVideo,
   initVideoUpload,
@@ -12,6 +11,7 @@ import {
   type ApiEffect,
   type VideoData,
 } from "@/lib/api";
+import useAuthToken from "@/lib/useAuthToken";
 import { deletePendingUpload, deletePreview, loadPendingUpload, loadPreview, savePreview } from "@/lib/uploadPreviewStore";
 import ProcessingStepProcessing from "@/app/effects/[slug]/processing/ProcessingStepProcessing";
 import ProcessingStepResult from "@/app/effects/[slug]/processing/ProcessingStepResult";
@@ -165,7 +165,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   }, [searchParams]);
 
   const [authOpen, setAuthOpen] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
+  const token = useAuthToken();
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [localPreviewReady, setLocalPreviewReady] = useState(false);
   const [previewNonce, setPreviewNonce] = useState(0);
@@ -186,11 +186,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const [doneSteps, setDoneSteps] = useState(0);
   const [progressValue, setProgressValue] = useState(8);
   const processingStartMsRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setToken(getAccessToken()), 0);
-    return () => window.clearTimeout(t);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -698,17 +693,11 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl">
-        <header className="flex items-center justify-between gap-4">
-          <Link
-            href={`/effects/${encodeURIComponent(slug)}`}
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-          >
-            <span aria-hidden="true">←</span> Back
-          </Link>
+        <header className="flex items-center justify-start">
           <div className="text-xs font-semibold text-white/55">Processing...</div>
         </header>
 
-        <div className="mt-6 flex items-center justify-center gap-3">
+        <div className="mt-4 flex items-center justify-center gap-3">
           <span className={stepBadgeClass(1)}>1</span>
           <span className="h-0.5 w-10 rounded-full bg-white/10" aria-hidden="true" />
           <span className={stepBadgeClass(2)}>2</span>
@@ -846,7 +835,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         open={authOpen}
         onClose={() => {
           setAuthOpen(false);
-          setToken(getAccessToken());
           setPollNonce((v) => v + 1);
         }}
       />

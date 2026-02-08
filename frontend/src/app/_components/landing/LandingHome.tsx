@@ -4,18 +4,18 @@ import {
   ApiError,
   getAccessToken,
   getEffectsIndex,
-  getMe,
   getPublicGallery,
   type ApiEffect,
   type GalleryVideo,
 } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
+import useAuthToken from "@/lib/useAuthToken";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import AuthModal from "./AuthModal";
-import { brand, features, hero, trustBadges, type Effect, type GalleryItem } from "./landingData";
+import { features, hero, trustBadges, type Effect, type GalleryItem } from "./landingData";
 import { IconArrowRight, IconBolt, IconGallery, IconSparkles, IconWand } from "./icons";
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
 import { EffectCard, EffectCardSkeleton } from "@/components/cards/EffectCard";
@@ -111,30 +111,6 @@ function AvatarStack() {
   );
 }
 
-function PillButton({
-  children,
-  onClick,
-  variant = "ghost",
-  ariaLabel,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  variant?: "ghost" | "solid";
-  ariaLabel?: string;
-}) {
-  const base =
-    "inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400";
-  const styles =
-    variant === "solid"
-      ? "bg-white text-black hover:bg-white/90"
-      : "border border-white/10 bg-white/5 text-white/80 hover:bg-white/10";
-  return (
-    <button type="button" aria-label={ariaLabel} className={`${base} ${styles}`} onClick={onClick}>
-      {children}
-    </button>
-  );
-}
-
 function FeatureRow({
   title,
   description,
@@ -166,8 +142,7 @@ export default function LandingHome() {
   const [pendingDoSameSlug, setPendingDoSameSlug] = useState<string | null>(null);
   const [galleryState, setGalleryState] = useState<PublicGalleryState>({ status: "loading" });
   const [galleryReload, setGalleryReload] = useState(0);
-  const [token, setToken] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const token = useAuthToken();
   const {
     fileInputRef,
     startUpload,
@@ -180,12 +155,10 @@ export default function LandingHome() {
   });
   const combinedAuthOpen = authOpen || uploadAuthOpen;
 
-  const openAuth = () => setAuthOpen(true);
   const closeAuth = () => {
     closeUploadAuth();
     setAuthOpen(false);
     const nextToken = getAccessToken();
-    setToken(nextToken);
     if (pendingDoSameSlug) {
       if (nextToken) {
         goToEffect(pendingDoSameSlug);
@@ -215,7 +188,6 @@ export default function LandingHome() {
       setAuthOpen(true);
       return;
     }
-    if (!token) setToken(activeToken);
     if (featuredEffect.type === "configurable") {
       goToEffect(featuredEffect.slug);
       return;
@@ -316,33 +288,6 @@ export default function LandingHome() {
     };
   }, [galleryReload]);
 
-  useEffect(() => {
-    const t = window.setTimeout(() => setToken(getAccessToken()), 0);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
-    if (!token) {
-      setIsAdmin(false);
-      return;
-    }
-
-    let cancelled = false;
-    getMe()
-      .then((data) => {
-        if (cancelled) return;
-        setIsAdmin(Boolean(data.is_admin));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setIsAdmin(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
   const heroEffectLabel = featuredEffect
     ? featuredEffect.name.toLowerCase().includes("effect")
       ? featuredEffect.name
@@ -360,36 +305,32 @@ export default function LandingHome() {
         onChange={onFileSelected}
       />
       <div className="relative mx-auto w-full max-w-md sm:max-w-xl lg:max-w-4xl">
-        <header className="absolute inset-x-0 top-0 z-20 px-4 pt-4">
-          <div className="flex items-center justify-between">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-white"
-              aria-label={`${brand.name} home`}
-            >
-              <span className="grid h-8 w-8 place-items-center rounded-xl bg-white/10">
-                <IconSparkles className="h-4 w-4 text-fuchsia-200" />
-              </span>
-              <span className="uppercase">{brand.name}</span>
-            </Link>
-
-            <div className="flex items-center gap-2">
-              {isAdmin ? (
-                <PillButton onClick={() => router.push("/admin/effects")} ariaLabel="Admin">
-                  Admin
-                </PillButton>
-              ) : null}
-              <PillButton onClick={openAuth} ariaLabel={token ? "Account" : "Sign in"}>
-                {token ? "Account" : "Sign In"}
-              </PillButton>
-            </div>
-          </div>
-        </header>
-
         <main className="pb-32">
           <section className="relative">
-            <div className="relative w-full overflow-hidden bg-zinc-900/50 md:mx-auto md:mt-6 md:max-w-md md:rounded-3xl">
-              <div className="relative aspect-[9/16] w-full">
+            <div className="relative w-full overflow-hidden md:mx-auto md:mt-6 md:max-w-md">
+              <div className="absolute inset-0">
+                {featuredEffect?.preview_video_url ? (
+                  <VideoPlayer
+                    className="absolute inset-0 h-full w-full scale-110 object-cover blur-2xl opacity-60"
+                    src={featuredEffect.preview_video_url}
+                    muted
+                    loop
+                    autoPlay
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : featuredEffect?.thumbnail_url ? (
+                  <img
+                    className="absolute inset-0 h-full w-full scale-110 object-cover blur-2xl opacity-60"
+                    src={featuredEffect.thumbnail_url}
+                    alt=""
+                    aria-hidden="true"
+                  />
+                ) : null}
+                <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/25 to-black/70" />
+              </div>
+
+              <div className="relative aspect-[9/16] w-full overflow-hidden bg-black/40 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
                 {featuredEffect?.preview_video_url ? (
                   <VideoPlayer
                     className="absolute inset-0 h-full w-full object-cover"
@@ -419,7 +360,7 @@ export default function LandingHome() {
                   </div>
                 </div>
 
-                <div className="absolute bottom-4 left-1/2 w-[calc(100%-2rem)] max-w-[340px] -translate-x-1/2">
+                <div className="absolute bottom-4 left-4 right-4">
                   <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-black/45 px-3 py-2 backdrop-blur-sm">
                     <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10">
                       <IconSparkles className="h-4 w-4 text-fuchsia-200" />

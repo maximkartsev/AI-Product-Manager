@@ -5,13 +5,22 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthModal from "@/app/_components/landing/AuthModal";
 import EffectsFeedClient from "@/app/effects/EffectsFeedClient";
-import { ApiError, getAccessToken, getVideo, getVideosIndex, publishVideo, unpublishVideo, type VideoData } from "@/lib/api";
+import {
+  ApiError,
+  clearAccessToken,
+  getVideo,
+  getVideosIndex,
+  publishVideo,
+  unpublishVideo,
+  type VideoData,
+} from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import { cn } from "@/lib/utils";
 import { IconSparkles } from "@/app/_components/landing/icons";
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
 import UserVideoCard, { resolveVideoStatus } from "@/components/cards/UserVideoCard";
 import { ChevronLeft, Download, Globe2, Loader2, Wand2, X } from "lucide-react";
+import useAuthToken from "@/lib/useAuthToken";
 
 type VideosState = {
   items: VideoData[];
@@ -30,7 +39,7 @@ function isTerminalVideoStatus(status?: string | null): boolean {
 
 export default function UserVideosClient() {
   const router = useRouter();
-  const [token, setToken] = useState<string | null>(null);
+  const token = useAuthToken();
   const [authOpen, setAuthOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [drawerVideo, setDrawerVideo] = useState<VideoData | null>(null);
@@ -47,11 +56,6 @@ export default function UserVideosClient() {
     loadingMore: false,
   });
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setToken(getAccessToken()), 0);
-    return () => window.clearTimeout(t);
-  }, []);
 
   const loadVideos = async (page: number) => {
     setVideosState((prev) => ({
@@ -79,7 +83,7 @@ export default function UserVideosClient() {
         error: message,
       }));
       if (err instanceof ApiError && err.status === 401) {
-        setToken(null);
+        clearAccessToken();
       }
     }
   };
@@ -280,27 +284,7 @@ export default function UserVideosClient() {
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <div className="mx-auto w-full max-w-md px-4 pb-12 pt-4 sm:max-w-xl lg:max-w-4xl">
-        <header className="flex items-center justify-between">
-          <Link href="/" className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-white">
-            <span className="grid h-8 w-8 place-items-center rounded-xl bg-white/10">
-              <IconSparkles className="h-4 w-4 text-fuchsia-200" />
-            </span>
-            <span className="uppercase">DZZZS</span>
-          </Link>
-          <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-white/70">
-            Creator
-          </span>
-        </header>
-
-        <div className="mt-6 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/80 transition hover:bg-white/10"
-            aria-label="Back"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
+        <div className="mt-4 flex items-center justify-between">
           <h1 className="text-base font-semibold text-white">My Videos</h1>
           <Link
             href="/explore"
@@ -438,7 +422,6 @@ export default function UserVideosClient() {
         open={authOpen}
         onClose={() => {
           setAuthOpen(false);
-          setToken(getAccessToken());
         }}
         initialMode="signin"
       />

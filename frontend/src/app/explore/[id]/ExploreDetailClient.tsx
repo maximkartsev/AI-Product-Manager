@@ -1,14 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AuthModal from "@/app/_components/landing/AuthModal";
 import { ApiError, getPublicGalleryItem, type GalleryVideo } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import { Textarea } from "@/components/ui/textarea";
-import { IconSparkles } from "@/app/_components/landing/icons";
-import { ChevronLeft, Info, SlidersHorizontal } from "lucide-react";
+import { Info, SlidersHorizontal } from "lucide-react";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 
 type GalleryDetailState =
@@ -103,29 +101,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
         onChange={onFileSelected}
       />
       <div className="mx-auto w-full max-w-md px-4 pb-12 pt-4 sm:max-w-xl lg:max-w-3xl">
-        <header className="flex items-center justify-between">
-          <Link href="/" className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-white">
-            <span className="grid h-8 w-8 place-items-center rounded-xl bg-white/10">
-              <IconSparkles className="h-4 w-4 text-fuchsia-200" />
-            </span>
-            <span className="uppercase">DZZZS</span>
-          </Link>
-          <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-white/70">
-            Creator
-          </span>
-        </header>
-
-        <div className="mt-6 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/80 transition hover:bg-white/10"
-            aria-label="Back"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
+        <div className="mt-4">
           <h1 className="text-base font-semibold text-white">Public Gallery</h1>
-          <div className="h-9 w-9" aria-hidden />
         </div>
 
         <main className="mt-6">

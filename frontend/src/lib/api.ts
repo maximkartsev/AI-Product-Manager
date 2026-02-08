@@ -267,6 +267,11 @@ export function isApiEnvelope(value: unknown): value is ApiEnvelope<unknown> {
 const TOKEN_STORAGE_KEY = "auth_token";
 const TENANT_DOMAIN_STORAGE_KEY = "tenant_domain";
 
+function notifyAuthChange(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event("auth:changed"));
+}
+
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -279,11 +284,13 @@ export function getAccessToken(): string | null {
 export function setAccessToken(token: string): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+  notifyAuthChange();
 }
 
 export function clearAccessToken(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+  notifyAuthChange();
 }
 
 export function getTenantDomain(): string | null {
@@ -298,11 +305,13 @@ export function getTenantDomain(): string | null {
 export function setTenantDomain(domain: string): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(TENANT_DOMAIN_STORAGE_KEY, domain);
+  notifyAuthChange();
 }
 
 export function clearTenantDomain(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(TENANT_DOMAIN_STORAGE_KEY);
+  notifyAuthChange();
 }
 
 // ---- Request helpers

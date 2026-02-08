@@ -1,11 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ApiError, getCategory, getEffectsIndex, type ApiCategory, type ApiEffect } from "@/lib/api";
-import { IconSparkles } from "@/app/_components/landing/icons";
-import { brand } from "@/app/_components/landing/landingData";
 import EffectGridCard from "@/app/effects/_components/EffectGridCard";
 
 type CategoryState =
@@ -107,28 +104,17 @@ export default function CategoryEffectsClient({ slug }: { slug: string }) {
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl">
-        <header className="flex items-center justify-between gap-3">
-          <Link
-            href="/effects"
-            className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-white"
-            aria-label={`${brand.name} effects`}
-          >
-            <span className="grid h-8 w-8 place-items-center rounded-xl bg-white/10">
-              <IconSparkles className="h-4 w-4 text-fuchsia-200" />
-            </span>
-            <span className="uppercase">{brand.name}</span>
-          </Link>
-          <button
-            type="button"
-            onClick={() => router.push("/effects")}
-            className="text-xs font-semibold text-white/70"
-          >
-            Back to all
-          </button>
-        </header>
-
-        <section className="mt-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{title}</h1>
+        <section className="mt-4">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{title}</h1>
+            <button
+              type="button"
+              onClick={() => router.push("/effects")}
+              className="text-xs font-semibold text-white/70"
+            >
+              Back to all
+            </button>
+          </div>
           {description ? <p className="mt-2 text-sm text-white/60">{description}</p> : null}
         </section>
 

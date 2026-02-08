@@ -1,9 +1,6 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
-import { IconSparkles } from "@/app/_components/landing/icons";
-import { brand } from "@/app/_components/landing/landingData";
 import EffectsFeedClient from "./EffectsFeedClient";
 import EffectsGridClient from "./EffectsGridClient";
 import SegmentedToggle from "@/components/ui/SegmentedToggle";
@@ -14,20 +11,6 @@ export default function EffectsLibraryClient() {
   return (
     <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl">
-        <header className="flex items-center justify-between gap-3">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-white"
-            aria-label={`${brand.name} home`}
-          >
-            <span className="grid h-8 w-8 place-items-center rounded-xl bg-white/10">
-              <IconSparkles className="h-4 w-4 text-fuchsia-200" />
-            </span>
-            <span className="uppercase">{brand.name}</span>
-          </Link>
-          <div className="text-xs text-white/55">Effects library</div>
-        </header>
-
         <section className="mt-6">
           <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">All effects</h1>
           <p className="mt-2 text-sm text-white/60">

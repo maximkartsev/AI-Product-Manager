@@ -6,7 +6,6 @@ import { ApiError, getEffect, getWallet, type ApiEffect } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import { Textarea } from "@/components/ui/textarea";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Info, SlidersHorizontal } from "lucide-react";
@@ -264,22 +263,13 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         onChange={onFileSelected}
       />
       <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl">
-        <header className="flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-          >
-            <span aria-hidden="true">←</span> Back
-          </Link>
-
-          <div className="inline-flex items-center gap-2 text-xs text-white/55">
-            <IconSparkles className="h-4 w-4 text-fuchsia-200" />
-            Effect detail
-          </div>
+        <header className="flex items-center gap-2 text-xs text-white/55">
+          <IconSparkles className="h-4 w-4 text-fuchsia-200" />
+          Effect detail
         </header>
 
         {state.status === "loading" && (
-          <div className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+          <div className="mt-4 overflow-hidden rounded-3xl border border-white/10 bg-white/5">
             <div className="relative aspect-[9/16] w-full animate-pulse bg-gradient-to-br from-fuchsia-500/15 to-indigo-500/10" />
             <div className="p-5">
               <div className="h-6 w-48 animate-pulse rounded bg-white/10" />
@@ -291,7 +281,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         )}
 
         {state.status === "error" && (
-          <div className="mt-6 rounded-3xl border border-red-500/25 bg-red-500/10 p-5">
+          <div className="mt-4 rounded-3xl border border-red-500/25 bg-red-500/10 p-5">
             <div className="text-sm font-semibold text-red-100">Error</div>
             <div className="mt-1 text-xs text-red-100/75">
               {state.code ? <span className="font-semibold">HTTP {state.code}</span> : null}
@@ -309,7 +299,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         )}
 
         {state.status === "not_found" && (
-          <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5 text-center">
+          <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-5 text-center">
             <div className="text-sm font-semibold text-white">Effect not found</div>
             <div className="mt-1 text-xs text-white/60">This effect may have been removed or is unavailable.</div>
             <Link
@@ -322,7 +312,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         )}
 
         {state.status === "success" && (
-          <main className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <main className="mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
             <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5">
               <div className="relative aspect-[9/16] w-full bg-gradient-to-br from-fuchsia-500/18 to-indigo-500/12">
                 {state.data.preview_video_url ? (

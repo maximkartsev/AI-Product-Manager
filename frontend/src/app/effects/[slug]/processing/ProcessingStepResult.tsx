@@ -35,15 +35,16 @@ export default function ProcessingStepResult({
   const publishEnabled = Boolean(videoId && processedFileUrl);
 
   useEffect(() => {
-    const rafId = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(rafId);
-  }, [processedFileUrl]);
-
-  useEffect(() => {
     setLocalIsPublic(isPublic);
   }, [isPublic]);
+
+  useEffect(() => {
+    if (!processedFileUrl) return;
+    const timeoutId = window.setTimeout(() => {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    }, 2000);
+    return () => window.clearTimeout(timeoutId);
+  }, [processedFileUrl]);
 
   const handlePublish = async () => {
     if (!videoId || !publishEnabled) return;

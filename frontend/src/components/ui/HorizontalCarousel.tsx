@@ -10,6 +10,7 @@ type HorizontalCarouselProps = {
   showRightFade?: boolean;
   fadeWidthClassName?: string;
   onReachEnd?: () => void;
+  scrollRef?: React.RefObject<HTMLDivElement | null>;
 };
 
 export default function HorizontalCarousel({
@@ -19,8 +20,10 @@ export default function HorizontalCarousel({
   showRightFade = false,
   fadeWidthClassName,
   onReachEnd,
+  scrollRef,
 }: HorizontalCarouselProps) {
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const internalRef = useRef<HTMLDivElement | null>(null);
+  const scrollerRef = scrollRef ?? internalRef;
   const endGuardRef = useRef(false);
 
   useEffect(() => {

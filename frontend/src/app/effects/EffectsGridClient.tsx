@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, getEffectsIndex, type ApiEffect } from "@/lib/api";
 import EffectGridCard from "@/app/effects/_components/EffectGridCard";
 import useUiGuards from "@/components/guards/useUiGuards";
+import { EffectCardSkeleton } from "@/components/cards/EffectCard";
+import { EFFECT_GRADIENTS } from "@/lib/gradients";
 
 type EffectsState = {
   items: ApiEffect[];
@@ -90,9 +92,16 @@ export default function EffectsGridClient() {
         </div>
       ) : null}
       {state.loading && state.items.length === 0 ? (
-        <div className="text-center text-xs text-white/50">Loading effects…</div>
-      ) : null}
-      {state.items.length === 0 && !state.loading ? (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, idx) => (
+            <EffectCardSkeleton
+              key={idx}
+              variant="effectsGrid"
+              gradient={EFFECT_GRADIENTS[idx % EFFECT_GRADIENTS.length]!}
+            />
+          ))}
+        </div>
+      ) : state.items.length === 0 && !state.loading ? (
         <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
           No effects yet.
         </div>

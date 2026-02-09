@@ -10,6 +10,7 @@ import {
   type ApiEffect,
 } from "@/lib/api";
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
+import useCarouselScrollHint from "@/components/ui/useCarouselScrollHint";
 import { EffectCard, EffectCardSkeleton } from "@/components/cards/EffectCard";
 import { EFFECT_GRADIENTS } from "@/lib/gradients";
 import useUiGuards from "@/components/guards/useUiGuards";
@@ -55,6 +56,13 @@ function CategoryRow({
   onTry: (effect: ApiEffect) => void;
   onLoadMore: (slug: string) => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const showHint = useCarouselScrollHint({
+    scrollRef,
+    isLoading: row.loading,
+    deps: [row.effects.length],
+  });
+
   return (
     <section className="mt-8" id={row.category.slug}>
       <div className="flex items-center justify-between gap-6">
@@ -79,6 +87,7 @@ function CategoryRow({
         className="mt-3 -mx-4 lg:mx-0"
         showRightFade
         onReachEnd={() => onLoadMore(row.category.slug)}
+        scrollRef={scrollRef}
       >
         {row.effects.length === 0 && row.loading
           ? EFFECT_GRADIENTS.map((g, idx) => (
@@ -90,7 +99,34 @@ function CategoryRow({
         {row.loadingMore ? <EffectCardSkeleton variant="effectsFeed" gradient={EFFECT_GRADIENTS[0]} /> : null}
       </HorizontalCarousel>
 
-      {row.effects.length > 1 ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+      {showHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+    </section>
+  );
+}
+
+function CategoryRowSkeleton({ gradientIndex }: { gradientIndex: number }) {
+  return (
+    <section className="mt-8">
+      <div className="flex items-center justify-between gap-6">
+        <div className="flex items-center gap-2">
+          <span className="text-base">⭐</span>
+          <div>
+            <div className="h-3 w-24 rounded bg-white/10 skeleton-shimmer" />
+            <div className="mt-1 h-3 w-32 rounded bg-white/5 skeleton-shimmer" />
+          </div>
+        </div>
+        <div className="h-3 w-12 rounded bg-white/10 skeleton-shimmer" />
+      </div>
+      <HorizontalCarousel className="mt-3 -mx-4 lg:mx-0" showRightFade>
+        {EFFECT_GRADIENTS.map((g, idx) => (
+          <EffectCardSkeleton
+            key={`cat-skeleton-${gradientIndex}-${idx}`}
+            variant="effectsFeed"
+            gradient={g}
+          />
+        ))}
+      </HorizontalCarousel>
+      <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
     </section>
   );
 }
@@ -103,9 +139,17 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
   const [categoriesPage, setCategoriesPage] = useState(0);
   const [categoriesTotalPages, setCategoriesTotalPages] = useState(1);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
   const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const categoryRowsRef = useRef<Record<string, CategoryRowState>>({});
+  const popularCarouselRef = useRef<HTMLDivElement | null>(null);
+  const popularCount = popularState.status === "success" ? popularState.data.length : 0;
+  const showPopularHint = useCarouselScrollHint({
+    scrollRef: popularCarouselRef,
+    isLoading: popularState.status === "loading",
+    deps: [popularCount],
+  });
 
   useEffect(() => {
     categoryRowsRef.current = categoryRows;
@@ -208,6 +252,7 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
       const message = err instanceof ApiError ? err.message : "Unable to load categories.";
       setCategoriesError(message);
     } finally {
+      setCategoriesLoaded(true);
       setCategoriesLoading(false);
     }
   };
@@ -250,17 +295,21 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
     <>
       {popularState.status === "loading" ? (
         <section className="mt-8">
-          <div className="flex items-end justify-between gap-6">
-            <div>
-              <h2 className="text-lg font-semibold tracking-tight text-white">Top effects</h2>
-              <p className="mt-1 text-xs text-white/50">Loading the most popular picks...</p>
+          <div className="flex items-center justify-between gap-6">
+            <div className="flex items-center gap-2">
+              <span className="text-base">{categoryEmoji("popular")}</span>
+              <div>
+                <h2 className="text-sm font-semibold text-white">Popular Effects</h2>
+                <p className="mt-0.5 text-[11px] text-white/50">Trending transformations loved by creators.</p>
+              </div>
             </div>
           </div>
-          <HorizontalCarousel className="mt-4 -mx-4 lg:mx-0">
+          <HorizontalCarousel className="mt-4 -mx-4 lg:mx-0" scrollRef={popularCarouselRef}>
             {EFFECT_GRADIENTS.map((g, idx) => (
               <EffectCardSkeleton key={idx} variant="effectsFeed" gradient={g} />
             ))}
           </HorizontalCarousel>
+          {showPopularHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
         </section>
       ) : null}
 
@@ -307,21 +356,23 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
               </Link>
             ) : null}
           </div>
-          <HorizontalCarousel className="mt-3 -mx-4 lg:mx-0" showRightFade>
+          <HorizontalCarousel className="mt-3 -mx-4 lg:mx-0" showRightFade scrollRef={popularCarouselRef}>
             {popularState.data.map((effect) => (
               <EffectCard key={effect.slug} variant="effectsFeed" effect={effect} onTry={() => handleOpenEffect(effect)} />
             ))}
           </HorizontalCarousel>
-          {popularState.data.length > 1 ? (
-            <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
-          ) : null}
+          {showPopularHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
         </section>
       ) : null}
 
-      {categoryOrder.length === 0 && categoriesLoading ? (
-        <div className="mt-6 text-center text-xs text-white/50">Loading categories…</div>
+      {categoryOrder.length === 0 && !categoriesLoaded ? (
+        <>
+          {Array.from({ length: 3 }).map((_, idx) => (
+            <CategoryRowSkeleton key={`category-skeleton-${idx}`} gradientIndex={idx} />
+          ))}
+        </>
       ) : null}
-      {categoryOrder.length === 0 && !categoriesLoading && !categoriesError ? (
+      {categoryOrder.length === 0 && categoriesLoaded && !categoriesLoading && !categoriesError ? (
         <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
           No categories available yet.
         </div>

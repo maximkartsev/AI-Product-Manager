@@ -36,7 +36,7 @@ return [
         separator: ',',
         string: env(
             key: 'CORS_ALLOWED_ORIGINS',
-            default: 'http://localhost:3000,http://127.0.0.1:3000,https://dzzzs.com',
+            default: 'http://localhost:3000,http://127.0.0.1:3000,https://dzzzs.com,https://uitest.ngrok.app',
         ),
     ))),
 

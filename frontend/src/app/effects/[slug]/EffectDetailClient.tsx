@@ -133,7 +133,11 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         className="hidden"
         onChange={onFileSelected}
       />
-      <div className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl">
+      <div
+        className={`mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl ${
+          state.status === "success" ? "pb-[calc(6.5rem+env(safe-area-inset-bottom))]" : ""
+        }`}
+      >
         <header className="flex items-center gap-2 text-xs text-white/55">
           <IconSparkles className="h-4 w-4 text-fuchsia-200" />
           Effect detail

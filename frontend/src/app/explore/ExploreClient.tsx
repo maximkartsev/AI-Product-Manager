@@ -6,10 +6,12 @@ import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import { cn } from "@/lib/utils";
 import { Search, SlidersHorizontal } from "lucide-react";
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
+import useCarouselScrollHint from "@/components/ui/useCarouselScrollHint";
 import SegmentedToggle from "@/components/ui/SegmentedToggle";
 import { groupByOrdered } from "@/lib/grouping";
-import { PublicGalleryCard } from "@/components/cards/PublicGalleryCard";
+import { PublicGalleryCard, PublicGalleryCardSkeleton } from "@/components/cards/PublicGalleryCard";
 import useUiGuards from "@/components/guards/useUiGuards";
+import { EFFECT_GRADIENTS } from "@/lib/gradients";
 
 const SORT_OPTIONS = [
   { id: "trending", label: "Trending" },
@@ -24,6 +26,43 @@ type GalleryState =
   | { status: "error"; message: string };
 
 type ViewMode = "grid" | "category";
+
+type GroupedSection = {
+  key: string;
+  title: string;
+  items: GalleryVideo[];
+};
+
+function CategoryGroupRow({
+  group,
+  onOpen,
+  onTry,
+}: {
+  group: GroupedSection;
+  onOpen: (item: GalleryVideo) => void;
+  onTry: (item: GalleryVideo) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const showHint = useCarouselScrollHint({
+    scrollRef,
+    isLoading: false,
+    deps: [group.items.length],
+  });
+
+  return (
+    <section>
+      <div className="text-sm font-semibold text-white">{group.title}</div>
+      <HorizontalCarousel className="mt-3 -mx-4" showRightFade scrollRef={scrollRef}>
+        {group.items.map((item) => (
+          <div key={item.id} className="snap-start w-44 sm:w-52">
+            <PublicGalleryCard item={item} variant="explore" onOpen={() => onOpen(item)} onTry={() => onTry(item)} />
+          </div>
+        ))}
+      </HorizontalCarousel>
+      {showHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+    </section>
+  );
+}
 
 export default function ExploreClient() {
   const { requireAuth, requireAuthForNavigation } = useUiGuards();
@@ -95,6 +134,7 @@ export default function ExploreClient() {
     };
   }, [debouncedSearch, page, sortId]);
 
+
   const items = galleryState.status === "success" || galleryState.status === "loading" ? galleryState.items : [];
   const canLoadMore =
     (galleryState.status === "success" || galleryState.status === "loading") &&
@@ -111,6 +151,8 @@ export default function ExploreClient() {
       ),
     [items],
   );
+
+  const showCategorySkeletons = viewMode === "category" && galleryState.status === "loading" && items.length === 0;
 
   const handleOpenItem = (item: GalleryVideo) => {
     requireAuthForNavigation(`/explore/${item.id}`);
@@ -229,9 +271,38 @@ export default function ExploreClient() {
             </div>
           ) : null}
 
-          {items.length === 0 && galleryState.status === "success" ? (
+          {galleryState.status === "loading" && items.length === 0 ? (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, idx) => (
+                <PublicGalleryCardSkeleton
+                  key={idx}
+                  variant="explore"
+                  gradient={EFFECT_GRADIENTS[idx % EFFECT_GRADIENTS.length]!}
+                />
+              ))}
+            </div>
+          ) : items.length === 0 && galleryState.status === "success" ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
               No public videos yet.
+            </div>
+          ) : showCategorySkeletons ? (
+            <div className="space-y-6">
+              {Array.from({ length: 3 }).map((_, sectionIdx) => (
+                <section key={`category-skeleton-${sectionIdx}`}>
+                  <div className="h-3 w-28 rounded bg-white/10 skeleton-shimmer" />
+                  <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
+                    {Array.from({ length: 6 }).map((__, idx) => (
+                      <div key={idx} className="snap-start w-44 sm:w-52">
+                        <PublicGalleryCardSkeleton
+                          variant="explore"
+                          gradient={EFFECT_GRADIENTS[idx % EFFECT_GRADIENTS.length]!}
+                        />
+                      </div>
+                    ))}
+                  </HorizontalCarousel>
+                  <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
+                </section>
+              ))}
             </div>
           ) : viewMode === "grid" ? (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
@@ -248,28 +319,16 @@ export default function ExploreClient() {
           ) : (
             <div className="space-y-6">
               {grouped.map((group) => (
-                <section key={group.key}>
-                  <div className="text-sm font-semibold text-white">{group.title}</div>
-                  <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
-                    {group.items.map((item) => (
-                      <div key={item.id} className="snap-start w-44 sm:w-52">
-                        <PublicGalleryCard
-                          item={item}
-                          variant="explore"
-                          onOpen={() => handleOpenItem(item)}
-                          onTry={() => handleTryItem(item)}
-                        />
-                      </div>
-                    ))}
-                  </HorizontalCarousel>
-                </section>
+                <CategoryGroupRow
+                  key={group.key}
+                  group={group}
+                  onOpen={handleOpenItem}
+                  onTry={handleTryItem}
+                />
               ))}
             </div>
           )}
 
-          {galleryState.status === "loading" && items.length === 0 ? (
-            <div className="mt-6 text-center text-xs text-white/50">Loading gallery…</div>
-          ) : null}
           <div ref={loadMoreRef} className="h-8" />
         </main>
       </div>

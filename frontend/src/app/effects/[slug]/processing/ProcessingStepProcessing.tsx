@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
-import { type ComponentType, useEffect } from "react";
+import { type ComponentType } from "react";
 
 type StepStatus = "pending" | "running" | "done" | "error";
 
@@ -45,14 +45,6 @@ export default function ProcessingStepProcessing({
   errorMessage,
   uploadAnotherHref,
 }: ProcessingStepProcessingProps) {
-  useEffect(() => {
-    if (!showError) return;
-    const rafId = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(rafId);
-  }, [showError]);
-
   return (
     <>
       <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(0,0,0,0.45)]">

@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import { cn } from "@/lib/utils";
 import { UploadCloud } from "lucide-react";
-import { type ComponentType, useEffect } from "react";
+import { type ComponentType } from "react";
 
 type UploadStatus = "idle" | "loading" | "uploading" | "error" | "done";
 
@@ -33,14 +33,6 @@ export default function ProcessingStepUpload({
   uploadStatus,
   uploadProgress,
 }: ProcessingStepUploadProps) {
-  useEffect(() => {
-    if (uploadStatus !== "error") return;
-    const rafId = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(rafId);
-  }, [uploadStatus]);
-
   const isError = uploadStatus === "error";
   const detail =
     uploadStatus === "uploading"

@@ -1,9 +1,11 @@
+import { useEffect, useState } from "react";
 import ConfigurableCard from "@/components/ui/ConfigurableCard";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import { IconPlay, IconSparkles } from "@/app/_components/landing/icons";
 import { SlidersHorizontal, Play } from "lucide-react";
-import { gradientClass, type GradientStop } from "@/lib/gradients";
+import { gradientClass, gradientForSlug, type GradientStop } from "@/lib/gradients";
 import type { GalleryVideo } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type LandingGalleryItem = {
   id: string;
@@ -120,6 +122,20 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
   const title = effectName.trim() || "AI Effect";
   const showPlayOverlay = !item.processed_file_url || Boolean(item.thumbnail_url);
   const isConfigurable = item.effect?.type === "configurable";
+  const gradient = gradientForSlug(item.effect?.slug ?? String(item.id));
+  const g = gradientClass(gradient.from, gradient.to);
+  const mediaSrcKey = item.thumbnail_url ?? item.processed_file_url ?? "";
+  const hasMedia = Boolean(mediaSrcKey);
+  const [mediaReady, setMediaReady] = useState(!hasMedia);
+
+  useEffect(() => {
+    setMediaReady(!mediaSrcKey);
+  }, [mediaSrcKey]);
+
+  const mediaClassName = cn(
+    "absolute inset-0 h-full w-full object-cover transition-opacity duration-150",
+    mediaReady ? "opacity-100" : "opacity-0",
+  );
 
   return (
     <ConfigurableCard
@@ -137,21 +153,35 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
       mediaClassName="relative aspect-[9/13] w-full"
       media={
         <>
+          <div
+            className={cn(
+              `absolute inset-0 bg-gradient-to-br ${g} transition-opacity duration-150`,
+              mediaReady ? "opacity-0" : "opacity-100",
+              !mediaReady && "skeleton-shimmer",
+            )}
+          />
           {item.thumbnail_url ? (
-            <img className="absolute inset-0 h-full w-full object-cover" src={item.thumbnail_url} alt={title} />
+            <img
+              className={mediaClassName}
+              src={item.thumbnail_url}
+              alt={title}
+              onLoad={() => setMediaReady(true)}
+              onError={() => setMediaReady(true)}
+            />
           ) : item.processed_file_url ? (
             <VideoPlayer
-              className="absolute inset-0 h-full w-full object-cover"
+              className={mediaClassName}
               src={item.processed_file_url}
               playsInline
               autoPlay
               loop
               muted
               preload="metadata"
+              onLoadedData={() => setMediaReady(true)}
+              onPlaying={() => setMediaReady(true)}
+              onError={() => setMediaReady(true)}
             />
-          ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/40 via-violet-500/30 to-cyan-400/30" />
-          )}
+          ) : null}
           <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/80" />
 
           <button
@@ -194,14 +224,24 @@ export function PublicGalleryCardSkeleton({
   variant,
   gradient,
 }: {
-  variant: "landing";
+  variant: "landing" | "explore";
   gradient: GradientStop;
 }) {
   const g = gradientClass(gradient.from, gradient.to);
 
+  if (variant === "explore") {
+    return (
+      <ConfigurableCard
+        className="skeleton-shimmer overflow-hidden rounded-3xl bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] ring-1 ring-inset ring-white/10"
+        mediaClassName={`relative aspect-[9/13] w-full bg-gradient-to-br ${g}`}
+        media={<div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />}
+      />
+    );
+  }
+
   return (
     <ConfigurableCard
-      className="animate-pulse overflow-hidden rounded-3xl bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] ring-1 ring-inset ring-white/10"
+      className="skeleton-shimmer overflow-hidden rounded-3xl bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] ring-1 ring-inset ring-white/10"
       mediaClassName={`relative aspect-[9/13] bg-gradient-to-br ${g}`}
       bodyClassName="p-3"
       media={

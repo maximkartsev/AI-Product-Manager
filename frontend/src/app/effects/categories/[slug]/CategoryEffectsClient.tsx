@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { ApiError, getCategory, getEffectsIndex, type ApiCategory, type ApiEffect } from "@/lib/api";
 import EffectGridCard from "@/app/effects/_components/EffectGridCard";
 import useUiGuards from "@/components/guards/useUiGuards";
+import { EffectCardSkeleton } from "@/components/cards/EffectCard";
+import { EFFECT_GRADIENTS } from "@/lib/gradients";
 
 type CategoryState =
   | { status: "loading" }
@@ -127,7 +129,15 @@ export default function CategoryEffectsClient({ slug }: { slug: string }) {
         ) : null}
 
         {effectsState.loading && effectsState.items.length === 0 ? (
-          <div className="mt-6 text-center text-xs text-white/50">Loading effects…</div>
+          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, idx) => (
+              <EffectCardSkeleton
+                key={idx}
+                variant="effectsGrid"
+                gradient={EFFECT_GRADIENTS[idx % EFFECT_GRADIENTS.length]!}
+              />
+            ))}
+          </div>
         ) : null}
 
         {effectsState.error ? (

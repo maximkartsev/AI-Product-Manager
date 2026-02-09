@@ -3,6 +3,7 @@
 import {
   ApiError,
   createVideo,
+  getAccessToken,
   getEffect,
   getVideo,
   initVideoUpload,
@@ -17,8 +18,8 @@ import ProcessingStepResult from "@/app/effects/[slug]/processing/ProcessingStep
 import ProcessingStepUpload from "@/app/effects/[slug]/processing/ProcessingStepUpload";
 import { AlertTriangle, Film, Layers, Sparkles, UploadCloud, Wand2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import useUiGuards from "@/components/guards/useUiGuards";
 import { getRequiredTokensFromError } from "@/lib/apiErrorTokens";
 
@@ -58,6 +59,22 @@ function subtitleFromEffect(effect?: ApiEffect | null): string {
 
 function isTerminalStatus(status: string | undefined | null): boolean {
   return status === "completed" || status === "failed" || status === "expired";
+}
+
+type SearchParamsLike = { get: (key: string) => string | null };
+
+function parseVideoId(params: SearchParamsLike): number | null {
+  const raw = params.get("videoId");
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.trunc(n);
+}
+
+function parseUploadId(params: SearchParamsLike): string | null {
+  const raw = params.get("uploadId");
+  if (!raw) return null;
+  return raw.trim() || null;
 }
 
 const FORBIDDEN_UPLOAD_HEADERS = new Set([
@@ -144,23 +161,13 @@ function formatUploadError(err: ApiError): string {
 }
 
 export default function ProcessingClient({ slug }: { slug: string }) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { openAuth, openPlans } = useUiGuards();
-  const videoId = useMemo(() => {
-    const raw = searchParams.get("videoId");
-    if (!raw) return null;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return Math.trunc(n);
-  }, [searchParams]);
-  const uploadId = useMemo(() => {
-    const raw = searchParams.get("uploadId");
-    if (!raw) return null;
-    return raw.trim() || null;
-  }, [searchParams]);
+  const [videoId, setVideoId] = useState<number | null>(() => parseVideoId(searchParams));
+  const [uploadId, setUploadId] = useState<string | null>(() => parseUploadId(searchParams));
 
   const token = useAuthToken();
+  const [authResolved, setAuthResolved] = useState(false);
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [localPreviewReady, setLocalPreviewReady] = useState(false);
   const [previewNonce, setPreviewNonce] = useState(0);
@@ -183,6 +190,28 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const [doneSteps, setDoneSteps] = useState(0);
   const [progressValue, setProgressValue] = useState(8);
   const processingStartMsRef = useRef<number | null>(null);
+  const prevShowResultRef = useRef(false);
+  const activeToken = authResolved ? token ?? getAccessToken() : null;
+
+  useEffect(() => {
+    setAuthResolved(true);
+  }, []);
+
+  const replaceProcessingUrl = useCallback((nextVideoId: number | null, nextUploadId: string | null) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (nextVideoId) {
+      url.searchParams.set("videoId", String(nextVideoId));
+    } else {
+      url.searchParams.delete("videoId");
+    }
+    if (nextUploadId) {
+      url.searchParams.set("uploadId", nextUploadId);
+    } else {
+      url.searchParams.delete("uploadId");
+    }
+    window.history.replaceState({}, "", url.toString());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,7 +347,9 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         if (/^\d+$/.test(existing)) {
           const cachedVideoId = Number(existing);
           if (Number.isFinite(cachedVideoId) && cachedVideoId > 0) {
-            router.replace(`/effects/${encodeURIComponent(slug)}/processing?videoId=${cachedVideoId}`);
+            setVideoId(cachedVideoId);
+            setUploadId(null);
+            replaceProcessingUrl(cachedVideoId, null);
             return;
           }
         }
@@ -415,7 +446,9 @@ export default function ProcessingClient({ slug }: { slug: string }) {
         await deletePendingUpload(uploadId);
         setUploadStatus("done");
         uploadInFlightRef.current = false;
-        router.replace(`/effects/${encodeURIComponent(slug)}/processing?videoId=${video.id}`);
+        setVideoId(video.id);
+        setUploadId(null);
+        replaceProcessingUrl(video.id, null);
       } catch (err) {
         if (err instanceof ApiError) {
           const message = formatUploadError(err);
@@ -442,7 +475,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
     effectState,
     localPreviewUrl,
     pendingFile,
-    router,
+    replaceProcessingUrl,
     slug,
     token,
     uploadAttempt,
@@ -536,7 +569,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   const showResult = videoStatus === "completed";
   const activeStepper = videoStatus === "completed" ? 3 : isUploadPhase ? 1 : 2;
   const displayProgress = isUploadPhase ? uploadProgress : progressValue;
-  const showStatusError = token && videoState.status === "error";
 
   const effectName = effectState.status === "success" ? effectState.data.name : "effect";
   const processingSubtitle =
@@ -565,14 +597,6 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   };
 
   useEffect(() => {
-    if (!showStatusError) return;
-    const rafId = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(rafId);
-  }, [showStatusError]);
-
-  useEffect(() => {
     if (!videoId) return;
     if (videoStatus !== "completed" && videoStatus !== "failed") return;
 
@@ -585,6 +609,10 @@ export default function ProcessingClient({ slug }: { slug: string }) {
       }
     }
   }, [previewKey, videoId, videoStatus]);
+
+  useEffect(() => {
+    prevShowResultRef.current = showResult;
+  }, [showResult]);
 
   // Keep progress moving while processing.
   useEffect(() => {
@@ -752,7 +780,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           </div>
         ) : null}
 
-        {!token ? (
+        {authResolved && !activeToken ? (
           <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
             <div className="text-sm font-semibold text-white">Sign in to see progress</div>
             <div className="mt-2 text-xs leading-5 text-white/60">
@@ -768,7 +796,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           </div>
         ) : null}
 
-        {token && videoState.status === "error" ? (
+        {activeToken && videoState.status === "error" ? (
           <div className="mt-6 rounded-3xl border border-red-500/25 bg-red-500/10 p-5">
             <div className="flex items-start gap-3">
               <span className="mt-0.5 grid h-9 w-9 place-items-center rounded-2xl bg-red-500/15 text-red-200">
@@ -793,49 +821,65 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           </div>
         ) : null}
 
-        {token && videoState.status !== "error" ? (
+        {activeToken && videoState.status !== "error" ? (
           <main className="mt-6">
             <div className="mx-auto w-full max-w-sm">
-              {showResult ? (
-                <ProcessingStepResult
-                  processedFileUrl={processedFileUrl}
-                  previewImageUrl={previewImageUrl}
-                  effectName={effectName}
-                  subtitle={resultSubtitle}
-                  watermarkLabel={watermarkLabel}
-                  videoId={videoId}
-                  isPublic={isPublic}
-                />
-              ) : isUploadPhase ? (
-                <ProcessingStepUpload
-                  previewVideoUrl={previewVideoUrl}
-                  previewImageUrl={previewImageUrl}
-                  onPreviewError={handlePreviewError}
-                  currentIcon={CurrentIcon}
-                  displayProgress={displayProgress}
-                  activeStepLabel={activeStepLabel}
-                  effectName={effectName}
-                  subtitle={processingSubtitle}
-                  uploadStatus={uploadStatus}
-                  uploadProgress={uploadProgress}
-                />
-              ) : (
-                <ProcessingStepProcessing
-                  previewVideoUrl={previewVideoUrl}
-                  previewImageUrl={previewImageUrl}
-                  onPreviewError={handlePreviewError}
-                  currentIcon={CurrentIcon}
-                  displayProgress={displayProgress}
-                  activeStepLabel={activeStepLabel}
-                  effectName={effectName}
-                  subtitle={processingSubtitle}
-                  steps={PROCESSING_STEPS}
-                  stepStatuses={stepStatuses}
-                  showError={videoStatus === "failed"}
-                  errorMessage={errorMessage}
-                  uploadAnotherHref={uploadAnotherHref}
-                />
-              )}
+              <div className="grid">
+                <div
+                  className={`col-start-1 row-start-1 transition-opacity duration-300 ${
+                    showResult ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                  }`}
+                >
+                  <ProcessingStepResult
+                    processedFileUrl={processedFileUrl}
+                    previewImageUrl={previewImageUrl}
+                    effectName={effectName}
+                    subtitle={resultSubtitle}
+                    watermarkLabel={watermarkLabel}
+                    videoId={videoId}
+                    isPublic={isPublic}
+                  />
+                </div>
+                <div
+                  className={`col-start-1 row-start-1 transition-opacity duration-300 ${
+                    !showResult && isUploadPhase ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                  }`}
+                >
+                  <ProcessingStepUpload
+                    previewVideoUrl={previewVideoUrl}
+                    previewImageUrl={previewImageUrl}
+                    onPreviewError={handlePreviewError}
+                    currentIcon={CurrentIcon}
+                    displayProgress={displayProgress}
+                    activeStepLabel={activeStepLabel}
+                    effectName={effectName}
+                    subtitle={processingSubtitle}
+                    uploadStatus={uploadStatus}
+                    uploadProgress={uploadProgress}
+                  />
+                </div>
+                <div
+                  className={`col-start-1 row-start-1 transition-opacity duration-300 ${
+                    !showResult && !isUploadPhase ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                  }`}
+                >
+                  <ProcessingStepProcessing
+                    previewVideoUrl={previewVideoUrl}
+                    previewImageUrl={previewImageUrl}
+                    onPreviewError={handlePreviewError}
+                    currentIcon={CurrentIcon}
+                    displayProgress={displayProgress}
+                    activeStepLabel={activeStepLabel}
+                    effectName={effectName}
+                    subtitle={processingSubtitle}
+                    steps={PROCESSING_STEPS}
+                    stepStatuses={stepStatuses}
+                    showError={videoStatus === "failed"}
+                    errorMessage={errorMessage}
+                    uploadAnotherHref={uploadAnotherHref}
+                  />
+                </div>
+              </div>
             </div>
           </main>
         ) : null}

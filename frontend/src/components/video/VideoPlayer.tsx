@@ -11,6 +11,10 @@ type VideoPlayerProps = {
   controls?: boolean;
   preload?: "auto" | "metadata" | "none";
   onError?: () => void;
+  onLoadedData?: () => void;
+  onPlaying?: () => void;
+  onTimeUpdate?: () => void;
+  videoRef?: React.Ref<HTMLVideoElement>;
   children?: ReactNode;
 };
 
@@ -24,6 +28,10 @@ export default function VideoPlayer({
   controls = false,
   preload = "metadata",
   onError,
+  onLoadedData,
+  onPlaying,
+  onTimeUpdate,
+  videoRef,
   children,
 }: VideoPlayerProps) {
   if (!src) {
@@ -32,6 +40,7 @@ export default function VideoPlayer({
 
   return (
     <video
+      ref={videoRef}
       className={cn("h-full w-full", className)}
       src={src}
       autoPlay={autoPlay}
@@ -41,6 +50,9 @@ export default function VideoPlayer({
       controls={controls}
       preload={preload}
       onError={onError}
+      onLoadedData={onLoadedData}
+      onPlaying={onPlaying}
+      onTimeUpdate={onTimeUpdate}
     />
   );
 }

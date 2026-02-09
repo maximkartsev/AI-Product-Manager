@@ -4,6 +4,8 @@ import { IconPlay } from "@/app/_components/landing/icons";
 import { SlidersHorizontal } from "lucide-react";
 import { gradientClass, gradientForSlug, type GradientStop } from "@/lib/gradients";
 import type { ApiEffect } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { useEffect, useState } from "react";
 
 type LandingEffect = {
   name: string;
@@ -52,6 +54,22 @@ export function EffectCard(props: EffectCardProps) {
   if (props.variant === "landingPopular") {
     const { effect, onTry } = props;
     const g = gradientClass(effect.gradient.from, effect.gradient.to);
+    const mediaSrcKey = effect.thumbnail_url ?? effect.preview_video_url ?? "";
+    const [mediaReady, setMediaReady] = useState(!mediaSrcKey);
+
+    useEffect(() => {
+      setMediaReady(!mediaSrcKey);
+    }, [mediaSrcKey]);
+
+    const mediaClassName = cn(
+      "absolute inset-0 h-full w-full object-cover transition-opacity duration-150",
+      mediaReady ? "opacity-100" : "opacity-0",
+    );
+    const coverClassName = cn(
+      "absolute inset-0 transition-opacity duration-150",
+      mediaReady ? "opacity-0" : "opacity-100",
+      !mediaReady && "skeleton-shimmer",
+    );
     return (
       <ConfigurableCard
         frameClassName="w-44 overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
@@ -62,11 +80,27 @@ export function EffectCard(props: EffectCardProps) {
           <>
             {effect.thumbnail_url ? (
               <img
-                className="absolute inset-0 h-full w-full object-cover"
+                className={mediaClassName}
                 src={effect.thumbnail_url}
                 alt={effect.name}
+                onLoad={() => setMediaReady(true)}
+                onError={() => setMediaReady(true)}
+              />
+            ) : effect.preview_video_url ? (
+              <VideoPlayer
+                className={mediaClassName}
+                src={effect.preview_video_url}
+                muted
+                loop
+                autoPlay
+                playsInline
+                preload="metadata"
+                onLoadedData={() => setMediaReady(true)}
+                onPlaying={() => setMediaReady(true)}
+                onError={() => setMediaReady(true)}
               />
             ) : null}
+            <div className={coverClassName} />
             {effect.is_premium ? (
               <span className="absolute left-3 top-3 inline-flex items-center rounded-full border border-white/20 bg-black/45 px-2.5 py-1 text-[10px] font-semibold text-white/90 backdrop-blur-sm">
                 Premium
@@ -122,6 +156,22 @@ export function EffectCard(props: EffectCardProps) {
     const gradient = gradientForSlug(effect.slug);
     const g = gradientClass(gradient.from, gradient.to);
     const usesLabel = formatUses(effect) ?? (effect.is_new ? "New" : "Try it");
+    const mediaSrcKey = effect.thumbnail_url ?? effect.preview_video_url ?? "";
+    const [mediaReady, setMediaReady] = useState(!mediaSrcKey);
+
+    useEffect(() => {
+      setMediaReady(!mediaSrcKey);
+    }, [mediaSrcKey]);
+
+    const mediaClassName = cn(
+      "absolute inset-0 h-full w-full object-cover transition-opacity duration-150",
+      mediaReady ? "opacity-100" : "opacity-0",
+    );
+    const coverClassName = cn(
+      "absolute inset-0 transition-opacity duration-150",
+      mediaReady ? "opacity-0" : "opacity-100",
+      !mediaReady && "skeleton-shimmer",
+    );
 
     return (
       <ConfigurableCard
@@ -134,18 +184,28 @@ export function EffectCard(props: EffectCardProps) {
         media={
           <>
             {effect.thumbnail_url ? (
-              <img className="absolute inset-0 h-full w-full object-cover" src={effect.thumbnail_url} alt={effect.name} />
+              <img
+                className={mediaClassName}
+                src={effect.thumbnail_url}
+                alt={effect.name}
+                onLoad={() => setMediaReady(true)}
+                onError={() => setMediaReady(true)}
+              />
             ) : effect.preview_video_url ? (
               <VideoPlayer
-                className="absolute inset-0 h-full w-full object-cover"
+                className={mediaClassName}
                 src={effect.preview_video_url}
                 autoPlay
                 loop
                 muted
                 playsInline
                 preload="metadata"
+                onLoadedData={() => setMediaReady(true)}
+                onPlaying={() => setMediaReady(true)}
+                onError={() => setMediaReady(true)}
               />
             ) : null}
+            <div className={coverClassName} />
             <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/15 to-black/70" />
             <div className="absolute inset-0 grid place-items-center text-white/90">
               <span className="grid h-10 w-10 place-items-center rounded-full border border-white/25 bg-black/35 backdrop-blur-sm">
@@ -173,6 +233,22 @@ export function EffectCard(props: EffectCardProps) {
   const gradient = gradientForSlug(effect.slug);
   const g = gradientClass(gradient.from, gradient.to);
   const usesLabel = formatUses(effect) ?? (effect.is_new ? "New" : "Try it");
+  const mediaSrcKey = effect.thumbnail_url ?? effect.preview_video_url ?? "";
+  const [mediaReady, setMediaReady] = useState(!mediaSrcKey);
+
+  useEffect(() => {
+    setMediaReady(!mediaSrcKey);
+  }, [mediaSrcKey]);
+
+  const mediaClassName = cn(
+    "absolute inset-0 h-full w-full object-cover transition-opacity duration-150",
+    mediaReady ? "opacity-100" : "opacity-0",
+  );
+  const coverClassName = cn(
+    "absolute inset-0 transition-opacity duration-150",
+    mediaReady ? "opacity-0" : "opacity-100",
+    !mediaReady && "skeleton-shimmer",
+  );
 
   return (
     <ConfigurableCard
@@ -186,18 +262,28 @@ export function EffectCard(props: EffectCardProps) {
       media={
         <>
           {effect.thumbnail_url ? (
-            <img className="absolute inset-0 h-full w-full object-cover" src={effect.thumbnail_url} alt={effect.name} />
+            <img
+              className={mediaClassName}
+              src={effect.thumbnail_url}
+              alt={effect.name}
+              onLoad={() => setMediaReady(true)}
+              onError={() => setMediaReady(true)}
+            />
           ) : effect.preview_video_url ? (
             <VideoPlayer
-              className="absolute inset-0 h-full w-full object-cover"
+              className={mediaClassName}
               src={effect.preview_video_url}
               autoPlay
               loop
               muted
               playsInline
               preload="metadata"
+              onLoadedData={() => setMediaReady(true)}
+              onPlaying={() => setMediaReady(true)}
+              onError={() => setMediaReady(true)}
             />
           ) : null}
+          <div className={coverClassName} />
           <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/15 to-black/60" />
           <div className="absolute inset-0 grid place-items-center text-white/90">
             <span className="grid h-10 w-10 place-items-center rounded-full border border-white/25 bg-black/35 backdrop-blur-sm">
@@ -225,16 +311,16 @@ export function EffectCardSkeleton({
   variant,
   gradient,
 }: {
-  variant: "effectsFeed" | "landingPopular";
+  variant: "effectsFeed" | "effectsGrid" | "landingPopular";
   gradient: GradientStop;
 }) {
   const g = gradientClass(gradient.from, gradient.to);
 
   if (variant === "landingPopular") {
     return (
-      <div className="snap-start animate-pulse">
+      <div className="snap-start">
         <ConfigurableCard
-          frameClassName="w-44 overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
+          frameClassName="w-44 overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] skeleton-shimmer"
           mediaClassName={`relative aspect-[9/12] bg-gradient-to-br ${g}`}
           bodyClassName="p-3"
           bodyInsideFrame
@@ -258,13 +344,37 @@ export function EffectCardSkeleton({
     );
   }
 
+  if (variant === "effectsGrid") {
+    return (
+      <ConfigurableCard
+        className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left shadow-[0_10px_24px_rgba(0,0,0,0.25)] skeleton-shimmer"
+        mediaClassName={`relative aspect-[3/4] bg-gradient-to-br ${g}`}
+        bodyClassName="p-3"
+        media={
+          <>
+            <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />
+            <div className="absolute inset-0 grid place-items-center">
+              <span className="h-10 w-10 rounded-full border border-white/10 bg-white/10" />
+            </div>
+          </>
+        }
+        body={
+          <>
+            <div className="h-3 w-24 rounded bg-white/10" />
+            <div className="mt-1 h-3 w-16 rounded bg-white/5" />
+          </>
+        }
+      />
+    );
+  }
+
   return (
-    <div className="snap-start animate-pulse">
+    <div className="snap-start">
       <ConfigurableCard
         className="w-32 sm:w-36"
-        frameClassName="overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.25)]"
+        frameClassName="overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.25)] skeleton-shimmer"
         mediaClassName={`relative aspect-[3/4] bg-gradient-to-br ${g}`}
-        bodyClassName="mt-2"
+        bodyClassName="mt-2 skeleton-shimmer"
         media={<div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-black/70" />}
         body={
           <>

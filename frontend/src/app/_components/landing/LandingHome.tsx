@@ -12,10 +12,11 @@ import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import useUiGuards from "@/components/guards/useUiGuards";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { features, hero, trustBadges, type Effect, type GalleryItem } from "./landingData";
 import { IconArrowRight, IconBolt, IconGallery, IconSparkles, IconWand } from "./icons";
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
+import useCarouselScrollHint from "@/components/ui/useCarouselScrollHint";
 import { EffectCard, EffectCardSkeleton } from "@/components/cards/EffectCard";
 import { PublicGalleryCard, PublicGalleryCardSkeleton } from "@/components/cards/PublicGalleryCard";
 import { EFFECT_GRADIENTS, gradientClass, gradientForSlug } from "@/lib/gradients";
@@ -144,6 +145,13 @@ export default function LandingHome() {
   const [featuredEffect, setFeaturedEffect] = useState<LandingEffect | null>(null);
   const [galleryState, setGalleryState] = useState<PublicGalleryState>({ status: "loading" });
   const [galleryReload, setGalleryReload] = useState(0);
+  const effectsCarouselRef = useRef<HTMLDivElement | null>(null);
+  const effectsCount = effectsState.status === "success" ? effectsState.data.length : 0;
+  const showEffectsHint = useCarouselScrollHint({
+    scrollRef: effectsCarouselRef,
+    isLoading: effectsState.status !== "success" && effectsState.status !== "empty",
+    deps: [effectsCount],
+  });
   const {
     fileInputRef,
     startUpload,
@@ -376,7 +384,7 @@ export default function LandingHome() {
               </div>
             </div>
 
-            <div className="px-4 pt-4 md:mx-auto md:max-w-md">
+            <div className="sticky bottom-8 z-20 px-4 pt-4 md:mx-auto md:max-w-md">
               <button
                 type="button"
                 onClick={handleDoSameClick}
@@ -436,7 +444,7 @@ export default function LandingHome() {
                 No effects yet.
               </div>
             ) : (
-              <HorizontalCarousel className="mt-4 -mx-4" showRightFade>
+              <HorizontalCarousel className="mt-4 -mx-4" showRightFade scrollRef={effectsCarouselRef}>
                 {effectsState.status === "success"
                   ? effectsState.data.map((effect) => (
                       <EffectCard
@@ -452,7 +460,7 @@ export default function LandingHome() {
               </HorizontalCarousel>
             )}
 
-            {effectsState.status === "success" && effectsState.data.length > 1 ? (
+            {effectsState.status !== "empty" && showEffectsHint ? (
               <p className="mt-3 text-center text-xs text-white/40">Swipe to explore more effects →</p>
             ) : null}
           </section>

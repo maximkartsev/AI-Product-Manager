@@ -8,6 +8,7 @@ import EffectsFeedClient from "@/app/effects/EffectsFeedClient";
 import {
   ApiError,
   clearAccessToken,
+  getAccessToken,
   getVideo,
   getVideosIndex,
   publishVideo,
@@ -18,7 +19,9 @@ import VideoPlayer from "@/components/video/VideoPlayer";
 import { cn } from "@/lib/utils";
 import { IconSparkles } from "@/app/_components/landing/icons";
 import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
-import UserVideoCard, { resolveVideoStatus } from "@/components/cards/UserVideoCard";
+import useCarouselScrollHint from "@/components/ui/useCarouselScrollHint";
+import UserVideoCard, { resolveVideoStatus, UserVideoCardSkeleton } from "@/components/cards/UserVideoCard";
+import { EFFECT_GRADIENTS } from "@/lib/gradients";
 import { ChevronLeft, Download, Globe2, Loader2, Wand2, X } from "lucide-react";
 import useAuthToken from "@/lib/useAuthToken";
 
@@ -37,9 +40,48 @@ function isTerminalVideoStatus(status?: string | null): boolean {
   return status === "completed" || status === "failed" || status === "expired";
 }
 
+function GroupedVideoRow({
+  group,
+  onOpen,
+  onRepeat,
+}: {
+  group: { key: string; name: string; slug: string | null; items: VideoData[] };
+  onOpen: (video: VideoData) => void;
+  onRepeat: (video: VideoData) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const showHint = useCarouselScrollHint({
+    scrollRef,
+    isLoading: false,
+    deps: [group.items.length],
+  });
+
+  return (
+    <section>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-white">{group.name}</div>
+      </div>
+      <HorizontalCarousel className="mt-3 -mx-4" showRightFade scrollRef={scrollRef}>
+        {group.items.map((video) => (
+          <div key={video.id} className="snap-start">
+            <UserVideoCard
+              variant="carousel"
+              video={video}
+              onOpen={() => onOpen(video)}
+              onRepeat={() => onRepeat(video)}
+            />
+          </div>
+        ))}
+      </HorizontalCarousel>
+      {showHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+    </section>
+  );
+}
+
 export default function UserVideosClient() {
   const router = useRouter();
   const token = useAuthToken();
+  const [authResolved, setAuthResolved] = useState(false);
   const { openAuth } = useUiGuards();
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [drawerVideo, setDrawerVideo] = useState<VideoData | null>(null);
@@ -56,6 +98,11 @@ export default function UserVideosClient() {
     loadingMore: false,
   });
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const activeToken = authResolved ? token ?? getAccessToken() : null;
+
+  useEffect(() => {
+    setAuthResolved(true);
+  }, []);
 
   const loadVideos = async (page: number) => {
     setVideosState((prev) => ({
@@ -89,7 +136,8 @@ export default function UserVideosClient() {
   };
 
   useEffect(() => {
-    if (!token) {
+    if (!authResolved) return;
+    if (!activeToken) {
       setVideosState({
         items: [],
         page: 0,
@@ -101,10 +149,10 @@ export default function UserVideosClient() {
       return;
     }
     void loadVideos(1);
-  }, [token]);
+  }, [activeToken, authResolved]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!authResolved || !activeToken) return;
     const el = loadMoreRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
@@ -120,7 +168,7 @@ export default function UserVideosClient() {
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [token, videosState.loading, videosState.loadingMore, videosState.page, videosState.totalPages, videosState.error]);
+  }, [activeToken, authResolved, videosState.loading, videosState.loadingMore, videosState.page, videosState.totalPages, videosState.error]);
 
   const handleOpenVideo = (video: VideoData) => {
     setDrawerError(null);
@@ -196,7 +244,7 @@ export default function UserVideosClient() {
   }, [drawerVideo?.id]);
 
   useEffect(() => {
-    if (!drawerVideo || !token) return;
+    if (!drawerVideo || !activeToken) return;
     let cancelled = false;
     let timeoutId: number | null = null;
 
@@ -242,9 +290,9 @@ export default function UserVideosClient() {
       cancelled = true;
       if (timeoutId) window.clearTimeout(timeoutId);
     };
-  }, [drawerVideo?.id, token]);
+  }, [drawerVideo?.id, activeToken]);
 
-  const showAuthPrompt = !token;
+  const showAuthPrompt = authResolved && !activeToken;
   const showEmptyState =
     !showAuthPrompt && !videosState.loading && !videosState.error && videosState.items.length === 0;
   const drawerIsPublic = Boolean(drawerVideo?.is_public);
@@ -347,8 +395,38 @@ export default function UserVideosClient() {
             </div>
           ) : null}
 
-          {videosState.loading && videosState.items.length === 0 ? (
-            <div className="text-center text-xs text-white/50">Loading videos…</div>
+          {!showAuthPrompt && videosState.loading && videosState.items.length === 0 ? (
+            viewMode === "grid" ? (
+              <div className="flex flex-wrap -mx-1.5">
+                {Array.from({ length: 6 }).map((_, idx) => (
+                  <div key={idx} className="mb-3 w-1/2 px-1.5 lg:w-1/4">
+                    <UserVideoCardSkeleton
+                      variant="grid"
+                      gradient={EFFECT_GRADIENTS[idx % EFFECT_GRADIENTS.length]!}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {Array.from({ length: 2 }).map((_, sectionIdx) => (
+                  <section key={sectionIdx}>
+                    <div className="h-3 w-28 rounded bg-white/10 skeleton-shimmer" />
+                    <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
+                      {Array.from({ length: 6 }).map((__, idx) => (
+                        <div key={idx} className="snap-start">
+                          <UserVideoCardSkeleton
+                            variant="carousel"
+                            gradient={EFFECT_GRADIENTS[idx % EFFECT_GRADIENTS.length]!}
+                          />
+                        </div>
+                      ))}
+                    </HorizontalCarousel>
+                    <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
+                  </section>
+                ))}
+              </div>
+            )
           ) : null}
 
           {showEmptyState ? (
@@ -380,26 +458,12 @@ export default function UserVideosClient() {
             ) : (
               <div className="space-y-6">
                 {groupedVideos.map((group) => (
-                  <section key={group.key}>
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold text-white">{group.name}</div>
-                    </div>
-                    <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
-                      {group.items.map((video) => (
-                        <div key={video.id} className="snap-start">
-                          <UserVideoCard
-                            variant="carousel"
-                            video={video}
-                            onOpen={() => handleOpenVideo(video)}
-                            onRepeat={() => handleRepeatVideo(video)}
-                          />
-                        </div>
-                      ))}
-                    </HorizontalCarousel>
-                    {group.items.length > 1 ? (
-                      <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
-                    ) : null}
-                  </section>
+                  <GroupedVideoRow
+                    key={group.key}
+                    group={group}
+                    onOpen={handleOpenVideo}
+                    onRepeat={handleRepeatVideo}
+                  />
                 ))}
               </div>
             )

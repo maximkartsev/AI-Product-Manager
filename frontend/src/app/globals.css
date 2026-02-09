@@ -50,6 +50,36 @@ body {
   display: none;
 }
 
+@keyframes skeleton-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+:where(.skeleton-shimmer) {
+  position: relative;
+  overflow: hidden;
+}
+
+:where(.skeleton-shimmer)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.12) 50%, transparent 100%);
+  animation: skeleton-shimmer 1.6s infinite;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.skeleton-shimmer)::after {
+    animation: none;
+  }
+}
+
 @media (max-width: 640px) {
   .auth-modal-scrollbar {
     display: none;

@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import ConfigurableCard from "@/components/ui/ConfigurableCard";
 import { cn } from "@/lib/utils";
 import { Download, Play, Wand2 } from "lucide-react";
 import type { VideoData } from "@/lib/api";
+import { gradientClass, gradientForSlug, type GradientStop } from "@/lib/gradients";
 
 export type VideoStatusBadge = {
   label: string;
@@ -49,6 +51,26 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
   const canDownload = Boolean(video.processed_file_url);
   const isCarousel = variant === "carousel";
   const actionTextSize = isCarousel ? "text-[10px]" : "text-[11px]";
+  const gradient = gradientForSlug(video.effect?.slug ?? String(video.id));
+  const g = gradientClass(gradient.from, gradient.to);
+  const mediaSrcKey = previewUrl ?? "";
+  const [mediaReady, setMediaReady] = useState(!mediaSrcKey);
+
+  useEffect(() => {
+    setMediaReady(!mediaSrcKey);
+  }, [mediaSrcKey]);
+
+  const hasMedia = Boolean(mediaSrcKey);
+  const coverClassName = cn(
+    `absolute inset-0 bg-gradient-to-br ${g} transition-opacity duration-150`,
+    mediaReady ? "opacity-0" : "opacity-100",
+    hasMedia && !mediaReady && "skeleton-shimmer",
+  );
+
+  const videoClassName = cn(
+    "absolute inset-0 h-full w-full object-cover transition-opacity duration-150",
+    mediaReady ? "opacity-100" : "opacity-0",
+  );
 
   return (
     <ConfigurableCard
@@ -65,17 +87,19 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
             <div className="relative aspect-[9/13] w-full">
               {previewUrl ? (
                 <VideoPlayer
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className={videoClassName}
                   src={previewUrl}
                   playsInline
                   autoPlay
                   loop
                   muted
                   preload="metadata"
+                  onLoadedData={() => setMediaReady(true)}
+                  onPlaying={() => setMediaReady(true)}
+                  onError={() => setMediaReady(true)}
                 />
-              ) : (
-                <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/40 via-violet-500/30 to-cyan-400/30" />
-              )}
+              ) : null}
+              <div className={coverClassName} />
               <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/80" />
 
               <span
@@ -140,6 +164,49 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
             <Wand2 className={cn(isCarousel ? "h-3 w-3" : "h-3.5 w-3.5")} />
             Repeat
           </button>
+        </>
+      }
+    />
+  );
+}
+
+export function UserVideoCardSkeleton({
+  variant,
+  gradient,
+}: {
+  variant: "grid" | "carousel";
+  gradient: GradientStop;
+}) {
+  const isCarousel = variant === "carousel";
+  const g = gradientClass(gradient.from, gradient.to);
+
+  return (
+    <ConfigurableCard
+      className={cn(isCarousel ? "w-28 sm:w-32" : "w-full")}
+      media={
+        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] skeleton-shimmer">
+          <div className="relative aspect-[9/13] w-full">
+            <div className={`absolute inset-0 bg-gradient-to-br ${g}`} />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/80" />
+            <div className="absolute inset-0 grid place-items-center">
+              <span
+                className={cn(
+                  "grid place-items-center rounded-full border border-white/10 bg-white/10",
+                  isCarousel ? "h-8 w-8" : "h-10 w-10",
+                )}
+              />
+            </div>
+            <div className="absolute bottom-2 left-2 right-2">
+              <div className={cn("h-3 w-24 rounded bg-white/15", isCarousel && "h-2.5 w-20")} />
+            </div>
+          </div>
+        </div>
+      }
+      bodyClassName={cn("mt-2 flex gap-1.5 skeleton-shimmer", isCarousel ? "flex-col" : "flex-row")}
+      body={
+        <>
+          <div className="h-7 w-full rounded-xl bg-white/10" />
+          <div className="h-7 w-full rounded-xl bg-white/10" />
         </>
       }
     />

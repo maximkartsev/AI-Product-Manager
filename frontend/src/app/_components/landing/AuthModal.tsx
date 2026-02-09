@@ -79,7 +79,7 @@ function Field({
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
           disabled={disabled}
-          className="h-12 w-full rounded-2xl border border-white/10 bg-black/35 px-10 text-sm text-white placeholder:text-white/30 outline-none transition focus:border-fuchsia-400/60 focus:ring-2 focus:ring-fuchsia-400/15"
+          className="h-12 w-full rounded-2xl border border-white/10 bg-black/35 px-10 text-base text-white placeholder:text-white/30 outline-none transition focus:border-fuchsia-400/60 focus:ring-2 focus:ring-fuchsia-400/15 sm:text-sm"
         />
         {right ? <span className="absolute inset-y-0 right-3 grid place-items-center">{right}</span> : null}
       </span>
@@ -111,6 +111,7 @@ function formatAuthError(err: ApiError): string {
 export default function AuthModal({ open, onClose, initialMode = "signup" }: Props) {
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollTrackRef = useRef<HTMLDivElement | null>(null);
   const scrollThumbRef = useRef<HTMLDivElement | null>(null);
@@ -195,8 +196,9 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
   useEffect(() => {
     if (!open) return;
 
-    const prevOverflow = document.documentElement.style.overflow;
-    document.documentElement.style.overflow = "hidden";
+    const body = document.body;
+    const prevOverflow = body.style.overflow;
+    body.style.overflow = "hidden";
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") handleClose();
@@ -207,9 +209,34 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      document.documentElement.style.overflow = prevOverflow;
+      body.style.overflow = prevOverflow;
     };
   }, [handleClose, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const target = viewportRef.current;
+    const viewport = window.visualViewport;
+    if (!target || !viewport) return;
+
+    const update = () => {
+      target.style.setProperty("--auth-modal-vh", `${Math.round(viewport.height)}px`);
+      target.style.setProperty("--auth-modal-offset-top", `${Math.round(viewport.offsetTop)}px`);
+    };
+
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    window.addEventListener("orientationchange", update);
+
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+      window.removeEventListener("orientationchange", update);
+      target.style.removeProperty("--auth-modal-vh");
+      target.style.removeProperty("--auth-modal-offset-top");
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -340,7 +367,13 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     email.trim().length > 0 && password.length > 0 && (mode === "signin" || name.trim().length > 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+    <div
+      ref={viewportRef}
+      className="auth-modal-viewport fixed inset-0 z-50 flex items-start justify-center p-4 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+    >
       <button
         type="button"
         aria-label="Close authentication modal"
@@ -349,11 +382,11 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
       />
 
       <div className="relative w-full max-w-md">
-        <div className="relative max-h-[calc(100vh-2rem)] overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/90 shadow-2xl">
+        <div className="auth-modal-max-h relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/90 shadow-2xl">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(236,72,153,0.18),transparent_55%),radial-gradient(circle_at_70%_30%,rgba(99,102,241,0.14),transparent_60%)]" />
 
           <div className="relative overflow-hidden">
-            <div ref={scrollRef} className="auth-modal-scroll-body max-h-[calc(100vh-2rem)] overflow-y-auto p-5 pr-7">
+            <div ref={scrollRef} className="auth-modal-max-h auth-modal-scroll-body overflow-y-auto p-5 pr-7">
             <div className="flex justify-end">
               <button
                 ref={closeRef}

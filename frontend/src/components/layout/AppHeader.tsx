@@ -171,7 +171,7 @@ export default function AppHeader() {
                       role="menuitem"
                       onClick={() => {
                         setMenuOpen(false);
-                        window.location.assign("http://localhost:3002/effects");
+                        router.push("/effects");
                       }}
                       className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-white/80 transition hover:bg-white/5"
                     >

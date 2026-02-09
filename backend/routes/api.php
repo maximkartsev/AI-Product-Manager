@@ -4,12 +4,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\BaseController;
 use App\Http\Middleware\EnsureTenantMatchesUser;
+use App\Http\Middleware\InitializeTenancyByDomainOrUser;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureWorkerToken;
 use App\Http\Controllers\ComfyUiWorkerController;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
 use App\Http\Controllers\AiJobController;
-use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
 use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
 use \App\Http\Controllers\RecordController as RecordController;
 use \App\Http\Controllers\ArticleController as ArticleController;
@@ -60,9 +60,9 @@ Route::middleware([EnsureWorkerToken::class])->prefix('worker')->group(function 
  * Tenant routes (tenant resolved by domain/subdomain).
  */
 Route::middleware([
-    InitializeTenancyByDomain::class,
     PreventAccessFromCentralDomains::class,
     'auth:sanctum',
+    InitializeTenancyByDomainOrUser::class,
     EnsureTenantMatchesUser::class,
 ])->group(function () {
     Route::get('/me', [MeController::class,'show']);

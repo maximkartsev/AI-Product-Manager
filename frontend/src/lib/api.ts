@@ -330,6 +330,12 @@ function resolveApiBaseUrl(): string {
   return baseUrl.replace(/\/$/, "");
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  if (!hostname) return false;
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return true;
+  return hostname.endsWith(".localhost");
+}
+
 function getEffectiveApiBaseUrl(): string {
   const base = resolveApiBaseUrl();
   const tenantDomain = getTenantDomain();
@@ -337,6 +343,11 @@ function getEffectiveApiBaseUrl(): string {
 
   try {
     const url = new URL(base);
+    const tenantIsLocalhost =
+      tenantDomain === "localhost" || tenantDomain.endsWith(".localhost");
+    if (tenantIsLocalhost && !isLoopbackHost(url.hostname)) {
+      return base;
+    }
     url.hostname = tenantDomain;
     return url.toString().replace(/\/$/, "");
   } catch {

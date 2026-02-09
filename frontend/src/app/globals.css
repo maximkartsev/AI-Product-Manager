@@ -44,10 +44,27 @@ body {
 .auth-modal-scroll-body {
   scrollbar-width: none;
   -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .auth-modal-scroll-body::-webkit-scrollbar {
   display: none;
+}
+
+.auth-modal-max-h {
+  max-height: calc(var(--auth-modal-vh, 100vh) - 2rem);
+}
+
+@supports (height: 100dvh) {
+  .auth-modal-max-h {
+    max-height: calc(var(--auth-modal-vh, 100dvh) - 2rem);
+  }
+}
+
+.auth-modal-viewport {
+  transform: translateY(var(--auth-modal-offset-top, 0px));
 }
 
 @keyframes skeleton-shimmer {

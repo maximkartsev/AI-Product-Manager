@@ -1,0 +1,12 @@
+{
+	"name": "Fire Power",
+	"slug": "fire-power",
+	"description": "Dramatic fire effects",
+	"type": "simple",
+	"category": "Fun",
+	"tags": ["fire", "flames", "dramatic", "power"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

@@ -1,5 +1,6 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export interface PaginationData {
@@ -36,22 +37,26 @@ export default function SmartPagination({
   return (
     <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 ${className}`}>
       <div className="flex items-center space-x-2">
-        <span className="text-sm text-gray-400">Show</span>
-        <select
+        <span className="text-sm text-muted-foreground">Show</span>
+        <Select
           value={perPage.toString()}
-          onChange={(e) => onPerPageChange(Number(e.target.value))}
-          className="w-20 rounded-md border border-slate-600 bg-slate-700 px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+          onValueChange={(value) => onPerPageChange(Number(value))}
         >
-          {perPageOptions.map((option) => (
-            <option key={option} value={option.toString()} className="bg-slate-700 text-white">
-              {option}
-            </option>
-          ))}
-        </select>
-        <span className="text-sm text-gray-400">per page</span>
+          <SelectTrigger className="w-20 h-9">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {perPageOptions.map((option) => (
+              <SelectItem key={option} value={option.toString()}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-sm text-muted-foreground">per page</span>
       </div>
 
-      <div className="text-sm text-gray-400">
+      <div className="text-sm text-muted-foreground">
         Showing {startItem}-{endItem} of {totalItems} {itemName}
       </div>
 
@@ -61,7 +66,6 @@ export default function SmartPagination({
           size="sm"
           onClick={() => onPageChange(page - 1)}
           disabled={page === 1}
-          className="border-slate-600/50 text-slate-300 hover:text-slate-200 hover:bg-slate-600/20 bg-transparent"
         >
           <ChevronLeft className="w-4 h-4" />
           Previous
@@ -86,11 +90,6 @@ export default function SmartPagination({
                 variant={pageNum === page ? "default" : "outline"}
                 size="sm"
                 onClick={() => onPageChange(pageNum)}
-                className={
-                  pageNum === page
-                    ? "bg-purple-600 hover:bg-purple-700 text-white"
-                    : "border-slate-600/50 text-slate-300 hover:text-slate-200 hover:bg-slate-600/20 bg-transparent"
-                }
               >
                 {pageNum}
               </Button>
@@ -103,7 +102,6 @@ export default function SmartPagination({
           size="sm"
           onClick={() => onPageChange(page + 1)}
           disabled={page === totalPages}
-          className="border-slate-600/50 text-slate-300 hover:text-slate-200 hover:bg-slate-600/20 bg-transparent"
         >
           Next
           <ChevronRight className="w-4 h-4" />

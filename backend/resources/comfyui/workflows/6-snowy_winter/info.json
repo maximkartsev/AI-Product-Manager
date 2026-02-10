@@ -1,0 +1,12 @@
+{
+	"name": "Snowy Winter",
+	"slug": "snowy-winter",
+	"description": "Magical snowfall overlay",
+	"type": "configurable",
+	"category": "Weather",
+	"tags": ["snow", "winter", "overlay", "magical"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

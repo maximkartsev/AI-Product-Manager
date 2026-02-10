@@ -13,6 +13,7 @@ type LandingEffect = {
   type?: string | null;
   is_premium?: boolean;
   thumbnail_url?: string | null;
+  preview_video_url?: string | null;
   gradient: GradientStop;
   stats: { uses: string };
 };

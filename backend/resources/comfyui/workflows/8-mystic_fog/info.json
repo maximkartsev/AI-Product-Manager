@@ -1,0 +1,12 @@
+{
+	"name": "Mystic Fog",
+	"slug": "mystic-fog",
+	"description": "Ethereal fog and mist",
+	"type": "configurable",
+	"category": "Weather",
+	"tags": ["fog", "mist", "ethereal", "mystic"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

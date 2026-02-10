@@ -259,7 +259,7 @@ export default function LandingHome() {
       return;
     }
     setFeaturedEffect(pickFeaturedEffect(effectsState.data));
-  }, [effectsState.status, effectsState.data]);
+  }, [effectsState.status, effectsState.status === "success" ? effectsState.data : null]);
 
   useEffect(() => {
     let cancelled = false;

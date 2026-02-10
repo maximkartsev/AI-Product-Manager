@@ -17,7 +17,7 @@ type UseEffectUploadStartArgs = {
 };
 
 type UseEffectUploadStartReturn = {
-  fileInputRef: React.RefObject<HTMLInputElement>;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
   startUpload: (slugOverride?: string | null, context?: UploadPromptContext | null) => {
     ok: boolean;
     reason?: "unauthenticated" | "missing_slug";
@@ -66,13 +66,13 @@ export default function useEffectUploadStart({
   function startUpload(slugOverride?: string | null, context?: UploadPromptContext | null) {
     const targetSlug = slugOverride ?? slug;
     if (!targetSlug) {
-      return { ok: false, reason: "missing_slug" };
+      return { ok: false, reason: "missing_slug" } as const;
     }
     pendingContextRef.current = context ?? null;
     setPendingSlug(targetSlug);
     const nextToken = token ?? getAccessToken();
     if (!nextToken) {
-      return { ok: false, reason: "unauthenticated" };
+      return { ok: false, reason: "unauthenticated" } as const;
     }
     if (!token) setToken(nextToken);
     fileInputRef.current?.click();

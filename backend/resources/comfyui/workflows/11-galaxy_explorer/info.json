@@ -1,0 +1,12 @@
+{
+	"name": "Galaxy Explorer",
+	"slug": "galaxy-explorer",
+	"description": "Cosmic space background",
+	"type": "simple",
+	"category": "Background",
+	"tags": ["galaxy", "space", "cosmic", "sci-fi"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

@@ -1,28 +1,95 @@
+"use client";
+
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
+import { Sparkles, FolderOpen, Users, BarChart3, Menu, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+
+const NAV_ITEMS = [
+  { label: "Effects", href: "/admin/effects", icon: Sparkles },
+  { label: "Categories", href: "/admin/categories", icon: FolderOpen },
+  { label: "Users", href: "/admin/users", icon: Users },
+  { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
+];
+
+function SidebarNav({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+  return (
+    <nav className="flex flex-col gap-1 px-3 py-4">
+      <h2 className="mb-2 px-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+        Admin
+      </h2>
+      {NAV_ITEMS.map((item) => {
+        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const Icon = item.icon;
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={onNavigate}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+              active && "bg-accent text-accent-foreground",
+            )}
+          >
+            <Icon className="h-4 w-4" />
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    document.body.classList.add("overflow-hidden", "h-dvh", "flex", "flex-col", "admin-theme");
+    return () => {
+      document.body.classList.remove("overflow-hidden", "h-dvh", "flex", "flex-col", "admin-theme");
+    };
+  }, []);
+
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <div className="flex min-h-screen">
-        <aside className="w-56 border-r border-gray-800 bg-gray-900/60 p-4">
-          <div className="text-xs uppercase tracking-wide text-gray-400">Admin</div>
-          <nav className="mt-4 space-y-2">
-            <Link
-              href="/admin/effects"
-              className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-200 hover:bg-gray-800"
-            >
-              Effects
-            </Link>
-            <Link
-              href="/admin/categories"
-              className="block rounded-lg px-3 py-2 text-sm font-medium text-gray-200 hover:bg-gray-800"
-            >
-              Categories
-            </Link>
-          </nav>
+    <div className="admin-theme flex-1 min-h-0">
+      <div className="flex h-full overflow-hidden bg-background text-foreground">
+        {/* Desktop sidebar */}
+        <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-border bg-card">
+          <SidebarNav pathname={pathname} />
         </aside>
-        <main className="flex-1">{children}</main>
+
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Mobile top bar */}
+          <div className="flex items-center border-b border-border bg-card px-4 py-3 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <span className="ml-3 text-sm font-semibold">Admin</span>
+          </div>
+
+          {/* Mobile sidebar sheet */}
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetContent side="left" className="w-56 p-0">
+              <SidebarNav pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+            </SheetContent>
+          </Sheet>
+
+          {/* Main content — scrolls independently */}
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-6xl p-6">
+              {children}
+            </div>
+          </main>
+        </div>
       </div>
     </div>
   );

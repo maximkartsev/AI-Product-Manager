@@ -291,7 +291,7 @@ class BaseController extends Controller
 
             $label = trans($label);
 
-            if ($containId) {
+            if ($containId || !is_subclass_of($class, BaseModel::class)) {
                 $operators = ['=', 'in', 'notin', 'not', 'isnull', 'notnull', 'doesnthave'];
             } else {
                 /** @var BaseModel $class */
@@ -824,6 +824,36 @@ class BaseController extends Controller
     }
 
     /**
+     * Auto-discover FK relations whose related model has a "name" field.
+     * Returns entries like ["category>name"] for use with addSearchCriteria().
+     */
+    protected function getRelationSearchFields(string $class): array
+    {
+        $model = new $class();
+        $fields = [];
+
+        foreach ($model->getFillable() as $field) {
+            if (str_ends_with($field, '_id')) {
+                $relationName = substr($field, 0, -3);
+                $relationMethod = \Str::camel($relationName);
+
+                if (method_exists($model, $relationMethod)) {
+                    try {
+                        $related = $model->$relationMethod()->getRelated();
+                        if (in_array('name', $related->getFillable())) {
+                            $fields[] = $relationMethod . '>name';
+                        }
+                    } catch (\Throwable $e) {
+                        // Not a valid relation — skip
+                    }
+                }
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
      * @param mixed $orderStr
      * @param Builder $query
      * @param bool $needToAddGroupBy
@@ -884,6 +914,21 @@ class BaseController extends Controller
                     } else {
                         if (in_array($orderBy, $fillableFields) || in_array($orderBy, $allowedExtraFieldsToOrderBy)) {
                             $query->orderBy($orderBy, $orderDirection);
+                        } else {
+                            // Auto-resolve FK relation: e.g. "category" → "category.name"
+                            $model = $query->getModel();
+                            $relationMethod = \Str::camel($orderBy);
+                            if (method_exists($model, $relationMethod)) {
+                                try {
+                                    $related = $model->$relationMethod()->getRelated();
+                                    $displayField = in_array('name', $related->getFillable()) ? 'name' : null;
+                                    if ($displayField) {
+                                        $query->orderByRelation($relationMethod, $displayField, $orderDirection);
+                                    }
+                                } catch (\Throwable $e) {
+                                    // Not a valid relation — skip silently
+                                }
+                            }
                         }
                     }
                 }

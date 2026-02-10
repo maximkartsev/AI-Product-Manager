@@ -1,0 +1,12 @@
+{
+	"name": "VHS Retro",
+	"slug": "vhs-retro",
+	"description": "90s nostalgia filter",
+	"type": "simple",
+	"category": "Retro",
+	"tags": ["vhs", "retro", "90s", "nostalgia"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

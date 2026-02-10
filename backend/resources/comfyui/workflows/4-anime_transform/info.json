@@ -1,0 +1,12 @@
+{
+	"name": "Anime Transform",
+	"slug": "anime-transform",
+	"description": "Become an anime character",
+	"type": "configurable",
+	"category": "Style",
+	"tags": ["anime", "character", "transform", "japanese"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

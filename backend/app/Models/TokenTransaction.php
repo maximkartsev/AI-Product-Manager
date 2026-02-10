@@ -48,4 +48,9 @@ class TokenTransaction extends TenantModel
     {
         return $this->belongsTo(User::class);
     }
+
+    public function job(): BelongsTo
+    {
+        return $this->belongsTo(AiJob::class, 'job_id');
+    }
 }

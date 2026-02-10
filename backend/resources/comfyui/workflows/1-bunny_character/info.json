@@ -1,10 +1,10 @@
 {
 	"name": "Bunny character",
 	"slug": "bunny-character",
-	"description": "Replacing people with a bunny character.",
+	"description": "Replacing people with a bunny character",
 	"type": "configurable",
 	"category": "Fun",
-	"tags": ["bunny", "character", "cute"],
+	"tags": ["bunny", "character", "cute", "replace"],
 	"is_premium": true,
 	"is_new": true,
 	"sort_order": 40,

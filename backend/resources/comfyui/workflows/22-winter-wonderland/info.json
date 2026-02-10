@@ -1,0 +1,12 @@
+{
+	"name": "Winter Wonderland",
+	"slug": "winter-wonderland",
+	"description": "Move to Winter Wonderland",
+	"type": "configurable",
+	"category": "Background",
+	"tags": ["winter", "wonderland", "snow", "holiday"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

@@ -28,6 +28,9 @@ use \App\Http\Controllers\VideoController as VideoController;
 use \App\Http\Controllers\GalleryController as GalleryController;
 use \App\Http\Controllers\Admin\EffectsController as AdminEffectsController;
 use \App\Http\Controllers\Admin\CategoriesController as AdminCategoriesController;
+use \App\Http\Controllers\Admin\UiSettingsController as AdminUiSettingsController;
+use \App\Http\Controllers\Admin\UsersController as AdminUsersController;
+use \App\Http\Controllers\Admin\AnalyticsController as AdminAnalyticsController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -85,6 +88,17 @@ Route::middleware([
             Route::post('/categories', [AdminCategoriesController::class, 'store']);
             Route::patch('/categories/{id}', [AdminCategoriesController::class, 'update']);
             Route::delete('/categories/{id}', [AdminCategoriesController::class, 'destroy']);
+
+            Route::get('/ui-settings', [AdminUiSettingsController::class, 'index']);
+            Route::put('/ui-settings', [AdminUiSettingsController::class, 'update']);
+            Route::delete('/ui-settings', [AdminUiSettingsController::class, 'destroy']);
+
+            Route::get('/users', [AdminUsersController::class, 'index']);
+            Route::get('/users/{id}', [AdminUsersController::class, 'show']);
+            Route::get('/users/{id}/purchases', [AdminUsersController::class, 'purchases']);
+            Route::get('/users/{id}/tokens', [AdminUsersController::class, 'tokens']);
+
+            Route::get('/analytics/token-spending', [AdminAnalyticsController::class, 'tokenSpending']);
         });
     });
 

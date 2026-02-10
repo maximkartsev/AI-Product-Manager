@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { X, Search } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 
@@ -366,15 +367,15 @@ export default function SmartFilters({
     <div className={`space-y-4 ${className}`}>
       <div className="relative" ref={autocompleteRef}>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 z-10" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4 z-10" />
 
           {selectedFilter ? (
-            <div className="w-full bg-slate-700 border border-slate-600 rounded-md pl-10 pr-10 h-10 flex items-center">
-              <div className="inline-flex items-center bg-slate-700/80 border border-slate-600/50 rounded h-7 overflow-hidden">
-                <span className="px-2 py-1 text-xs text-slate-300 bg-slate-600/50 border-r border-slate-600/50">
+            <div className="w-full bg-muted border border-border rounded-md pl-10 pr-10 h-10 flex items-center">
+              <div className="inline-flex items-center bg-muted/80 border border-border/50 rounded h-7 overflow-hidden">
+                <span className="px-2 py-1 text-xs text-muted-foreground bg-accent border-r border-border/50">
                   {selectedFilter.label}
                 </span>
-                <span className="px-1.5 py-1 text-xs text-slate-300 font-mono border-r border-slate-600/50">
+                <span className="px-1.5 py-1 text-xs text-muted-foreground font-mono border-r border-border/50">
                   {OPERATOR_LABELS[selectedOperator]}
                 </span>
                 <div className="flex-1 relative min-w-0" style={{ width: "120px" }}>
@@ -386,7 +387,7 @@ export default function SmartFilters({
                     onKeyDown={handleManualValueEntry}
                     onBlur={handleValueInputBlur}
                     placeholder="value..."
-                    className="w-full px-2 py-1 text-xs bg-transparent text-white placeholder-slate-400 border-0 outline-none"
+                    className="w-full px-2 py-1 text-xs bg-transparent text-foreground placeholder-muted-foreground border-0 outline-none"
                   />
                 </div>
               </div>
@@ -395,26 +396,26 @@ export default function SmartFilters({
                 onClick={cancelFilterCreation}
                 variant="ghost"
                 size="sm"
-                className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0 text-slate-400 hover:text-slate-200"
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
               >
                 <X className="w-3 h-3" />
               </Button>
             </div>
           ) : (
-            <input
+            <Input
               ref={searchInputRef}
               type="text"
               placeholder={placeholder}
               value={inputValue}
               onChange={(e) => handleSearchChange(e.target.value)}
-              className="pl-10 pr-4 bg-slate-700 border-slate-600 text-white placeholder-slate-400"
+              className="pl-10 pr-4"
               onFocus={() => inputValue.length > 0 && setShowAutocomplete(true)}
             />
           )}
         </div>
 
         {showAutocomplete && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-slate-700 border border-slate-600 rounded-md shadow-lg z-50 max-h-60 overflow-hidden">
+          <div className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-60 overflow-hidden">
             <div className="max-h-60 overflow-y-auto">
               {autocompleteItems.length > 0 ? (
                 <>
@@ -434,22 +435,22 @@ export default function SmartFilters({
                           handleValueSelect(item.id, item.name);
                         }
                       }}
-                      className="w-full px-3 py-2 text-left text-white hover:bg-slate-600 border-b border-slate-600/50 text-sm"
+                      className="w-full px-3 py-2 text-left text-popover-foreground hover:bg-accent border-b border-border/50 text-sm"
                     >
                       <span className="font-medium">{item.name}</span>
                       {item.type === "filter" && (
-                        <span className="text-slate-400 text-xs ml-2">({item.field})</span>
+                        <span className="text-muted-foreground text-xs ml-2">({item.field})</span>
                       )}
                     </button>
                   ))}
                   {selectedFilter && inputValue.trim() && (
-                    <div className="px-3 py-2 text-xs text-slate-400 border-t border-slate-600/50 bg-slate-800/50">
-                      Press Enter or click away to use "{inputValue.trim()}"
+                    <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border/50 bg-muted/50">
+                      Press Enter or click away to use &quot;{inputValue.trim()}&quot;
                     </div>
                   )}
                 </>
               ) : selectedFilter && inputValue.trim() ? (
-                <div className="px-3 py-2 text-white">
+                <div className="px-3 py-2 text-popover-foreground">
                   <button
                     onMouseDown={(e) => {
                       e.preventDefault();
@@ -459,13 +460,13 @@ export default function SmartFilters({
                       setIsClickingAutocomplete(false);
                       handleValueSelect(inputValue.trim());
                     }}
-                    className="w-full text-left hover:bg-slate-600 px-2 py-1 rounded"
+                    className="w-full text-left hover:bg-accent px-2 py-1 rounded"
                   >
-                    Use "{inputValue.trim()}"
+                    Use &quot;{inputValue.trim()}&quot;
                   </button>
                 </div>
               ) : (
-                <div className="px-3 py-2 text-gray-400 text-sm">
+                <div className="px-3 py-2 text-muted-foreground text-sm">
                   {selectedFilter ? "Type to enter a custom value" : "Type to search filters"}
                 </div>
               )}
@@ -479,14 +480,14 @@ export default function SmartFilters({
           {activeFilters.map((filter, index) => (
             <div
               key={`${filter.field}-${filter.operator}-${index}`}
-              className="inline-flex items-center bg-slate-700/30 border border-slate-600/50 rounded h-7 overflow-hidden gap-1.5"
+              className="inline-flex items-center bg-muted/30 border border-border/50 rounded h-7 overflow-hidden gap-1.5"
             >
-              <span className="px-2 py-1 text-xs text-slate-300">{filter.label || filter.field}</span>
+              <span className="px-2 py-1 text-xs text-muted-foreground">{filter.label || filter.field}</span>
 
               <select
                 value={filter.operator}
                 onChange={(event) => changeOperator(index, event.target.value)}
-                className="h-7 px-1 text-xs text-slate-300 font-mono bg-transparent border-l border-slate-600/50 focus:outline-none cursor-pointer"
+                className="h-7 px-1 text-xs text-muted-foreground font-mono bg-transparent border-l border-border/50 focus:outline-none cursor-pointer"
                 style={{
                   width: "1.5rem",
                   appearance: "none",
@@ -500,7 +501,7 @@ export default function SmartFilters({
               >
                 {(availableFilters.find((f) => f.field === filter.field)?.operators ?? Object.keys(OPERATOR_LABELS)).map(
                   (op) => (
-                    <option key={op} value={op} className="bg-slate-700 text-white">
+                    <option key={op} value={op} className="bg-popover text-popover-foreground">
                       {OPERATOR_LABELS[op] || op}
                     </option>
                   ),
@@ -509,7 +510,7 @@ export default function SmartFilters({
 
               <button
                 onClick={() => editFilter(index)}
-                className="text-white px-2 py-1 text-sm hover:bg-slate-600/50 transition-colors"
+                className="text-foreground px-2 py-1 text-sm hover:bg-accent transition-colors"
                 title="Click to edit filter value"
               >
                 {formatFilterValue(filter)}
@@ -519,7 +520,7 @@ export default function SmartFilters({
                 onClick={() => removeFilter(index)}
                 variant="ghost"
                 size="sm"
-                className="h-7 w-6 p-0 text-slate-400 hover:text-red-400 hover:bg-red-500/10"
+                className="h-7 w-6 p-0 text-muted-foreground hover:text-red-400 hover:bg-red-500/10"
               >
                 <X className="w-3 h-3" />
               </Button>

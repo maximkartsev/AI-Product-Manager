@@ -1,0 +1,12 @@
+{
+	"name": "Synthwave 80s",
+	"slug": "synthwave-80s",
+	"description": "Retro neon vibes",
+	"type": "simple",
+	"category": "Retro",
+	"tags": ["synthwave", "80s", "retro", "neon"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

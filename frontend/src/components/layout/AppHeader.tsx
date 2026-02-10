@@ -80,6 +80,100 @@ export default function AppHeader() {
     router.push("/");
   };
 
+  const isAdminRoute = pathname?.startsWith("/admin");
+
+  if (isAdminRoute) {
+    return (
+      <div className="w-full border-b border-border bg-card text-card-foreground">
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground"
+              aria-label={`${brand.name} home`}
+            >
+              <span className="grid h-8 w-8 place-items-center rounded-xl bg-secondary text-secondary-foreground">
+                <IconSparkles className="h-4 w-4" />
+              </span>
+              <span className="uppercase text-foreground">{brand.name}</span>
+            </Link>
+
+            {token ? (
+              <div ref={menuRef} className="relative">
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="inline-flex items-center rounded-full border border-border bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground transition hover:bg-accent hover:text-accent-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Menu
+                </button>
+                {menuOpen ? (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-11 z-30 w-48 rounded-2xl border border-border bg-popover p-2 text-popover-foreground shadow-lg"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        router.push("/user-videos");
+                      }}
+                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-popover-foreground/80 transition hover:bg-accent hover:text-accent-foreground"
+                    >
+                      My Videos
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        router.push("/effects");
+                      }}
+                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-popover-foreground/80 transition hover:bg-accent hover:text-accent-foreground"
+                    >
+                      Effects
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        router.push("/explore");
+                      }}
+                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-popover-foreground/80 transition hover:bg-accent hover:text-accent-foreground"
+                    >
+                      Public gallery
+                    </button>
+                    <div className="my-1 h-px bg-border" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={handleLogout}
+                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-popover-foreground/80 transition hover:bg-accent hover:text-accent-foreground"
+                    >
+                      Log out
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={openAuth}
+                className="inline-flex items-center rounded-full border border-border bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground transition hover:bg-accent hover:text-accent-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Sign In
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isLanding = pathname === "/";
   const wrapperClass = isLanding
     ? "absolute inset-x-0 top-0 z-30 bg-transparent text-white"

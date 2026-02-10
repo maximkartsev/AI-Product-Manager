@@ -1,0 +1,12 @@
+{
+	"name": "Comic Book",
+	"slug": "comic-book",
+	"description": "Transform into comic art",
+	"type": "simple",
+	"category": "Style",
+	"tags": ["comic", "art", "cartoon", "transform"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

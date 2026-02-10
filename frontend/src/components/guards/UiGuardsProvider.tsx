@@ -66,7 +66,7 @@ export default function UiGuardsProvider({ children }: { children: React.ReactNo
       setWalletState({ status: "error", message });
       return null;
     }
-  }, [token, walletState.status, walletState.balance]);
+  }, [token, walletState.status, walletState.status === "ready" ? walletState.balance : null]);
 
   const requireAuth = useCallback(() => {
     const activeToken = token ?? getAccessToken();

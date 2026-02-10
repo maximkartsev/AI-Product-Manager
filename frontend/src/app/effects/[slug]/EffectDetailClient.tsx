@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { IconPlay, IconSparkles, IconWand } from "@/app/_components/landing/icons";
 import { ApiError, getEffect, type ApiEffect } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";

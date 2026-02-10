@@ -88,20 +88,20 @@ export default function AdminCategoriesPage() {
 
   const renderCellValue = (category: AdminCategory, columnKey: string) => {
     if (columnKey === "id") {
-      return <span className="text-gray-200">{category.id}</span>;
+      return <span className="text-foreground">{category.id}</span>;
     }
     if (columnKey === "name") {
-      return <span className="text-white">{category.name}</span>;
+      return <span className="text-foreground font-medium">{category.name}</span>;
     }
     if (columnKey === "description") {
       const text = category.description || "";
-      return <span className="text-gray-400">{text ? `${text.slice(0, 60)}${text.length > 60 ? "..." : ""}` : "-"}</span>;
+      return <span className="text-muted-foreground">{text ? `${text.slice(0, 60)}${text.length > 60 ? "..." : ""}` : "-"}</span>;
     }
     const value = category[columnKey as keyof AdminCategory];
     if (value === null || value === undefined || value === "") {
-      return <span className="text-gray-500">-</span>;
+      return <span className="text-muted-foreground">-</span>;
     }
-    return <span className="text-gray-300">{String(value)}</span>;
+    return <span className="text-muted-foreground">{String(value)}</span>;
   };
 
   return (

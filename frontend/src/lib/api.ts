@@ -179,9 +179,7 @@ export type ApiEffect = {
   thumbnail_url?: string | null;
   preview_video_url?: string | null;
   credits_cost?: number | null;
-  processing_time_estimate?: number | null;
   popularity_score?: number | null;
-  sort_order?: number | null;
   is_new?: boolean | null;
   last_processing_time_seconds?: number | null;
   is_premium: boolean;
@@ -634,7 +632,6 @@ export type AdminEffect = {
   category_id?: number | null;
   tags?: string[] | null;
   type?: string | null;
-  preview_url?: string | null;
   thumbnail_url?: string | null;
   preview_video_url?: string | null;
   comfyui_workflow_path?: string | null;
@@ -642,20 +639,11 @@ export type AdminEffect = {
   output_extension?: string | null;
   output_mime_type?: string | null;
   output_node_id?: string | null;
-  parameters?: string | null;
-  default_values?: string | null;
   credits_cost?: number | null;
-  processing_time_estimate?: number | null;
   popularity_score?: number | null;
-  sort_order?: number | null;
   is_active?: boolean;
   is_premium?: boolean;
   is_new?: boolean;
-  ai_model_id?: number | null;
-  ai_model?: {
-    id?: number;
-    name?: string;
-  } | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -795,5 +783,177 @@ export function deleteAdminCategory(id: number): Promise<void> {
 
 export function initEffectAssetUpload(payload: EffectUploadInitRequest): Promise<EffectUploadInitData> {
   return apiPost<EffectUploadInitData>("/admin/effects/uploads", payload);
+}
+
+// ---- Admin UI Settings
+
+export function getAdminUiSettings(): Promise<Record<string, any>> {
+  return apiGet<Record<string, any>>("/admin/ui-settings");
+}
+
+export function updateAdminUiSettings(settings: Record<string, any>): Promise<Record<string, any>> {
+  return apiRequest<Record<string, any>>("/admin/ui-settings", {
+    method: "PUT",
+    body: { settings },
+  });
+}
+
+export function resetAdminUiSettings(): Promise<void> {
+  return apiRequest<void>("/admin/ui-settings", { method: "DELETE" });
+}
+
+// ---- Admin Users
+
+export type AdminUser = {
+  id: number;
+  name: string;
+  email: string;
+  is_admin: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AdminUserDetail = AdminUser & {
+  tenant?: {
+    id: string;
+    domain?: string;
+    db_pool?: string;
+  } | null;
+};
+
+export type AdminUsersIndexData = {
+  items: AdminUser[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order: string;
+  search: string | null;
+  filters: unknown[];
+};
+
+export type AdminPurchase = {
+  id: number;
+  user_id: number;
+  total_amount: number;
+  status: string;
+  processed_at?: string | null;
+  created_at?: string | null;
+  payment?: {
+    id: number;
+    payment_gateway: string;
+    amount: number;
+    currency: string;
+    status: string;
+  } | null;
+};
+
+export type AdminPurchasesIndexData = {
+  items: AdminPurchase[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+};
+
+export type AdminTokenTransaction = {
+  id: number;
+  amount: number;
+  type: string;
+  description?: string | null;
+  created_at?: string | null;
+  job_id?: number | null;
+};
+
+export type AdminTokenData = {
+  balance: number;
+  items: AdminTokenTransaction[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+};
+
+export async function getAdminUsers(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<AdminUsersIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+
+  if (params.search) {
+    query.set("search", params.search);
+  }
+
+  if (params.order) {
+    query.set("order", params.order);
+  }
+
+  appendFilterParams(query, params.filters);
+
+  return apiRequest<AdminUsersIndexData>(`/admin/users?${query.toString()}`, { method: "GET" });
+}
+
+export function getAdminUser(id: number): Promise<AdminUserDetail> {
+  return apiGet<AdminUserDetail>(`/admin/users/${id}`);
+}
+
+export function getAdminUserPurchases(
+  userId: number,
+  params: { page?: number; perPage?: number } = {},
+): Promise<AdminPurchasesIndexData> {
+  const query: Query = {
+    page: params.page ?? 1,
+    perPage: params.perPage ?? 20,
+  };
+  return apiGet<AdminPurchasesIndexData>(`/admin/users/${userId}/purchases`, query);
+}
+
+export function getAdminUserTokens(
+  userId: number,
+  params: { page?: number; perPage?: number } = {},
+): Promise<AdminTokenData> {
+  const query: Query = {
+    page: params.page ?? 1,
+    perPage: params.perPage ?? 20,
+  };
+  return apiGet<AdminTokenData>(`/admin/users/${userId}/tokens`, query);
+}
+
+// ---- Admin Analytics
+
+export type TokenSpendingTimeSeries = {
+  bucket: string;
+  totalTokens: number;
+};
+
+export type TokenSpendingByEffect = {
+  effectId: number;
+  effectName: string;
+  totalTokens: number;
+};
+
+export type TokenSpendingData = {
+  timeSeries: TokenSpendingTimeSeries[];
+  byEffect: TokenSpendingByEffect[];
+  totalTokens: number;
+};
+
+export function getTokenSpendingAnalytics(params: {
+  from?: string;
+  to?: string;
+  granularity?: "day" | "week" | "month";
+} = {}): Promise<TokenSpendingData> {
+  const query: Query = {
+    from: params.from ?? undefined,
+    to: params.to ?? undefined,
+    granularity: params.granularity ?? "day",
+  };
+  return apiGet<TokenSpendingData>("/admin/analytics/token-spending", query);
 }
 

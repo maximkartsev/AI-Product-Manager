@@ -1,0 +1,12 @@
+{
+	"name": "Sparkle Magic",
+	"slug": "sparkle-magic",
+	"description": "Glitter and sparkles",
+	"type": "simple",
+	"category": "Fun",
+	"tags": ["sparkle", "glitter", "magic", "shiny"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

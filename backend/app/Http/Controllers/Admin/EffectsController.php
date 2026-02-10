@@ -16,13 +16,14 @@ class EffectsController extends BaseController
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Effect::query();
+        $query = Effect::query()->with('category');
 
         [$perPage, $page, $fieldsToSelect, $searchStr, $from] = $this->buildParamsFromRequest($request, $query);
 
         $query->select($fieldsToSelect);
 
-        $this->addSearchCriteria($searchStr, $query, ['name', 'slug', 'description', 'type']);
+        $searchFields = array_merge(['name', 'slug', 'description', 'type'], $this->getRelationSearchFields(Effect::class));
+        $this->addSearchCriteria($searchStr, $query, $searchFields);
 
         $orderStr = $request->get('order', 'id:asc');
 

@@ -53,7 +53,6 @@ class EffectsSeeder extends Seeder
             $creditsCost = $this->parseFloat($info['price'] ?? $info['credits_cost'] ?? null);
             $processingEstimate = $this->parseFloat($info['processing_time_estimate'] ?? null);
             $popularityScore = $this->parseInt($info['popularity_score'] ?? null) ?? 0;
-            $sortOrder = $this->parseInt($info['sort_order'] ?? null) ?? 0;
             $type = isset($info['type']) ? trim((string) $info['type']) : '';
             $type = $type !== '' ? $type : 'transform';
             $tags = $this->parseTags($info['tags'] ?? null);
@@ -71,7 +70,6 @@ class EffectsSeeder extends Seeder
             }
 
             $assetMeta = $this->uploadEffectAssets($slug, $folder, $disk);
-
             Effect::query()->updateOrCreate(
                 ['slug' => $slug],
                 [
@@ -80,15 +78,11 @@ class EffectsSeeder extends Seeder
                     'category_id' => $categoryId,
                     'tags' => !empty($tags) ? array_values($tags) : null,
                     'type' => $type,
-                    'preview_url' => null,
                     'thumbnail_url' => $assetMeta['thumbnail_url'] ?? null,
                     'preview_video_url' => $assetMeta['preview_video_url'] ?? null,
-                    'parameters' => null,
-                    'default_values' => null,
                     'credits_cost' => $creditsCost ?? ($isPremium ? 5.0 : 2.0),
-                    'processing_time_estimate' => $processingEstimate,
+                    'last_processing_time_seconds' => $processingEstimate,
                     'popularity_score' => $popularityScore,
-                    'sort_order' => $sortOrder,
                     'is_active' => $isActive,
                     'is_premium' => $isPremium,
                     'is_new' => $isNew,

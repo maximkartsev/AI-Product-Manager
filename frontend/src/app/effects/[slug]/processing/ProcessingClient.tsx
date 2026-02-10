@@ -637,15 +637,11 @@ export default function ProcessingClient({ slug }: { slug: string }) {
   useEffect(() => {
     if (videoStatus !== "processing") return;
 
-    const estimateSecondsRaw =
-      effectState.status === "success" ? Number(effectState.data.processing_time_estimate ?? 0) : 0;
     const lastSecondsRaw =
       effectState.status === "success" ? Number(effectState.data.last_processing_time_seconds ?? 0) : 0;
-    const totalTimeSeconds = Number.isFinite(estimateSecondsRaw) && estimateSecondsRaw > 0
-      ? estimateSecondsRaw
-      : Number.isFinite(lastSecondsRaw) && lastSecondsRaw > 0
-        ? lastSecondsRaw
-        : 35;
+    const totalTimeSeconds = Number.isFinite(lastSecondsRaw) && lastSecondsRaw > 0
+      ? lastSecondsRaw
+      : 35;
 
     if (!processingStartMsRef.current) {
       processingStartMsRef.current = Date.now();

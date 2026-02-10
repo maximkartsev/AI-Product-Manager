@@ -1,0 +1,12 @@
+{
+	"name": "Polaroid Moments",
+	"slug": "polaroid-moments",
+	"description": "Instant film aesthetic",
+	"type": "configurable",
+	"category": "Retro",
+	"tags": ["polaroid", "film", "vintage", "aesthetic"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

@@ -1,0 +1,12 @@
+{
+	"name": "Beach Paradise",
+	"slug": "beach-paradise",
+	"description": "Instant background swap",
+	"type": "simple",
+	"category": "Background",
+	"tags": ["beach", "paradise", "tropical", "background"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

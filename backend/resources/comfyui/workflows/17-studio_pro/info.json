@@ -1,0 +1,12 @@
+{
+	"name": "Studio Pro",
+	"slug": "studio-pro",
+	"description": "Professional lighting setup",
+	"type": "simple",
+	"category": "Lighting",
+	"tags": ["studio", "professional", "lighting", "portrait"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

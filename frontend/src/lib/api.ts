@@ -600,6 +600,7 @@ export function getArticles(
 export type ColumnConfig = {
   key: string;
   label: string;
+  foreignKey?: { field: string; relation: string };
 };
 
 export async function getAvailableColumns(entityClass: string): Promise<ColumnConfig[]> {
@@ -607,6 +608,22 @@ export async function getAvailableColumns(entityClass: string): Promise<ColumnCo
     method: "GET",
   });
   return data.columns ?? [];
+}
+
+export type FilterOption = { id: string | number; name: string };
+
+export async function getFilterOptions(
+  entityClass: string,
+  field: string,
+  search?: string,
+): Promise<FilterOption[]> {
+  const query: Query = {
+    class: entityClass,
+    field,
+    search: search ?? undefined,
+  };
+  const data = await apiRequest<{ options: FilterOption[] }>("/filter-options", { method: "GET", query });
+  return data.options ?? [];
 }
 
 export type EffectUploadInitRequest = {
@@ -630,6 +647,7 @@ export type AdminEffect = {
   slug?: string;
   description?: string | null;
   category_id?: number | null;
+  category?: { id: number; name?: string } | null;
   tags?: string[] | null;
   type?: string | null;
   thumbnail_url?: string | null;

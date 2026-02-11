@@ -407,6 +407,7 @@ class BaseController extends Controller
         foreach ($fillableFields as $field) {
             $key = $field;
             $label = $field;
+            $foreignKey = null;
 
             if (str_ends_with($label, '_id')) {
                 $relationName = substr($label, 0, -3);
@@ -415,6 +416,7 @@ class BaseController extends Controller
                 if (method_exists($model, $relationMethod)) {
                     $key = $relationName;
                     $label = $relationName;
+                    $foreignKey = ['field' => $field, 'relation' => $relationName];
                 }
             }
 
@@ -422,10 +424,14 @@ class BaseController extends Controller
             $label = ucwords($label);
 
             if (!in_array($key, $addedKeys, true)) {
-                $columns[] = [
+                $columnDef = [
                     'key' => $key,
                     'label' => $label,
                 ];
+                if ($foreignKey) {
+                    $columnDef['foreignKey'] = $foreignKey;
+                }
+                $columns[] = $columnDef;
                 $addedKeys[] = $key;
             }
         }

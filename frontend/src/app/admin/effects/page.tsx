@@ -1,9 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
-import DataTable, { type DataTableFormField } from "@/components/ui/DataTable";
+import { useMemo, useRef, useState } from "react";
+import * as z from "zod";
+import { type ColumnDef } from "@tanstack/react-table";
+import { DataTableView, type DataTableFormField } from "@/components/ui/DataTable";
+import { EntityFormSheet } from "@/components/ui/EntityFormSheet";
+import { DeleteConfirmDialog } from "@/components/ui/DeleteConfirmDialog";
+import { useDataTable } from "@/hooks/useDataTable";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   createAdminEffect,
   deleteAdminEffect,
@@ -13,37 +19,19 @@ import {
   type AdminEffect,
   type AdminEffectPayload,
 } from "@/lib/api";
+import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 
-type EffectFormState = {
-  name: string;
-  slug: string;
-  description: string;
-  type: string;
-  credits_cost: string;
-  popularity_score: string;
-  is_active: string;
-  is_premium: string;
-  is_new: string;
-  comfyui_workflow_path: string;
-  thumbnail_url: string;
-  preview_video_url: string;
-};
+// ---- Helpers ----
 
-const initialFormState: EffectFormState = {
-  name: "",
-  slug: "",
-  description: "",
-  type: "transform",
-  credits_cost: "5",
-  popularity_score: "0",
-  is_active: "true",
-  is_premium: "false",
-  is_new: "false",
-  comfyui_workflow_path: "",
-  thumbnail_url: "",
-  preview_video_url: "",
-};
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 function normalizeUploadHeaders(
   headers: Record<string, string | string[]> | undefined,
@@ -59,11 +47,9 @@ function normalizeUploadHeaders(
       if (value) normalized[key] = value;
     }
   }
-
   if (!normalized["Content-Type"]) {
     normalized["Content-Type"] = fallbackContentType;
   }
-
   return normalized;
 }
 
@@ -75,6 +61,30 @@ function parseNumber(value: string): number | null {
 function parseBoolean(value: string): boolean {
   return ["true", "1", "yes", "y", "on"].includes(value.trim().toLowerCase());
 }
+
+// ---- Zod Schema ----
+
+const effectSchema = z.object({
+  name: z.string().min(1, "Name is required").max(255),
+  slug: z.string().min(1, "Slug is required").max(255),
+  description: z.string().nullable().optional(),
+  category_id: z.number().int().positive().nullable().optional(),
+  tags: z.array(z.string()).nullable().optional(),
+  type: z.string().min(1, "Type is required"),
+  credits_cost: z.number({ error: "Must be a number" }).min(0, "Must be 0 or more"),
+  popularity_score: z.number({ error: "Must be a number" }).int().min(0, "Must be 0 or more"),
+  is_active: z.boolean(),
+  is_premium: z.boolean(),
+  is_new: z.boolean(),
+  comfyui_workflow_path: z.string().nullable().optional(),
+  comfyui_input_path_placeholder: z.string().nullable().optional(),
+  thumbnail_url: z.string().nullable().optional(),
+  preview_video_url: z.string().nullable().optional(),
+  output_extension: z.string().nullable().optional(),
+  output_mime_type: z.string().nullable().optional(),
+});
+
+// ---- Upload Field Component ----
 
 function UploadField({
   kind,
@@ -160,8 +170,108 @@ function UploadField({
   );
 }
 
+// ---- Initial Form State ----
+
+const initialFormState: Record<string, string> = {
+  name: "",
+  slug: "",
+  description: "",
+  category_id: "",
+  tags: "",
+  type: "configurable",
+  credits_cost: "5",
+  popularity_score: "100",
+  is_active: "true",
+  is_premium: "true",
+  is_new: "true",
+  comfyui_workflow_path: "",
+  comfyui_input_path_placeholder: "__INPUT_PATH__",
+  thumbnail_url: "",
+  preview_video_url: "",
+  output_extension: "mp4",
+  output_mime_type: "video/mp4",
+};
+
+const PREMIUM_CREDITS = "5";
+const NON_PREMIUM_CREDITS = "3";
+
+// ---- Page Component ----
+
 export default function AdminEffectsPage() {
-  const crud = {
+  const [showPanel, setShowPanel] = useState(false);
+  const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, any> } | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<AdminEffect | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const deletingIdRef = useRef(deletingId);
+  deletingIdRef.current = deletingId;
+
+  const handleEdit = (item: AdminEffect) => {
+    const newFormState: Record<string, any> = { ...initialFormState };
+    Object.keys(newFormState).forEach((key) => {
+      if (item[key as keyof AdminEffect] !== undefined && item[key as keyof AdminEffect] !== null) {
+        const val = item[key as keyof AdminEffect];
+        if (Array.isArray(val)) {
+          newFormState[key] = (val as string[]).join(", ");
+        } else {
+          newFormState[key] = String(val);
+        }
+      }
+    });
+    setEditingItem({ id: item.id, data: newFormState });
+    setShowPanel(true);
+  };
+
+  const handleDelete = (item: AdminEffect) => {
+    setItemToDelete(item);
+    setShowDeleteModal(true);
+  };
+
+  const handleEditRef = useRef(handleEdit);
+  handleEditRef.current = handleEdit;
+  const handleDeleteRef = useRef(handleDelete);
+  handleDeleteRef.current = handleDelete;
+
+  const actionsColumn = useMemo<ColumnDef<AdminEffect>[]>(() => [{
+    id: "_actions",
+    header: "Actions",
+    enableSorting: false,
+    enableHiding: false,
+    enableResizing: false,
+    size: 150,
+    minSize: 150,
+    cell: ({ row }: { row: { original: AdminEffect } }) => {
+      const item = row.original;
+      return (
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-sm px-3"
+            onClick={(e) => { e.stopPropagation(); handleEditRef.current(item); }}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-red-500/60 text-red-400 hover:bg-red-500/10 text-sm px-3"
+            onClick={(e) => { e.stopPropagation(); handleDeleteRef.current(item); }}
+            disabled={deletingIdRef.current === item.id}
+          >
+            {deletingIdRef.current === item.id ? "Deleting..." : "Delete"}
+          </Button>
+        </div>
+      );
+    },
+  }], []);
+
+  const state = useDataTable<AdminEffect>({
+    entityClass: "Effect",
+    entityName: "Effect",
+    storageKey: "admin-effects-table-columns",
+    settingsKey: "admin-effects",
     list: async (params: {
       page: number;
       perPage: number;
@@ -182,145 +292,303 @@ export default function AdminEffectsPage() {
         totalPages: data.totalPages,
       };
     },
-    create: async (data: AdminEffectPayload) => {
-      return await createAdminEffect(data);
+    getItemId: (item) => item.id,
+    renderCellValue: (effect, columnKey) => {
+      if (columnKey === "id") {
+        return <span className="text-foreground">{effect.id}</span>;
+      }
+      if (columnKey === "name") {
+        return <span className="text-foreground font-medium">{effect.name}</span>;
+      }
+      if (["is_active", "is_premium", "is_new"].includes(columnKey)) {
+        const value = Boolean(effect[columnKey as keyof AdminEffect]);
+        return <span className="text-muted-foreground">{value ? "true" : "false"}</span>;
+      }
+      if (columnKey === "description") {
+        const text = effect.description || "";
+        return <span className="text-muted-foreground">{text ? `${text.slice(0, 60)}${text.length > 60 ? "..." : ""}` : "-"}</span>;
+      }
+      if (columnKey === "category") {
+        const cat = effect.category as { name?: string } | null | undefined;
+        return <span className="text-muted-foreground">{cat?.name || "-"}</span>;
+      }
+      if (columnKey === "tags") {
+        const tags = effect.tags;
+        if (!tags || tags.length === 0) return <span className="text-muted-foreground">-</span>;
+        return <span className="text-muted-foreground">{tags.join(", ")}</span>;
+      }
+      const value = effect[columnKey as keyof AdminEffect];
+      if (value === null || value === undefined || value === "") {
+        return <span className="text-muted-foreground">-</span>;
+      }
+      return <span className="text-muted-foreground">{String(value)}</span>;
     },
-    update: async (id: number, data: AdminEffectPayload) => {
-      return await updateAdminEffect(id, data);
-    },
-    delete: async (id: number) => {
-      await deleteAdminEffect(id);
-    },
-  };
+    mediaColumns: { thumbnail_url: "image", preview_video_url: "video" },
+    relationToIdMap: { category: "category_id" },
+    extraColumns: actionsColumn,
+  });
 
   const formFields: DataTableFormField[] = [
-    { key: "name", label: "Name", type: "text", required: true, placeholder: "Effect name" },
-    { key: "slug", label: "Slug", type: "text", required: true, placeholder: "effect-slug" },
-    { key: "description", label: "Description", type: "textarea", placeholder: "Effect description" },
-    { key: "type", label: "Type", type: "text", required: true, placeholder: "transform" },
-    { key: "credits_cost", label: "Credits Cost", type: "number", required: true, placeholder: "5" },
-    { key: "popularity_score", label: "Popularity Score", type: "number", required: true, placeholder: "0" },
-    { key: "is_active", label: "Is Active", type: "text", required: true, placeholder: "true/false" },
-    { key: "is_premium", label: "Is Premium", type: "text", required: true, placeholder: "true/false" },
-    { key: "is_new", label: "Is New", type: "text", required: true, placeholder: "true/false" },
     {
-      key: "comfyui_workflow_path",
-      label: "Workflow Path",
+      key: "name",
+      label: "Name",
       type: "text",
-      render: ({ value, onChange }) => (
-        <UploadField
-          kind="workflow"
+      required: true,
+      placeholder: "Effect name",
+      section: "Basic Info",
+      render: ({ value, onChange, formState, setFormState }) => (
+        <Input
+          id="name"
+          type="text"
           value={value}
-          onChange={onChange}
-          placeholder="resources/comfyui/workflows/..."
-          accept=".json,application/json"
+          onChange={(e) => {
+            const newName = e.target.value;
+            const currentSlug = formState.slug || "";
+            const autoSlug = slugify(value);
+            onChange(newName);
+            if (currentSlug === "" || currentSlug === autoSlug) {
+              setFormState((prev) => ({ ...prev, slug: slugify(newName) }));
+            }
+          }}
+          placeholder="Effect name"
         />
       ),
+    },
+    { key: "slug", label: "Slug", type: "text", required: true, placeholder: "effect-slug" },
+    { key: "description", label: "Description", type: "text", placeholder: "Effect description", fullWidth: true },
+    { key: "category_id", label: "Category" },
+    { key: "tags", label: "Tags", type: "text", placeholder: "tag1, tag2, tag3" },
+    {
+      key: "type",
+      label: "Type",
+      type: "select",
+      required: true,
+      section: "Configuration",
+      fullWidth: true,
+      options: [
+        { value: "configurable", label: "Configurable" },
+        { value: "simple", label: "Simple" },
+      ],
+    },
+    { key: "credits_cost", label: "Credits Cost", type: "number", required: true, placeholder: "5" },
+    { key: "popularity_score", label: "Popularity Score", type: "number", required: true, placeholder: "100" },
+    {
+      key: "is_premium",
+      label: "Flags",
+      type: "checkbox",
+      fullWidth: true,
+      render: ({ formState, setFormState }) => {
+        const isPremium = formState.is_premium === "true";
+        const isActive = formState.is_active === "true";
+        const isNew = formState.is_new === "true";
+        return (
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="is_premium"
+                checked={isPremium}
+                onCheckedChange={(checked) => {
+                  const newPremium = !!checked;
+                  const currentCost = formState.credits_cost || "";
+                  const isDefaultCost =
+                    currentCost === PREMIUM_CREDITS ||
+                    currentCost === NON_PREMIUM_CREDITS ||
+                    currentCost === "";
+                  setFormState((prev) => ({
+                    ...prev,
+                    is_premium: newPremium ? "true" : "false",
+                    ...(isDefaultCost
+                      ? { credits_cost: newPremium ? PREMIUM_CREDITS : NON_PREMIUM_CREDITS }
+                      : {}),
+                  }));
+                }}
+              />
+              <label htmlFor="is_premium" className="text-sm text-muted-foreground cursor-pointer">
+                Is Premium
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="is_active"
+                checked={isActive}
+                onCheckedChange={(checked) =>
+                  setFormState((prev) => ({ ...prev, is_active: checked ? "true" : "false" }))
+                }
+              />
+              <label htmlFor="is_active" className="text-sm text-muted-foreground cursor-pointer">
+                Is Active
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="is_new"
+                checked={isNew}
+                onCheckedChange={(checked) =>
+                  setFormState((prev) => ({ ...prev, is_new: checked ? "true" : "false" }))
+                }
+              />
+              <label htmlFor="is_new" className="text-sm text-muted-foreground cursor-pointer">
+                Is New
+              </label>
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: "thumbnail_url",
       label: "Thumbnail URL",
-      type: "text",
+      section: "Media",
       render: ({ value, onChange }) => (
-        <UploadField
-          kind="thumbnail"
-          value={value}
-          onChange={onChange}
-          placeholder="https://..."
-          accept="image/*"
-        />
+        <UploadField kind="thumbnail" value={value} onChange={onChange} placeholder="https://..." accept="image/*" />
       ),
     },
     {
       key: "preview_video_url",
       label: "Preview Video URL",
-      type: "text",
       render: ({ value, onChange }) => (
-        <UploadField
-          kind="preview_video"
-          value={value}
-          onChange={onChange}
-          placeholder="https://..."
-          accept="video/*"
-        />
+        <UploadField kind="preview_video" value={value} onChange={onChange} placeholder="https://..." accept="video/*" />
       ),
     },
+    {
+      key: "comfyui_workflow_path",
+      label: "ComfyUI Workflow Path",
+      section: "Technical",
+      render: ({ value, onChange }) => (
+        <UploadField kind="workflow" value={value} onChange={onChange} placeholder="resources/comfyui/workflows/..." accept=".json,application/json" />
+      ),
+    },
+    { key: "comfyui_input_path_placeholder", label: "Input Path Placeholder", type: "text", placeholder: "path/to/input" },
+    { key: "output_extension", label: "Output Extension", type: "text", placeholder: "mp4" },
+    { key: "output_mime_type", label: "Output MIME Type", type: "text", placeholder: "video/mp4" },
   ];
 
   const getFormData = (formState: Record<string, any>): AdminEffectPayload => {
+    const str = (key: string) => {
+      const v = String(formState[key] || "").trim();
+      return v || null;
+    };
+
+    const rawTags = String(formState.tags || "").trim();
+    const tags = rawTags
+      ? rawTags.split(",").map((t) => t.trim()).filter(Boolean)
+      : null;
+
+    const catId = formState.category_id ? Number(formState.category_id) : null;
+
     return {
-      name: String(formState.name || "").trim(),
-      slug: String(formState.slug || "").trim(),
-      description: formState.description ? String(formState.description).trim() || null : null,
-      type: String(formState.type || "").trim(),
+      name: str("name") || "",
+      slug: str("slug") || "",
+      description: str("description"),
+      category_id: catId && Number.isFinite(catId) ? catId : null,
+      tags,
+      type: str("type") || "",
       credits_cost: parseNumber(String(formState.credits_cost || "")) ?? 0,
       popularity_score: parseNumber(String(formState.popularity_score || "")) ?? 0,
       is_active: parseBoolean(String(formState.is_active || "")),
       is_premium: parseBoolean(String(formState.is_premium || "")),
       is_new: parseBoolean(String(formState.is_new || "")),
-      comfyui_workflow_path: formState.comfyui_workflow_path
-        ? String(formState.comfyui_workflow_path).trim() || null
-        : null,
-      thumbnail_url: formState.thumbnail_url ? String(formState.thumbnail_url).trim() || null : null,
-      preview_video_url: formState.preview_video_url ? String(formState.preview_video_url).trim() || null : null,
+      comfyui_workflow_path: str("comfyui_workflow_path"),
+      comfyui_input_path_placeholder: str("comfyui_input_path_placeholder"),
+      thumbnail_url: str("thumbnail_url"),
+      preview_video_url: str("preview_video_url"),
+      output_extension: str("output_extension"),
+      output_mime_type: str("output_mime_type"),
     };
   };
 
-  const validateForm = (formState: Record<string, any>): string | null => {
-    if (!formState.name?.trim()) return "Name is required.";
-    if (!formState.slug?.trim()) return "Slug is required.";
-    if (!formState.type?.trim()) return "Type is required.";
-    if (parseNumber(String(formState.credits_cost || "")) === null) return "Credits cost must be a number.";
-    if (parseNumber(String(formState.popularity_score || "")) === null) return "Popularity score must be a number.";
-    if (!String(formState.is_active || "").trim()) return "Is active is required.";
-    if (!String(formState.is_premium || "").trim()) return "Is premium is required.";
-    if (!String(formState.is_new || "").trim()) return "Is new is required.";
-    return null;
-  };
-
-  const renderCellValue = (effect: AdminEffect, columnKey: string) => {
-    if (columnKey === "id") {
-      return <span className="text-foreground">{effect.id}</span>;
-    }
-    if (columnKey === "name") {
-      return <span className="text-foreground font-medium">{effect.name}</span>;
-    }
-    if (["is_active", "is_premium", "is_new"].includes(columnKey)) {
-      const value = Boolean(effect[columnKey as keyof AdminEffect]);
-      return <span className="text-muted-foreground">{value ? "true" : "false"}</span>;
-    }
-    if (columnKey === "description") {
-      const text = effect.description || "";
-      return <span className="text-muted-foreground">{text ? `${text.slice(0, 60)}${text.length > 60 ? "..." : ""}` : "-"}</span>;
-    }
-    if (columnKey === "category") {
-      const cat = effect.category as { name?: string } | null | undefined;
-      return <span className="text-muted-foreground">{cat?.name || "-"}</span>;
-    }
-    const value = effect[columnKey as keyof AdminEffect];
-    if (value === null || value === undefined || value === "") {
-      return <span className="text-muted-foreground">-</span>;
-    }
-    return <span className="text-muted-foreground">{String(value)}</span>;
-  };
+  const renderMobileRowActions = (item: AdminEffect) => (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="text-xs flex-1"
+        onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
+      >
+        Edit
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="border-red-500/60 text-red-400 hover:bg-red-500/10 text-xs flex-1"
+        onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+        disabled={deletingId === item.id}
+      >
+        {deletingId === item.id ? "Deleting..." : "Delete"}
+      </Button>
+    </>
+  );
 
   return (
-    <DataTable<AdminEffect, AdminEffectPayload, AdminEffectPayload>
-      entityClass="Effect"
-      entityName="Effect"
-      storageKey="admin-effects-table-columns"
-      crud={crud}
-      formFields={formFields}
-      initialFormState={initialFormState}
-      getFormData={getFormData}
-      validateForm={validateForm}
-      getItemId={(item) => item.id}
-      getItemTitle={(item) => item.name || `Effect #${item.id}`}
-      renderCellValue={renderCellValue}
-      mediaColumns={{ thumbnail_url: "image", preview_video_url: "video" }}
-      settingsKey="admin-effects"
-      title="Effects"
-      description="Create, update, and manage effect metadata and workflows."
-    />
+    <>
+      <DataTableView
+        state={state}
+        options={{
+          entityClass: "Effect",
+          entityName: "Effect",
+          title: "Effects",
+          description: "Create, update, and manage effect metadata and workflows.",
+          mediaColumns: { thumbnail_url: "image", preview_video_url: "video" },
+        }}
+        renderRowActions={renderMobileRowActions}
+        toolbarActions={
+          <Button
+            className="flex-1 sm:flex-none"
+            onClick={() => {
+              setEditingItem(null);
+              setShowPanel(true);
+            }}
+          >
+            Add Effect
+          </Button>
+        }
+      />
+
+      <EntityFormSheet<AdminEffectPayload, AdminEffectPayload>
+        entityName="Effect"
+        formFields={formFields}
+        initialFormState={initialFormState}
+        getFormData={getFormData}
+        formSchema={effectSchema}
+        availableColumns={state.availableColumns}
+        fkOptions={state.fkOptions}
+        fkLoading={state.fkLoading}
+        open={showPanel}
+        onOpenChange={setShowPanel}
+        editingItem={editingItem}
+        onCreate={createAdminEffect}
+        onUpdate={updateAdminEffect}
+        onSaved={() => state.loadItems()}
+      />
+
+      <DeleteConfirmDialog
+        entityName="Effect"
+        open={showDeleteModal}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowDeleteModal(false);
+            setItemToDelete(null);
+          }
+        }}
+        itemTitle={itemToDelete?.name || undefined}
+        itemId={itemToDelete?.id}
+        onConfirm={async () => {
+          if (!itemToDelete) return;
+          setDeletingId(itemToDelete.id);
+          try {
+            await deleteAdminEffect(itemToDelete.id);
+            await state.loadItems();
+            setShowDeleteModal(false);
+            setItemToDelete(null);
+            toast.success("Effect deleted");
+          } catch (error) {
+            console.error("Failed to delete Effect.", error);
+            toast.error("Failed to delete Effect. Please try again.");
+          } finally {
+            setDeletingId(null);
+          }
+        }}
+      />
+    </>
   );
 }

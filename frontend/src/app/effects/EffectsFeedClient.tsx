@@ -221,9 +221,11 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
     try {
       const data = await getCategories({ page, perPage: 5, order: "sort_order:asc,name:asc" });
       const existing = categoryRowsRef.current;
-      const newSlugs = (data.items ?? [])
-        .map((category) => category.slug)
-        .filter((slug) => !existing[slug]);
+      const newSlugs = [...new Set(
+        (data.items ?? [])
+          .map((category) => category.slug)
+          .filter((slug) => !existing[slug])
+      )];
 
       setCategoryRows((prev) => {
         const next = { ...prev };

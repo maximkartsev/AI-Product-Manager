@@ -1,14 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import DataTable from "@/components/ui/DataTable";
+import { DataTableView } from "@/components/ui/DataTable";
+import { useDataTable } from "@/hooks/useDataTable";
 import { getAdminUsers, type AdminUser } from "@/lib/api";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 
 export default function AdminUsersPage() {
   const router = useRouter();
 
-  const crud = {
+  const state = useDataTable<AdminUser>({
+    entityClass: "User",
+    entityName: "User",
+    storageKey: "admin-users-table-columns",
+    settingsKey: "admin-users",
     list: async (params: {
       page: number;
       perPage: number;
@@ -29,47 +34,44 @@ export default function AdminUsersPage() {
         totalPages: data.totalPages,
       };
     },
-  };
-
-  const renderCellValue = (user: AdminUser, columnKey: string) => {
-    if (columnKey === "is_admin") {
-      return user.is_admin ? (
-        <span className="inline-flex items-center rounded-full bg-orange-500/10 px-2 py-0.5 text-xs font-medium text-orange-400 ring-1 ring-inset ring-orange-500/20">
-          Admin
-        </span>
-      ) : (
-        <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border">
-          User
-        </span>
-      );
-    }
-    if (columnKey === "name") {
-      return <span className="text-foreground font-medium">{user.name}</span>;
-    }
-    if (columnKey === "email") {
-      return <span className="text-muted-foreground">{user.email}</span>;
-    }
-    const value = user[columnKey as keyof AdminUser];
-    if (value === null || value === undefined || value === "") {
-      return <span className="text-muted-foreground">-</span>;
-    }
-    return <span className="text-muted-foreground">{String(value)}</span>;
-  };
+    getItemId: (item) => item.id,
+    renderCellValue: (user, columnKey) => {
+      if (columnKey === "is_admin") {
+        return user.is_admin ? (
+          <span className="inline-flex items-center rounded-full bg-orange-500/10 px-2 py-0.5 text-xs font-medium text-orange-400 ring-1 ring-inset ring-orange-500/20">
+            Admin
+          </span>
+        ) : (
+          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border">
+            User
+          </span>
+        );
+      }
+      if (columnKey === "name") {
+        return <span className="text-foreground font-medium">{user.name}</span>;
+      }
+      if (columnKey === "email") {
+        return <span className="text-muted-foreground">{user.email}</span>;
+      }
+      const value = user[columnKey as keyof AdminUser];
+      if (value === null || value === undefined || value === "") {
+        return <span className="text-muted-foreground">-</span>;
+      }
+      return <span className="text-muted-foreground">{String(value)}</span>;
+    },
+  });
 
   return (
-    <DataTable<AdminUser, never, never>
-      entityClass="User"
-      entityName="User"
-      storageKey="admin-users-table-columns"
-      crud={crud}
-      readOnly
-      getItemId={(item) => item.id}
-      getItemTitle={(item) => item.name || item.email || `User #${item.id}`}
-      renderCellValue={renderCellValue}
-      onRowClick={(item) => router.push(`/admin/users/${item.id}`)}
-      settingsKey="admin-users"
-      title="Users"
-      description="View and manage registered users."
+    <DataTableView
+      state={state}
+      options={{
+        entityClass: "User",
+        entityName: "User",
+        title: "Users",
+        description: "View and manage registered users.",
+        readOnly: true,
+        onRowClick: (item) => router.push(`/admin/users/${item.id}`),
+      }}
     />
   );
 }

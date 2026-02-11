@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Coins, ShoppingCart, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import DataTable from "@/components/ui/DataTable";
+import { DataTableView } from "@/components/ui/DataTable";
+import { useDataTable } from "@/hooks/useDataTable";
 import {
   getAdminUser,
   getAdminUserPurchases,
@@ -16,6 +17,121 @@ import {
   type AdminTokenTransaction,
 } from "@/lib/api";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+
+function PurchasesTable({ userId, userName }: { userId: number; userName: string }) {
+  const state = useDataTable<AdminPurchase>({
+    entityClass: "Purchase",
+    entityName: "Purchase",
+    storageKey: `admin-user-${userId}-purchases-columns`,
+    list: async (params: {
+      page: number;
+      perPage: number;
+      search?: string;
+      filters?: FilterValue[];
+      order?: string;
+    }) => {
+      const data = await getAdminUserPurchases(userId, {
+        page: params.page,
+        perPage: params.perPage,
+      });
+      return {
+        items: data.items,
+        totalItems: data.totalItems,
+        totalPages: data.totalPages,
+      };
+    },
+    getItemId: (item) => item.id,
+    renderCellValue: (purchase, columnKey) => {
+      if (columnKey === "status") {
+        const color = purchase.status === "completed" ? "text-green-400" : purchase.status === "pending" ? "text-yellow-400" : "text-muted-foreground";
+        return <span className={color}>{purchase.status}</span>;
+      }
+      if (columnKey === "total_amount") {
+        return <span className="text-foreground">${Number(purchase.total_amount).toFixed(2)}</span>;
+      }
+      if (columnKey === "payment") {
+        return <span className="text-muted-foreground">{purchase.payment?.payment_gateway ?? "-"}</span>;
+      }
+      const value = purchase[columnKey as keyof AdminPurchase];
+      if (value === null || value === undefined || value === "") {
+        return <span className="text-muted-foreground">-</span>;
+      }
+      return <span className="text-muted-foreground">{String(value)}</span>;
+    },
+  });
+
+  return (
+    <DataTableView
+      state={state}
+      options={{
+        entityClass: "Purchase",
+        entityName: "Purchase",
+        title: "Purchases",
+        description: `Purchase history for ${userName}`,
+        readOnly: true,
+      }}
+    />
+  );
+}
+
+function TokensTable({ userId, userName, onBalanceUpdate }: { userId: number; userName: string; onBalanceUpdate: (balance: number) => void }) {
+  const state = useDataTable<AdminTokenTransaction>({
+    entityClass: "TokenTransaction",
+    entityName: "Token Transaction",
+    storageKey: `admin-user-${userId}-tokens-columns`,
+    list: async (params: {
+      page: number;
+      perPage: number;
+      search?: string;
+      filters?: FilterValue[];
+      order?: string;
+    }) => {
+      const data = await getAdminUserTokens(userId, {
+        page: params.page,
+        perPage: params.perPage,
+      });
+      onBalanceUpdate(data.balance);
+      return {
+        items: data.items,
+        totalItems: data.totalItems,
+        totalPages: data.totalPages,
+      };
+    },
+    getItemId: (item) => item.id,
+    renderCellValue: (tx, columnKey) => {
+      if (columnKey === "amount") {
+        const color = tx.amount >= 0 ? "text-green-400" : "text-red-400";
+        const prefix = tx.amount >= 0 ? "+" : "";
+        return <span className={color}>{prefix}{tx.amount}</span>;
+      }
+      if (columnKey === "type") {
+        return (
+          <span className="inline-flex items-center rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border">
+            {tx.type}
+          </span>
+        );
+      }
+      const value = tx[columnKey as keyof AdminTokenTransaction];
+      if (value === null || value === undefined || value === "") {
+        return <span className="text-muted-foreground">-</span>;
+      }
+      return <span className="text-muted-foreground">{String(value)}</span>;
+    },
+  });
+
+  return (
+    <DataTableView
+      state={state}
+      options={{
+        entityClass: "TokenTransaction",
+        entityName: "Token Transaction",
+        title: "Token Transactions",
+        description: `Token transaction history for ${userName}`,
+        readOnly: true,
+      }}
+    />
+  );
+}
 
 export default function AdminUserDetailPage() {
   const params = useParams();
@@ -47,85 +163,6 @@ export default function AdminUserDetailPage() {
     };
     load();
   }, [userId]);
-
-  const purchasesCrud = {
-    list: async (params: {
-      page: number;
-      perPage: number;
-      search?: string;
-      filters?: FilterValue[];
-      order?: string;
-    }) => {
-      const data = await getAdminUserPurchases(userId, {
-        page: params.page,
-        perPage: params.perPage,
-      });
-      return {
-        items: data.items,
-        totalItems: data.totalItems,
-        totalPages: data.totalPages,
-      };
-    },
-  };
-
-  const tokensCrud = {
-    list: async (params: {
-      page: number;
-      perPage: number;
-      search?: string;
-      filters?: FilterValue[];
-      order?: string;
-    }) => {
-      const data = await getAdminUserTokens(userId, {
-        page: params.page,
-        perPage: params.perPage,
-      });
-      setTokenBalance(data.balance);
-      return {
-        items: data.items,
-        totalItems: data.totalItems,
-        totalPages: data.totalPages,
-      };
-    },
-  };
-
-  const renderPurchaseCell = (purchase: AdminPurchase, columnKey: string) => {
-    if (columnKey === "status") {
-      const color = purchase.status === "completed" ? "text-green-400" : purchase.status === "pending" ? "text-yellow-400" : "text-muted-foreground";
-      return <span className={color}>{purchase.status}</span>;
-    }
-    if (columnKey === "total_amount") {
-      return <span className="text-foreground">${Number(purchase.total_amount).toFixed(2)}</span>;
-    }
-    if (columnKey === "payment") {
-      return <span className="text-muted-foreground">{purchase.payment?.payment_gateway ?? "-"}</span>;
-    }
-    const value = purchase[columnKey as keyof AdminPurchase];
-    if (value === null || value === undefined || value === "") {
-      return <span className="text-muted-foreground">-</span>;
-    }
-    return <span className="text-muted-foreground">{String(value)}</span>;
-  };
-
-  const renderTokenCell = (tx: AdminTokenTransaction, columnKey: string) => {
-    if (columnKey === "amount") {
-      const color = tx.amount >= 0 ? "text-green-400" : "text-red-400";
-      const prefix = tx.amount >= 0 ? "+" : "";
-      return <span className={color}>{prefix}{tx.amount}</span>;
-    }
-    if (columnKey === "type") {
-      return (
-        <span className="inline-flex items-center rounded-full bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border">
-          {tx.type}
-        </span>
-      );
-    }
-    const value = tx[columnKey as keyof AdminTokenTransaction];
-    if (value === null || value === undefined || value === "") {
-      return <span className="text-muted-foreground">-</span>;
-    }
-    return <span className="text-muted-foreground">{String(value)}</span>;
-  };
 
   if (loading) {
     return (
@@ -201,18 +238,7 @@ export default function AdminUserDetailPage() {
           </TabsList>
 
           <TabsContent value="purchases">
-            <DataTable<AdminPurchase, never, never>
-              entityClass="Purchase"
-              entityName="Purchase"
-              storageKey={`admin-user-${userId}-purchases-columns`}
-              crud={purchasesCrud}
-              readOnly
-              getItemId={(item) => item.id}
-              getItemTitle={(item) => `Purchase #${item.id}`}
-              renderCellValue={renderPurchaseCell}
-              title="Purchases"
-              description={`Purchase history for ${user.name}`}
-            />
+            <PurchasesTable userId={userId} userName={user.name} />
           </TabsContent>
 
           <TabsContent value="tokens">
@@ -227,18 +253,7 @@ export default function AdminUserDetailPage() {
                 </CardContent>
               </Card>
             </div>
-            <DataTable<AdminTokenTransaction, never, never>
-              entityClass="TokenTransaction"
-              entityName="Token Transaction"
-              storageKey={`admin-user-${userId}-tokens-columns`}
-              crud={tokensCrud}
-              readOnly
-              getItemId={(item) => item.id}
-              getItemTitle={(item) => `Transaction #${item.id}`}
-              renderCellValue={renderTokenCell}
-              title="Token Transactions"
-              description={`Token transaction history for ${user.name}`}
-            />
+            <TokensTable userId={userId} userName={user.name} onBalanceUpdate={setTokenBalance} />
           </TabsContent>
         </Tabs>
       </div>

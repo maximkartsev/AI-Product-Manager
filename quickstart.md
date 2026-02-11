@@ -1,3 +1,7 @@
+ngrok http --url=uitest.ngrok.app 3003
+ngrok http --url=back-123.ngrok.app 80
+ngrok http --url=minio.ngrok.pizza 9000
+
 “migrate → seed” flow for this repo (pooled tenancy)
 
 	cd C:\Projects\AI-Product-Management\AI-Product-Manager\laradock

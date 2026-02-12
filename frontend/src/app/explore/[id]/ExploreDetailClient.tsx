@@ -2,13 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ApiError, getPublicGalleryItem, type GalleryVideo } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
-import { Textarea } from "@/components/ui/textarea";
-import { Info, SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import useUiGuards from "@/components/guards/useUiGuards";
+import useAuthToken from "@/lib/useAuthToken";
+import { IconSparkles } from "@/app/_components/landing/icons";
+import EffectPromptFields from "@/components/effects/EffectPromptFields";
+import EffectTokenInfo from "@/components/effects/EffectTokenInfo";
+import EffectUploadFooter from "@/components/effects/EffectUploadFooter";
 
 type GalleryDetailState =
   | { status: "loading" }
@@ -16,12 +19,12 @@ type GalleryDetailState =
   | { status: "error"; message: string };
 
 export default function ExploreDetailClient({ id }: { id: number }) {
-  const router = useRouter();
   const [state, setState] = useState<GalleryDetailState>({ status: "loading" });
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [positivePrompt, setPositivePrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
-  const { requireAuth } = useUiGuards();
+  const { requireAuth, ensureTokens, openPlans, walletBalance, loadWalletBalance } = useUiGuards();
+  const token = useAuthToken();
   const seededPromptsRef = useRef(false);
   const effectSlug = state.status === "success" ? state.data.effect?.slug ?? null : null;
   const {
@@ -36,9 +39,26 @@ export default function ExploreDetailClient({ id }: { id: number }) {
 
   const isConfigurable = state.status === "success" && state.data.effect?.type === "configurable";
 
-  const onUploadClick = () => {
+  const creditsCost = useMemo(() => {
+    if (state.status !== "success") return 0;
+    const raw = state.data.effect?.credits_cost;
+    return Math.max(0, Math.ceil(Number(raw ?? 0)));
+  }, [state]);
+
+  const hasEnoughTokens = creditsCost === 0 || (walletBalance !== null && walletBalance >= creditsCost);
+
+  const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
+
+  useEffect(() => {
+    if (!token) return;
+    void loadWalletBalance();
+  }, [loadWalletBalance, token]);
+
+  const onUploadClick = async () => {
     clearUploadError();
     if (!requireAuth()) return;
+    const okTokens = await ensureTokens(creditsCost);
+    if (!okTokens) return;
     if (isConfigurable) {
       const result = startUpload(effectSlug, { positivePrompt, negativePrompt });
       if (!result.ok && result.reason === "unauthenticated") {
@@ -94,7 +114,6 @@ export default function ExploreDetailClient({ id }: { id: number }) {
 
   const data = state.status === "success" ? state.data : null;
   const effectName = data?.effect?.name ?? "AI Effect";
-  const title = effectName;
   const effectDescription = useMemo(() => (data?.effect?.description ?? "").trim(), [data?.effect?.description]);
   const isPremium = Boolean(data?.effect?.is_premium);
 
@@ -107,35 +126,45 @@ export default function ExploreDetailClient({ id }: { id: number }) {
         className="hidden"
         onChange={onFileSelected}
       />
-      <div className="mx-auto w-full max-w-md px-4 pb-12 pt-4 sm:max-w-xl lg:max-w-3xl">
-        <div className="mt-4">
-          <h1 className="text-base font-semibold text-white">Public Gallery</h1>
-        </div>
+      <div
+        className={`mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl ${
+          state.status === "success" ? "pb-[calc(6.5rem+env(safe-area-inset-bottom))]" : ""
+        }`}
+      >
+        <header className="flex items-center gap-2 text-xs text-white/55">
+          <IconSparkles className="h-4 w-4 text-fuchsia-200" />
+          <Link href="/explore" className="hover:text-white/80 transition">
+            Gallery
+          </Link>
+          <span className="text-white/30">/</span>
+          <span>{effectName}</span>
+        </header>
 
-        <main className="mt-6">
-          {state.status === "error" ? (
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-100">
-              {state.message}
+        {state.status === "loading" && (
+          <div className="mt-4 overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+            <div className="relative aspect-[9/16] w-full animate-pulse bg-gradient-to-br from-fuchsia-500/15 to-indigo-500/10" />
+            <div className="p-5">
+              <div className="h-6 w-48 animate-pulse rounded bg-white/10" />
+              <div className="mt-3 h-4 w-full animate-pulse rounded bg-white/5" />
+              <div className="mt-2 h-4 w-3/4 animate-pulse rounded bg-white/5" />
             </div>
-          ) : null}
-          {uploadError ? (
-            <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-100">
-              {uploadError}
-            </div>
-          ) : null}
+          </div>
+        )}
 
-          {state.status === "loading" ? (
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
-              Loading video…
-            </div>
-          ) : null}
+        {state.status === "error" && (
+          <div className="mt-4 rounded-3xl border border-red-500/25 bg-red-500/10 p-5">
+            <div className="text-sm font-semibold text-red-100">Error</div>
+            <div className="mt-1 text-xs text-red-100/75">{state.message}</div>
+          </div>
+        )}
 
-          {state.status === "success" ? (
-            <>
-              <section className="relative aspect-[9/16] w-full overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+        {state.status === "success" && (
+          <main className="mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+              <div className="relative aspect-[9/16] w-full bg-gradient-to-br from-fuchsia-500/18 to-indigo-500/12">
                 {data?.processed_file_url ? (
                   <VideoPlayer
-                    className="h-full w-full object-cover"
+                    className="absolute inset-0 h-full w-full object-cover"
                     src={data.processed_file_url}
                     playsInline
                     autoPlay
@@ -144,15 +173,12 @@ export default function ExploreDetailClient({ id }: { id: number }) {
                     preload="metadata"
                   />
                 ) : data?.thumbnail_url ? (
-                  <img className="h-full w-full object-cover" src={data.thumbnail_url} alt={title} />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-xs text-white/50">Video preview</div>
-                )}
-                <div className="pointer-events-none absolute inset-0">
-                  <div className="absolute bottom-4 left-4 text-xs font-medium text-white/80">
-                    dzzzs.com • {effectName}
-                  </div>
-                </div>
+                  <img
+                    className="absolute inset-0 h-full w-full object-cover"
+                    src={data.thumbnail_url}
+                    alt={effectName}
+                  />
+                ) : null}
                 {isPremium ? (
                   <span className="absolute left-3 top-3 inline-flex items-center rounded-full border border-white/20 bg-black/45 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
                     Premium
@@ -163,78 +189,60 @@ export default function ExploreDetailClient({ id }: { id: number }) {
                     <SlidersHorizontal className="h-3.5 w-3.5" />
                   </span>
                 ) : null}
-              </section>
-
-              <div className="mt-5 text-center">
-                <div className="text-lg font-semibold text-white">{title}</div>
-                <div className="mt-1 text-xs text-white/55">{effectName}</div>
-                {effectDescription ? <div className="mt-2 text-xs leading-5 text-white/60">{effectDescription}</div> : null}
               </div>
+
+              <div className="p-5">
+                <h1 className="text-2xl font-semibold tracking-tight text-white">{effectName}</h1>
+                {effectDescription ? (
+                  <p className="mt-3 text-sm leading-6 text-white/70">{effectDescription}</p>
+                ) : (
+                  <p className="mt-3 text-sm leading-6 text-white/60">A one-click effect to transform your video.</p>
+                )}
+              </div>
+            </section>
+
+            <aside className="rounded-3xl border border-white/10 bg-white/5 p-5">
+              <div className="text-sm font-semibold text-white">Ready to try it?</div>
+              <div className="mt-2 text-xs leading-5 text-white/60">
+                {token
+                  ? "You're signed in. Upload your video to start processing."
+                  : "Sign in to upload your video and start processing."}
+              </div>
+
+              <EffectTokenInfo
+                creditsCost={creditsCost}
+                walletBalance={walletBalance}
+                hasEnoughTokens={hasEnoughTokens}
+                isAuthenticated={!!token}
+                onTopUp={() => openPlans(creditsCost)}
+              />
 
               {isConfigurable ? (
-                <div className="mt-6 space-y-3 rounded-3xl border border-white/10 bg-white/5 p-4">
-                  <div>
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
-                      <span>Positive prompt</span>
-                      <button
-                        type="button"
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
-                        title="Describe what you want to see in the output."
-                        aria-label="Positive prompt info"
-                      >
-                        <Info className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <Textarea
-                      value={positivePrompt}
-                      onChange={(event) => setPositivePrompt(event.target.value)}
-                      placeholder="Describe the look, style, or details to add..."
-                      className="mt-2 min-h-[84px] text-xs"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
-                      <span>Negative prompt</span>
-                      <button
-                        type="button"
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
-                        title="Describe what you want to avoid."
-                        aria-label="Negative prompt info"
-                      >
-                        <Info className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <Textarea
-                      value={negativePrompt}
-                      onChange={(event) => setNegativePrompt(event.target.value)}
-                      placeholder="Describe elements to avoid..."
-                      className="mt-2 min-h-[84px] text-xs"
-                    />
-                  </div>
-                </div>
+                <EffectPromptFields
+                  positivePrompt={positivePrompt}
+                  onPositivePromptChange={setPositivePrompt}
+                  negativePrompt={negativePrompt}
+                  onNegativePromptChange={setNegativePrompt}
+                />
               ) : null}
 
-
-              <div className="mt-6">
-                <button
-                  type="button"
-                  onClick={onUploadClick}
-                  disabled={!data?.effect?.slug}
-                  className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 disabled:opacity-70"
-                >
-                  Use This Effect
-                </button>
-                <Link
-                  href="/explore"
-                  className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/80 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-                >
-                  Back to Gallery
-                </Link>
-              </div>
-            </>
-          ) : null}
-        </main>
+              {uploadError ? (
+                <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+                  {uploadError}
+                </div>
+              ) : null}
+            </aside>
+          </main>
+        )}
       </div>
+
+      {state.status === "success" ? (
+        <EffectUploadFooter
+          label={uploadLabel}
+          disabled={!effectSlug}
+          onClick={onUploadClick}
+        />
+      ) : null}
     </div>
   );
 }

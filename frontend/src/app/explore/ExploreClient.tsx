@@ -65,7 +65,7 @@ function CategoryGroupRow({
 }
 
 export default function ExploreClient() {
-  const { requireAuth, requireAuthForNavigation } = useUiGuards();
+  const { requireAuth, requireAuthForNavigation, ensureTokens } = useUiGuards();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortOpen, setSortOpen] = useState(false);
@@ -158,7 +158,7 @@ export default function ExploreClient() {
     requireAuthForNavigation(`/explore/${item.id}`);
   };
 
-  const handleTryItem = (item: GalleryVideo) => {
+  const handleTryItem = async (item: GalleryVideo) => {
     clearUploadError();
     if (item.effect?.type === "configurable") {
       requireAuthForNavigation(`/explore/${item.id}`);
@@ -166,6 +166,9 @@ export default function ExploreClient() {
     }
     if (item.effect?.slug) {
       if (!requireAuth()) return;
+      const creditsCost = Math.max(0, Math.ceil(Number(item.effect.credits_cost ?? 0)));
+      const okTokens = await ensureTokens(creditsCost);
+      if (!okTokens) return;
       const result = startUpload(item.effect.slug);
       if (!result.ok && result.reason === "unauthenticated") {
         requireAuth();

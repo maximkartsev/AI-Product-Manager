@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { IconPlay, IconSparkles, IconWand } from "@/app/_components/landing/icons";
+import { IconPlay, IconSparkles } from "@/app/_components/landing/icons";
 import { ApiError, getEffect, type ApiEffect } from "@/lib/api";
 import VideoPlayer from "@/components/video/VideoPlayer";
 import useEffectUploadStart from "@/lib/useEffectUploadStart";
-import { Textarea } from "@/components/ui/textarea";
 import useUiGuards from "@/components/guards/useUiGuards";
 import useAuthToken from "@/lib/useAuthToken";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Info, SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
+import EffectPromptFields from "@/components/effects/EffectPromptFields";
+import EffectTokenInfo from "@/components/effects/EffectTokenInfo";
+import EffectUploadFooter from "@/components/effects/EffectUploadFooter";
 
 type LoadState =
   | { status: "loading" }
@@ -253,72 +255,21 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
                   : "Sign in to upload your video and start processing."}
               </div>
 
-              <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 px-3 py-2 text-[11px] text-white/65">
-                <div>Cost: {creditsCost} tokens</div>
-                {token ? (
-                  walletBalance !== null ? (
-                    <div>Balance: {walletBalance} tokens</div>
-                  ) : (
-                    <div>Balance: --</div>
-                  )
-                ) : (
-                  <div>Sign in to view your balance.</div>
-                )}
-        {token && walletBalance !== null && !hasEnoughTokens && creditsCost > 0 ? (
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <div className="text-amber-200">Not enough tokens to upload.</div>
-            <button
-              type="button"
-              onClick={() => openPlans(creditsCost)}
-              className="inline-flex h-7 items-center justify-center rounded-full bg-gradient-to-r from-fuchsia-500 to-violet-500 px-3 text-[11px] font-semibold text-white shadow-[0_10px_20px_rgba(124,58,237,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400"
-            >
-              Top up tokens
-            </button>
-          </div>
-                ) : null}
-              </div>
+              <EffectTokenInfo
+                creditsCost={creditsCost}
+                walletBalance={walletBalance}
+                hasEnoughTokens={hasEnoughTokens}
+                isAuthenticated={!!token}
+                onTopUp={() => openPlans(creditsCost)}
+              />
 
               {isConfigurable ? (
-                <div className="mt-4 space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
-                      <span>Positive prompt</span>
-                      <button
-                        type="button"
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
-                        title="Describe what you want to see in the output."
-                        aria-label="Positive prompt info"
-                      >
-                        <Info className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <Textarea
-                      value={positivePrompt}
-                      onChange={(event) => setPositivePrompt(event.target.value)}
-                      placeholder="Describe the look, style, or details to add..."
-                      className="mt-2 min-h-[84px] text-xs"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
-                      <span>Negative prompt</span>
-                      <button
-                        type="button"
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/70"
-                        title="Describe what you want to avoid."
-                        aria-label="Negative prompt info"
-                      >
-                        <Info className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <Textarea
-                      value={negativePrompt}
-                      onChange={(event) => setNegativePrompt(event.target.value)}
-                      placeholder="Describe elements to avoid..."
-                      className="mt-2 min-h-[84px] text-xs"
-                    />
-                  </div>
-                </div>
+                <EffectPromptFields
+                  positivePrompt={positivePrompt}
+                  onPositivePromptChange={setPositivePrompt}
+                  negativePrompt={negativePrompt}
+                  onNegativePromptChange={setNegativePrompt}
+                />
               ) : null}
 
               {uploadState.status === "error" ? (
@@ -336,23 +287,11 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
       </div>
 
       {state.status === "success" ? (
-        <div className="fixed inset-x-0 bottom-0 z-40">
-          <div className="mx-auto w-full max-w-md px-4 pb-[calc(16px+env(safe-area-inset-bottom))] sm:max-w-xl lg:max-w-4xl">
-            <div className="rounded-3xl border border-white/10 bg-black/70 p-2 backdrop-blur-md supports-[backdrop-filter]:bg-black/40">
-              <button
-                type="button"
-                onClick={() => {
-                  handleStartUpload();
-                }}
-                disabled={disableUpload}
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 disabled:pointer-events-none disabled:opacity-70"
-              >
-                <IconWand className="h-5 w-5" />
-                {uploadLabel}
-              </button>
-            </div>
-          </div>
-        </div>
+        <EffectUploadFooter
+          label={uploadLabel}
+          disabled={disableUpload}
+          onClick={handleStartUpload}
+        />
       ) : null}
 
     </div>

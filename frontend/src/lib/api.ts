@@ -108,6 +108,7 @@ export type GalleryEffect = {
   description?: string | null;
   type?: string | null;
   is_premium?: boolean;
+  credits_cost?: number | null;
   category?: {
     id: number;
     slug: string;

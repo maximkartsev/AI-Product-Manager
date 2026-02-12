@@ -35,6 +35,12 @@ return [
         ],
     ],
 
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'), // Will be overridden dynamically per flow
+    ],
+
     'comfyui' => [
         'worker_token' => env('COMFYUI_WORKER_TOKEN'),
         'default_provider' => env('COMFYUI_DEFAULT_PROVIDER', 'local'),

@@ -18,6 +18,8 @@ use \App\Http\Controllers\RolloutController as RolloutController;
 use \App\Http\Controllers\TagController as TagController;
 use \App\Http\Controllers\RecordTagController as RecordTagController;
 use \App\Http\Controllers\RegisterController as RegisterController;
+use \App\Http\Controllers\AuthController as AuthController;
+use \App\Http\Controllers\TranslationsController as TranslationsController;
 use \App\Http\Controllers\PasswordController as PasswordController;
 use \App\Http\Controllers\ReviewController as ReviewController;
 use \App\Http\Controllers\MeController as MeController;
@@ -39,6 +41,15 @@ Route::post('login', [RegisterController::class,'login']);
 Route::post('register', [RegisterController::class,'register']);
 Route::post('password/reset', [PasswordController::class,'sendResetLink']);
 Route::post('password/reset/confirm', [PasswordController::class,'reset']);
+
+// Google OAuth
+Route::get('auth/google/signin', [AuthController::class, 'redirectToGoogleSignIn']);
+Route::get('auth/google/signin/callback', [AuthController::class, 'handleGoogleSignInCallback']);
+Route::get('auth/google/signup', [AuthController::class, 'redirectToGoogleSignUp']);
+Route::get('auth/google/signup/callback', [AuthController::class, 'handleGoogleSignUpCallback']);
+
+// Translations
+Route::get('translations/{lang}', [TranslationsController::class, 'show']);
 
 // Public catalog endpoints (no tenant init required).
 Route::get('effects', [EffectController::class,'index']);

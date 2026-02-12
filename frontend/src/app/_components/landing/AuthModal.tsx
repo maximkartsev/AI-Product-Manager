@@ -3,6 +3,8 @@
 import {
   ApiError,
   clearTenantDomain,
+  getGoogleSignInUrl,
+  getGoogleSignUpUrl,
   login,
   register,
   setAccessToken,
@@ -29,14 +31,20 @@ type SubmitState =
 function SocialButton({
   label,
   icon,
+  onClick,
+  disabled,
 }: {
   label: string;
   icon: ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
-      className="flex h-12 w-full items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/90 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex h-12 w-full items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/90 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400 disabled:pointer-events-none disabled:opacity-60"
     >
       <span className="grid h-6 w-6 place-items-center text-white/90">{icon}</span>
       <span>{label}</span>
@@ -162,10 +170,16 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     setSubmitState({ status: "loading" });
 
     try {
+      const trimmedName = name.trim();
+      const spaceIdx = trimmedName.indexOf(" ");
+      const firstName = spaceIdx > 0 ? trimmedName.slice(0, spaceIdx) : trimmedName;
+      const lastName = spaceIdx > 0 ? trimmedName.slice(spaceIdx + 1).trim() : "";
       const data: AuthSuccessData =
         mode === "signup"
           ? await register({
-              name: name.trim(),
+              name: trimmedName,
+              first_name: firstName,
+              last_name: lastName,
               email: email.trim(),
               password,
               c_password: password,
@@ -366,6 +380,21 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
   const canSubmit =
     email.trim().length > 0 && password.length > 0 && (mode === "signin" || name.trim().length > 0);
 
+  async function handleGoogleClick() {
+    if (isBusy) return;
+    setSubmitState({ status: "loading" });
+    try {
+      const { url } = mode === "signup" ? await getGoogleSignUpUrl() : await getGoogleSignInUrl();
+      window.location.href = url;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setSubmitState({ status: "error", message: formatAuthError(err) });
+      } else {
+        setSubmitState({ status: "error", message: "Failed to connect to Google." });
+      }
+    }
+  }
+
   return (
     <div
       ref={viewportRef}
@@ -409,9 +438,9 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
             <p className="mt-2 text-center text-sm leading-6 text-white/55">{subtitle}</p>
 
             <div className="mt-6 grid gap-3">
-              <SocialButton label="Continue with Google" icon={<span className="text-base font-bold">G</span>} />
-              <SocialButton label="Continue with Apple" icon={<IconApple className="h-4 w-4" />} />
-              <SocialButton label="Continue with TikTok" icon={<IconMusic className="h-5 w-5" />} />
+              <SocialButton label="Continue with Google" icon={<span className="text-base font-bold">G</span>} onClick={handleGoogleClick} disabled={isBusy} />
+              <SocialButton label="Continue with Apple" icon={<IconApple className="h-4 w-4" />} disabled={isBusy} />
+              <SocialButton label="Continue with TikTok" icon={<IconMusic className="h-5 w-5" />} disabled={isBusy} />
             </div>
 
             <div className="mt-6 flex items-center gap-3">
@@ -423,10 +452,10 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
             <form className="mt-5 grid gap-4" onSubmit={onSubmit}>
               {mode === "signup" ? (
                 <Field
-                  label="Name"
+                  label="First and Last Name"
                   icon={<IconUser className="h-5 w-5" />}
                   type="text"
-                  placeholder="Your name"
+                  placeholder="Jane Smith"
                   value={name}
                   onChange={setName}
                   autoComplete="name"

@@ -22,10 +22,14 @@ class User extends Authenticatable
      */
     protected $fillable = [
         'name',
+        'first_name',
+        'last_name',
         'email',
         'password',
         'is_admin',
         'admin_ui_settings',
+        'last_login_at',
+        'last_login_ip',
     ];
 
     /**
@@ -50,6 +54,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'is_admin' => 'boolean',
             'admin_ui_settings' => 'array',
+            'last_login_at' => 'datetime',
         ];
     }
 }

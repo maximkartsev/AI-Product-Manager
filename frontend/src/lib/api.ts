@@ -17,6 +17,8 @@ export type RegisterRequest = {
   email: string;
   password: string;
   c_password: string;
+  first_name?: string;
+  last_name?: string;
 };
 
 export type LoginRequest = {
@@ -454,6 +456,43 @@ export function apiGet<TData>(path: string, query?: Query, token?: string | null
 
 export function apiPost<TData>(path: string, body?: unknown, token?: string | null) {
   return apiRequest<TData>(path, { method: "POST", body, token });
+}
+
+// ---- Google OAuth types + functions
+
+export type GoogleAuthRedirectData = { url: string };
+
+export type GoogleAuthCallbackData = {
+  type: "signin" | "signup";
+  redirect_url: string;
+  user: { id: number; name: string; email: string };
+  access_token: string;
+  token_type: string;
+  tenant?: TenantInfo;
+};
+
+export function getGoogleSignInUrl(): Promise<GoogleAuthRedirectData> {
+  return apiGet<GoogleAuthRedirectData>("/auth/google/signin");
+}
+
+export function handleGoogleSignInCallback(
+  code: string,
+  state?: string,
+): Promise<GoogleAuthCallbackData> {
+  const query: Query = { code, state };
+  return apiGet<GoogleAuthCallbackData>("/auth/google/signin/callback", query);
+}
+
+export function getGoogleSignUpUrl(): Promise<GoogleAuthRedirectData> {
+  return apiGet<GoogleAuthRedirectData>("/auth/google/signup");
+}
+
+export function handleGoogleSignUpCallback(
+  code: string,
+  state?: string,
+): Promise<GoogleAuthCallbackData> {
+  const query: Query = { code, state };
+  return apiGet<GoogleAuthCallbackData>("/auth/google/signup/callback", query);
 }
 
 // ---- Resource functions (preferred API surface)

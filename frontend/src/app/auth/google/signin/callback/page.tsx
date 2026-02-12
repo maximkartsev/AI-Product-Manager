@@ -34,6 +34,10 @@ function SignInCallbackInner() {
         window.location.href = "/";
       })
       .catch((err) => {
+        if (err instanceof ApiError && err.status === 404) {
+          window.location.href = "/?auth=signup";
+          return;
+        }
         if (err instanceof ApiError && err.status >= 500) {
           setError("Something went wrong, we're already working on it. Please try again in a few minutes.");
         } else {

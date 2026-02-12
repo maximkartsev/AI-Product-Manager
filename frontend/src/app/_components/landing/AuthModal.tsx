@@ -42,6 +42,7 @@ type Props = {
   open: boolean;
   onClose: () => void;
   initialMode?: "signup" | "signin";
+  message?: string;
 };
 
 type SubmitState =
@@ -174,7 +175,7 @@ function extractFieldErrors(error: z.core.$ZodError): Record<string, string> {
 /*  AuthModal                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function AuthModal({ open, onClose, initialMode = "signup" }: Props) {
+export default function AuthModal({ open, onClose, initialMode = "signup", message }: Props) {
   const titleId = useId();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -192,6 +193,7 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
   const [password, setPassword] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [banner, setBanner] = useState<string | null>(null);
 
   const resetState = useCallback(() => {
     setMode(initialMode);
@@ -208,7 +210,8 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     setMode(initialMode);
     setSubmitState({ status: "idle" });
     setFieldErrors({});
-  }, [initialMode, open]);
+    setBanner(message ?? null);
+  }, [initialMode, message, open]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -528,10 +531,16 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
               {subtitle}
             </p>
 
+            {banner ? (
+              <div className="mt-4 rounded-2xl border border-fuchsia-400/20 bg-fuchsia-500/[0.08] px-4 py-3 text-balance text-center text-xs leading-5 text-fuchsia-100/90">
+                {banner}
+              </div>
+            ) : null}
+
             <div className="mt-6 mx-auto flex w-full max-w-64 rounded-xl bg-white/[0.06] p-1">
               <button
                 type="button"
-                onClick={() => { setMode("signup"); setSubmitState({ status: "idle" }); setFieldErrors({}); }}
+                onClick={() => { setMode("signup"); setSubmitState({ status: "idle" }); setFieldErrors({}); setBanner(null); }}
                 className={`flex-1 rounded-[10px] py-2 text-[13px] font-semibold transition-all ${
                   mode === "signup"
                     ? "bg-white/[0.1] text-white shadow-[0_1px_3px_rgba(0,0,0,0.25)]"
@@ -542,7 +551,7 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
               </button>
               <button
                 type="button"
-                onClick={() => { setMode("signin"); setSubmitState({ status: "idle" }); setFieldErrors({}); }}
+                onClick={() => { setMode("signin"); setSubmitState({ status: "idle" }); setFieldErrors({}); setBanner(null); }}
                 className={`flex-1 rounded-[10px] py-2 text-[13px] font-semibold transition-all ${
                   mode === "signin"
                     ? "bg-white/[0.1] text-white shadow-[0_1px_3px_rgba(0,0,0,0.25)]"

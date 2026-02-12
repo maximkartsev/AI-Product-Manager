@@ -15,6 +15,28 @@ import {
 } from "@/lib/api";
 import { type FormEvent, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { IconApple, IconEye, IconEyeOff, IconLock, IconMail, IconMusic, IconSparkles, IconUser, IconX } from "./icons";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { z } from "zod";
+
+/* ------------------------------------------------------------------ */
+/*  Zod schemas                                                        */
+/* ------------------------------------------------------------------ */
+
+const signUpSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100, "Name is too long"),
+  email: z.string().min(1, "Email is required").email("Please enter a valid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+const signInSchema = z.object({
+  email: z.string().min(1, "Email is required").email("Please enter a valid email address"),
+  password: z.string().min(1, "Password is required"),
+});
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
 
 type Props = {
   open: boolean;
@@ -28,6 +50,10 @@ type SubmitState =
   | { status: "success" }
   | { status: "error"; message: string };
 
+/* ------------------------------------------------------------------ */
+/*  Sub-components                                                     */
+/* ------------------------------------------------------------------ */
+
 function SocialButton({
   label,
   icon,
@@ -40,20 +66,22 @@ function SocialButton({
   disabled?: boolean;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       onClick={onClick}
       disabled={disabled}
-      className="flex h-12 w-full items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/90 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400 disabled:pointer-events-none disabled:opacity-60"
+      className="h-12 w-full gap-3 rounded-2xl border-white/10 bg-white/5 text-sm font-semibold text-white/90 shadow-none transition hover:bg-white/10 hover:text-white/90 focus-visible:ring-2 focus-visible:ring-fuchsia-400 disabled:opacity-60"
     >
       <span className="grid h-6 w-6 place-items-center text-white/90">{icon}</span>
       <span>{label}</span>
-    </button>
+    </Button>
   );
 }
 
-function Field({
+function AuthField({
   label,
+  name,
   icon,
   type,
   placeholder,
@@ -62,8 +90,10 @@ function Field({
   right,
   autoComplete,
   disabled,
+  error,
 }: {
   label: string;
+  name: string;
   icon: ReactNode;
   type: string;
   placeholder: string;
@@ -72,7 +102,9 @@ function Field({
   right?: ReactNode;
   autoComplete?: string;
   disabled?: boolean;
+  error?: string;
 }) {
+  const errorId = error ? `${name}-error` : undefined;
   return (
     <label className="grid gap-2">
       <span className="text-sm font-semibold text-white/80">{label}</span>
@@ -80,20 +112,31 @@ function Field({
         <span className="pointer-events-none absolute inset-y-0 left-3 grid w-5 place-items-center text-white/45">
           {icon}
         </span>
-        <input
+        <Input
           type={type}
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
           disabled={disabled}
-          className="h-12 w-full rounded-2xl border border-white/10 bg-black/35 px-10 text-base text-white placeholder:text-white/30 outline-none transition focus:border-fuchsia-400/60 focus:ring-2 focus:ring-fuchsia-400/15 sm:text-sm"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={errorId}
+          className="h-12 w-full rounded-2xl border-white/10 bg-black/35 px-10 text-base text-white placeholder:text-white/30 shadow-none transition focus-visible:border-fuchsia-400/60 focus-visible:ring-2 focus-visible:ring-fuchsia-400/15 focus-visible:ring-offset-0 sm:text-sm"
         />
         {right ? <span className="absolute inset-y-0 right-3 grid place-items-center">{right}</span> : null}
       </span>
+      {error ? (
+        <p id={errorId} className="text-xs text-red-300" role="alert">
+          {error}
+        </p>
+      ) : null}
     </label>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
 
 function formatAuthError(err: ApiError): string {
   const base = `${err.status ? `HTTP ${err.status}: ` : ""}${err.message}`.trim() || "Authentication failed.";
@@ -116,9 +159,23 @@ function formatAuthError(err: ApiError): string {
   return `${base} (${firstField}: ${String(firstMessage)})`;
 }
 
+function extractFieldErrors(error: z.core.$ZodError): Record<string, string> {
+  const errors: Record<string, string> = {};
+  error.issues.forEach((issue) => {
+    const field = issue.path[0];
+    if (field !== undefined && !errors[String(field)]) {
+      errors[String(field)] = issue.message;
+    }
+  });
+  return errors;
+}
+
+/* ------------------------------------------------------------------ */
+/*  AuthModal                                                          */
+/* ------------------------------------------------------------------ */
+
 export default function AuthModal({ open, onClose, initialMode = "signup" }: Props) {
   const titleId = useId();
-  const closeRef = useRef<HTMLButtonElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollTrackRef = useRef<HTMLDivElement | null>(null);
@@ -134,6 +191,7 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const resetState = useCallback(() => {
     setMode(initialMode);
@@ -142,12 +200,14 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     setEmail("");
     setPassword("");
     setSubmitState({ status: "idle" });
+    setFieldErrors({});
   }, [initialMode]);
 
   useEffect(() => {
     if (!open) return;
     setMode(initialMode);
     setSubmitState({ status: "idle" });
+    setFieldErrors({});
   }, [initialMode, open]);
 
   const handleClose = useCallback(() => {
@@ -163,9 +223,38 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     return () => window.clearTimeout(t);
   }, [handleClose, open, submitState.status]);
 
+  /* ---------- form helpers ---------- */
+
+  function handleFieldChange(setter: (v: string) => void, fieldName: string) {
+    return (value: string) => {
+      setter(value);
+      if (fieldErrors[fieldName]) {
+        setFieldErrors((prev) => {
+          const next = { ...prev };
+          delete next[fieldName];
+          return next;
+        });
+      }
+    };
+  }
+
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (submitState.status === "loading") return;
+
+    setFieldErrors({});
+
+    const schema = mode === "signup" ? signUpSchema : signInSchema;
+    const payload =
+      mode === "signup"
+        ? { name: name.trim(), email: email.trim(), password }
+        : { email: email.trim(), password };
+
+    const result = schema.safeParse(payload);
+    if (!result.success) {
+      setFieldErrors(extractFieldErrors(result.error));
+      return;
+    }
 
     setSubmitState({ status: "loading" });
 
@@ -207,25 +296,7 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     }
   }
 
-  useEffect(() => {
-    if (!open) return;
-
-    const body = document.body;
-    const prevOverflow = body.style.overflow;
-    body.style.overflow = "hidden";
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleClose();
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    closeRef.current?.focus();
-
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      body.style.overflow = prevOverflow;
-    };
-  }, [handleClose, open]);
+  /* ---------- mobile viewport tracking ---------- */
 
   useEffect(() => {
     if (!open) return;
@@ -252,8 +323,26 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     };
   }, [open]);
 
+  /* ---------- body overflow lock + Escape key ---------- */
+
   useEffect(() => {
     if (!open) return;
+    const body = document.body;
+    const prevOverflow = body.style.overflow;
+    body.style.overflow = "hidden";
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      body.style.overflow = prevOverflow;
+    };
+  }, [handleClose, open]);
+
+  /* ---------- custom scrollbar ---------- */
+
+  useEffect(() => {
     const el = scrollRef.current;
     const track = scrollTrackRef.current;
     const thumb = scrollThumbRef.current;
@@ -369,7 +458,7 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     el.scrollTop = (clamped / maxThumbTop) * maxScroll;
   }, []);
 
-  if (!open) return null;
+  /* ---------- derived state ---------- */
 
   const title = mode === "signup" ? "Join the AI magic" : "Welcome back";
   const subtitle =
@@ -395,6 +484,10 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     }
   }
 
+  /* ---------- render ---------- */
+
+  if (!open) return null;
+
   return (
     <div
       ref={viewportRef}
@@ -409,25 +502,21 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={handleClose}
       />
-
       <div className="relative w-full max-w-md">
         <div className="auth-modal-max-h relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/90 shadow-2xl">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(236,72,153,0.18),transparent_55%),radial-gradient(circle_at_70%_30%,rgba(99,102,241,0.14),transparent_60%)]" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleClose}
+            className="absolute right-4 top-3 z-10 h-7 w-7 rounded-full text-white/40 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+            aria-label="Close"
+          >
+            <IconX className="h-3.5 w-3.5" />
+          </Button>
 
           <div className="relative overflow-hidden">
-            <div ref={scrollRef} className="auth-modal-max-h auth-modal-scroll-body overflow-y-auto p-5 pr-7">
-            <div className="flex justify-end">
-              <button
-                ref={closeRef}
-                type="button"
-                onClick={handleClose}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/5 text-white/70 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-                aria-label="Close"
-              >
-                <IconX className="h-5 w-5" />
-              </button>
-            </div>
-
+            <div ref={scrollRef} className="auth-modal-max-h auth-modal-scroll-body overflow-y-auto p-5 pt-4">
             <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-fuchsia-500/25 to-violet-500/20 text-fuchsia-200">
               <IconSparkles className="h-7 w-7" />
             </div>
@@ -435,9 +524,36 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
             <h2 id={titleId} className="mt-4 text-center text-2xl font-semibold tracking-tight text-white">
               {title}
             </h2>
-            <p className="mt-2 text-center text-sm leading-6 text-white/55">{subtitle}</p>
+            <p className="mt-2 text-center text-sm leading-6 text-white/55">
+              {subtitle}
+            </p>
 
-            <div className="mt-6 grid gap-3">
+            <div className="mt-6 mx-auto flex w-full max-w-64 rounded-xl bg-white/[0.06] p-1">
+              <button
+                type="button"
+                onClick={() => { setMode("signup"); setSubmitState({ status: "idle" }); setFieldErrors({}); }}
+                className={`flex-1 rounded-[10px] py-2 text-[13px] font-semibold transition-all ${
+                  mode === "signup"
+                    ? "bg-white/[0.1] text-white shadow-[0_1px_3px_rgba(0,0,0,0.25)]"
+                    : "text-white/40 hover:text-white/60"
+                }`}
+              >
+                Sign Up
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode("signin"); setSubmitState({ status: "idle" }); setFieldErrors({}); }}
+                className={`flex-1 rounded-[10px] py-2 text-[13px] font-semibold transition-all ${
+                  mode === "signin"
+                    ? "bg-white/[0.1] text-white shadow-[0_1px_3px_rgba(0,0,0,0.25)]"
+                    : "text-white/40 hover:text-white/60"
+                }`}
+              >
+                Sign In
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-3">
               <SocialButton label="Continue with Google" icon={<span className="text-base font-bold">G</span>} onClick={handleGoogleClick} disabled={isBusy} />
               <SocialButton label="Continue with Apple" icon={<IconApple className="h-4 w-4" />} disabled={isBusy} />
               <SocialButton label="Continue with TikTok" icon={<IconMusic className="h-5 w-5" />} disabled={isBusy} />
@@ -449,40 +565,46 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
               <div className="h-px flex-1 bg-white/10" />
             </div>
 
-            <form className="mt-5 grid gap-4" onSubmit={onSubmit}>
+            <form className="mt-5 grid gap-4" onSubmit={onSubmit} noValidate>
               {mode === "signup" ? (
-                <Field
+                <AuthField
+                  name="name"
                   label="First and Last Name"
                   icon={<IconUser className="h-5 w-5" />}
                   type="text"
                   placeholder="Jane Smith"
                   value={name}
-                  onChange={setName}
+                  onChange={handleFieldChange(setName, "name")}
                   autoComplete="name"
                   disabled={isBusy}
+                  error={fieldErrors.name}
                 />
               ) : null}
 
-              <Field
+              <AuthField
+                name="email"
                 label="Email"
                 icon={<IconMail className="h-5 w-5" />}
                 type="email"
                 placeholder="you@example.com"
                 value={email}
-                onChange={setEmail}
+                onChange={handleFieldChange(setEmail, "email")}
                 autoComplete="email"
                 disabled={isBusy}
+                error={fieldErrors.email}
               />
 
-              <Field
+              <AuthField
+                name="password"
                 label="Password"
                 icon={<IconLock className="h-5 w-5" />}
                 type={showPassword ? "text" : "password"}
                 placeholder="••••••••"
                 value={password}
-                onChange={setPassword}
+                onChange={handleFieldChange(setPassword, "password")}
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
                 disabled={isBusy}
+                error={fieldErrors.password}
                 right={
                   <button
                     type="button"
@@ -506,10 +628,10 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
                 </div>
               ) : null}
 
-              <button
+              <Button
                 type="submit"
                 disabled={!canSubmit || isBusy}
-                className="mt-1 inline-flex h-12 w-full items-center justify-center rounded-2xl bg-gradient-to-r from-fuchsia-400 to-violet-400 text-sm font-semibold text-black shadow-[0_14px_40px_rgba(236,72,153,0.18)] transition hover:from-fuchsia-300 hover:to-violet-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400 disabled:pointer-events-none disabled:opacity-70"
+                className="mt-1 h-12 w-full rounded-2xl bg-gradient-to-r from-fuchsia-400 to-violet-400 text-sm font-semibold text-black shadow-[0_14px_40px_rgba(236,72,153,0.18)] transition hover:from-fuchsia-300 hover:to-violet-300 focus-visible:ring-2 focus-visible:ring-fuchsia-400 disabled:opacity-70"
               >
                 {submitState.status === "loading"
                   ? mode === "signup"
@@ -518,40 +640,8 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
                   : mode === "signup"
                     ? "Create Account"
                     : "Sign In"}
-              </button>
+              </Button>
             </form>
-
-            <div className="mt-4 text-center text-sm text-white/55">
-              {mode === "signup" ? (
-                <>
-                  Already have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode("signin");
-                      setSubmitState({ status: "idle" });
-                    }}
-                    className="font-semibold text-fuchsia-300 transition hover:text-fuchsia-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-                  >
-                    Sign in
-                  </button>
-                </>
-              ) : (
-                <>
-                  Don&apos;t have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode("signup");
-                      setSubmitState({ status: "idle" });
-                    }}
-                    className="font-semibold text-fuchsia-300 transition hover:text-fuchsia-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
-                  >
-                    Create one
-                  </button>
-                </>
-              )}
-            </div>
 
             <p className="mt-4 text-center text-[11px] leading-4 text-white/40">
               By signing up, you agree to our{" "}
@@ -587,4 +677,3 @@ export default function AuthModal({ open, onClose, initialMode = "signup" }: Pro
     </div>
   );
 }
-

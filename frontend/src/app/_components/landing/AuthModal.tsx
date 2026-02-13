@@ -5,6 +5,8 @@ import {
   clearTenantDomain,
   getGoogleSignInUrl,
   getGoogleSignUpUrl,
+  getTikTokSignInUrl,
+  getTikTokSignUpUrl,
   login,
   register,
   setAccessToken,
@@ -472,6 +474,21 @@ export default function AuthModal({ open, onClose, initialMode = "signup", messa
   const canSubmit =
     email.trim().length > 0 && password.length > 0 && (mode === "signin" || name.trim().length > 0);
 
+  async function handleTikTokClick() {
+    if (isBusy) return;
+    setSubmitState({ status: "loading" });
+    try {
+      const { url } = mode === "signup" ? await getTikTokSignUpUrl() : await getTikTokSignInUrl();
+      window.location.href = url;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setSubmitState({ status: "error", message: formatAuthError(err) });
+      } else {
+        setSubmitState({ status: "error", message: "Failed to connect to TikTok." });
+      }
+    }
+  }
+
   async function handleGoogleClick() {
     if (isBusy) return;
     setSubmitState({ status: "loading" });
@@ -565,7 +582,7 @@ export default function AuthModal({ open, onClose, initialMode = "signup", messa
             <div className="mt-5 grid gap-3">
               <SocialButton label="Continue with Google" icon={<span className="text-base font-bold">G</span>} onClick={handleGoogleClick} disabled={isBusy} />
               <SocialButton label="Continue with Apple" icon={<IconApple className="h-4 w-4" />} disabled={isBusy} />
-              <SocialButton label="Continue with TikTok" icon={<IconMusic className="h-5 w-5" />} disabled={isBusy} />
+              <SocialButton label="Continue with TikTok" icon={<IconMusic className="h-5 w-5" />} onClick={handleTikTokClick} disabled={isBusy} />
             </div>
 
             <div className="mt-6 flex items-center gap-3">

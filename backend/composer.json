@@ -23,6 +23,8 @@
         "sentry/sentry-laravel": "^4.14",
         "simplesoftwareio/simple-qrcode": "^4.2",
         "smalot/pdfparser": "^2.12",
+        "socialiteproviders/apple": "^5.8",
+        "socialiteproviders/tiktok": "^5.2",
         "spatie/laravel-activitylog": "^4.10",
         "stancl/tenancy": "^3.9",
         "stichoza/google-translate-php": "^5.2",

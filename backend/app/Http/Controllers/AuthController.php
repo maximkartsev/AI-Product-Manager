@@ -227,4 +227,229 @@ class AuthController extends BaseController
 
         return $this->sendResponse($result, 'User registered successfully via Google');
     }
+
+    public function redirectToTikTokSignIn(Request $request)
+    {
+        $state = base64_encode(json_encode(['action' => 'signin']));
+
+        $redirectUrl = Socialite::driver('tiktok')
+            ->stateless()
+            ->redirectUrl(env('FRONTEND_URL') . '/auth/tiktok/signin/callback')
+            ->scopes(['user.info.basic'])
+            ->with(['state' => $state])
+            ->redirect()
+            ->getTargetUrl();
+
+        return $this->sendResponse(['url' => $redirectUrl], 'TikTok sign-in redirect URL');
+    }
+
+    public function handleTikTokSignInCallback(Request $request)
+    {
+        $code = $request->input('code');
+        if (!$code) {
+            return $this->sendError('Authorization code is required.', [], 400);
+        }
+
+        try {
+            $tiktokUser = Socialite::driver('tiktok')
+                ->stateless()
+                ->redirectUrl(env('FRONTEND_URL') . '/auth/tiktok/signin/callback')
+                ->user();
+        } catch (ClientException $e) {
+            return $this->sendError('Invalid credentials.', [], 422);
+        } catch (\Exception $e) {
+            return $this->sendError('OAuth authentication failed.', [], 500);
+        }
+
+        $email = $tiktokUser->getEmail();
+        if (!$email) {
+            return $this->sendError('TikTok did not provide an email address. Please use another sign-in method.', [], 422);
+        }
+
+        $user = User::where('email', $email)->first();
+
+        if (!$user) {
+            return $this->sendError('No account found with this email. Please sign up first.', [], 404);
+        }
+
+        // Update login tracking
+        $user->update([
+            'last_login_at' => now(),
+            'last_login_ip' => $request->ip(),
+        ]);
+
+        // Parse device info
+        $userAgent = $request->header('User-Agent', '');
+        $deviceInfo = $this->parseUserAgent($userAgent);
+        $deviceName = $deviceInfo['browser'] . ' on ' . $deviceInfo['platform'];
+
+        $token = $user->createToken($deviceName, ['*']);
+
+        $token->accessToken->update([
+            'device_name' => $deviceName,
+            'device_type' => $deviceInfo['device_type'],
+            'browser' => $deviceInfo['browser'],
+            'platform' => $deviceInfo['platform'],
+            'ip_address' => $request->ip(),
+        ]);
+
+        $tenant = Tenant::query()->where('user_id', $user->id)->first();
+
+        $result = [
+            'type' => 'signin',
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ],
+            'access_token' => $token->plainTextToken,
+            'token_type' => 'Bearer',
+        ];
+
+        if ($tenant) {
+            $result['tenant'] = [
+                'id' => $tenant->id,
+                'domain' => $tenant->domains()->first()?->domain,
+                'db_pool' => $tenant->db_pool,
+            ];
+        }
+
+        return $this->sendResponse($result, 'TikTok sign-in successful');
+    }
+
+    public function redirectToTikTokSignUp(Request $request)
+    {
+        $state = base64_encode(json_encode(['action' => 'signup']));
+
+        $redirectUrl = Socialite::driver('tiktok')
+            ->stateless()
+            ->redirectUrl(env('FRONTEND_URL') . '/auth/tiktok/signup/callback')
+            ->scopes(['user.info.basic'])
+            ->with(['state' => $state])
+            ->redirect()
+            ->getTargetUrl();
+
+        return $this->sendResponse(['url' => $redirectUrl], 'TikTok sign-up redirect URL');
+    }
+
+    public function handleTikTokSignUpCallback(Request $request)
+    {
+        $code = $request->input('code');
+        if (!$code) {
+            return $this->sendError('Authorization code is required.', [], 400);
+        }
+
+        try {
+            $tiktokUser = Socialite::driver('tiktok')
+                ->stateless()
+                ->redirectUrl(env('FRONTEND_URL') . '/auth/tiktok/signup/callback')
+                ->user();
+        } catch (ClientException $e) {
+            return $this->sendError('Invalid credentials.', [], 422);
+        } catch (\Exception $e) {
+            return $this->sendError('OAuth authentication failed.', [], 500);
+        }
+
+        $email = $tiktokUser->getEmail();
+        if (!$email) {
+            return $this->sendError('TikTok did not provide an email address. Please use another sign-up method.', [], 422);
+        }
+
+        $existingUser = User::where('email', $email)->first();
+
+        if ($existingUser) {
+            // User already exists — sign them in instead
+            $existingUser->update([
+                'last_login_at' => now(),
+                'last_login_ip' => $request->ip(),
+            ]);
+
+            $userAgent = $request->header('User-Agent', '');
+            $deviceInfo = $this->parseUserAgent($userAgent);
+            $deviceName = $deviceInfo['browser'] . ' on ' . $deviceInfo['platform'];
+
+            $token = $existingUser->createToken($deviceName, ['*']);
+
+            $token->accessToken->update([
+                'device_name' => $deviceName,
+                'device_type' => $deviceInfo['device_type'],
+                'browser' => $deviceInfo['browser'],
+                'platform' => $deviceInfo['platform'],
+                'ip_address' => $request->ip(),
+            ]);
+
+            $tenant = Tenant::query()->where('user_id', $existingUser->id)->first();
+
+            $result = [
+                'type' => 'signup',
+                'user' => [
+                    'id' => $existingUser->id,
+                    'name' => $existingUser->name,
+                    'email' => $existingUser->email,
+                ],
+                'access_token' => $token->plainTextToken,
+                'token_type' => 'Bearer',
+            ];
+
+            if ($tenant) {
+                $result['tenant'] = [
+                    'id' => $tenant->id,
+                    'domain' => $tenant->domains()->first()?->domain,
+                    'db_pool' => $tenant->db_pool,
+                ];
+            }
+
+            return $this->sendResponse($result, 'User already exists, signed in successfully');
+        }
+
+        // Split TikTok name into first/last
+        $fullName = $tiktokUser->getName() ?? '';
+        $nameParts = preg_split('/\s+/', trim($fullName), 2);
+        $firstName = $nameParts[0] ?? '';
+        $lastName = $nameParts[1] ?? '';
+
+        $user = User::create([
+            'name' => $fullName,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'email' => $email,
+            'password' => Hash::make(Str::random(32)),
+            'last_login_at' => now(),
+            'last_login_ip' => $request->ip(),
+        ]);
+
+        $tenant = $this->ensureTenantForUser($user);
+
+        $userAgent = $request->header('User-Agent', '');
+        $deviceInfo = $this->parseUserAgent($userAgent);
+        $deviceName = $deviceInfo['browser'] . ' on ' . $deviceInfo['platform'];
+
+        $token = $user->createToken($deviceName, ['*']);
+
+        $token->accessToken->update([
+            'device_name' => $deviceName,
+            'device_type' => $deviceInfo['device_type'],
+            'browser' => $deviceInfo['browser'],
+            'platform' => $deviceInfo['platform'],
+            'ip_address' => $request->ip(),
+        ]);
+
+        $result = [
+            'type' => 'signup',
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ],
+            'access_token' => $token->plainTextToken,
+            'token_type' => 'Bearer',
+            'tenant' => [
+                'id' => $tenant->id,
+                'domain' => $tenant->domains()->first()?->domain,
+                'db_pool' => $tenant->db_pool,
+            ],
+        ];
+
+        return $this->sendResponse($result, 'User registered successfully via TikTok');
+    }
 }

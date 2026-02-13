@@ -496,6 +496,43 @@ export function handleGoogleSignUpCallback(
   return apiGet<GoogleAuthCallbackData>("/auth/google/signup/callback", query);
 }
 
+// ---- TikTok OAuth types + functions
+
+export type TikTokAuthRedirectData = { url: string };
+
+export type TikTokAuthCallbackData = {
+  type: "signin" | "signup";
+  redirect_url: string;
+  user: { id: number; name: string; email: string };
+  access_token: string;
+  token_type: string;
+  tenant?: TenantInfo;
+};
+
+export function getTikTokSignInUrl(): Promise<TikTokAuthRedirectData> {
+  return apiGet<TikTokAuthRedirectData>("/auth/tiktok/signin");
+}
+
+export function handleTikTokSignInCallback(
+  code: string,
+  state?: string,
+): Promise<TikTokAuthCallbackData> {
+  const query: Query = { code, state };
+  return apiGet<TikTokAuthCallbackData>("/auth/tiktok/signin/callback", query);
+}
+
+export function getTikTokSignUpUrl(): Promise<TikTokAuthRedirectData> {
+  return apiGet<TikTokAuthRedirectData>("/auth/tiktok/signup");
+}
+
+export function handleTikTokSignUpCallback(
+  code: string,
+  state?: string,
+): Promise<TikTokAuthCallbackData> {
+  const query: Query = { code, state };
+  return apiGet<TikTokAuthCallbackData>("/auth/tiktok/signup/callback", query);
+}
+
 // ---- Resource functions (preferred API surface)
 
 export function register(payload: RegisterRequest): Promise<AuthSuccessData> {

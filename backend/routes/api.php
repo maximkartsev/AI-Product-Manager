@@ -48,6 +48,12 @@ Route::get('auth/google/signin/callback', [AuthController::class, 'handleGoogleS
 Route::get('auth/google/signup', [AuthController::class, 'redirectToGoogleSignUp']);
 Route::get('auth/google/signup/callback', [AuthController::class, 'handleGoogleSignUpCallback']);
 
+// TikTok OAuth
+Route::get('auth/tiktok/signin', [AuthController::class, 'redirectToTikTokSignIn']);
+Route::get('auth/tiktok/signin/callback', [AuthController::class, 'handleTikTokSignInCallback']);
+Route::get('auth/tiktok/signup', [AuthController::class, 'redirectToTikTokSignUp']);
+Route::get('auth/tiktok/signup/callback', [AuthController::class, 'handleTikTokSignUpCallback']);
+
 // Translations
 Route::get('translations/{lang}', [TranslationsController::class, 'show']);
 

@@ -41,6 +41,18 @@ return [
         'redirect' => env('GOOGLE_REDIRECT_URI'), // Will be overridden dynamically per flow
     ],
 
+    'apple' => [
+        'client_id' => env('APPLE_CLIENT_ID'),
+        'client_secret' => env('APPLE_CLIENT_SECRET'),
+        'redirect' => env('APPLE_REDIRECT_URI') // Will be overridden dynamically per flow
+    ],
+
+    'tiktok' => [
+        'client_id' => env('TIKTOK_CLIENT_ID'),
+        'client_secret' => env('TIKTOK_CLIENT_SECRET'),
+        'redirect' => env('TIKTOK_REDIRECT_URI') // Will be overridden dynamically per flow
+    ],
+
     'comfyui' => [
         'worker_token' => env('COMFYUI_WORKER_TOKEN'),
         'default_provider' => env('COMFYUI_DEFAULT_PROVIDER', 'local'),

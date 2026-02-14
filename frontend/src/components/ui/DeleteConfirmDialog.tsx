@@ -72,7 +72,7 @@ export function DeleteConfirmDialog({
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="pt-4">
           <Button
             type="button"
             variant="outline"

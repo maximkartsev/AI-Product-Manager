@@ -16,15 +16,12 @@ class Effect extends CentralModel
         'slug',
         'description',
         'category_id',
+        'workflow_id',
+        'property_overrides',
         'tags',
         'type',
         'thumbnail_url',
         'preview_video_url',
-        'comfyui_workflow_path',
-        'comfyui_input_path_placeholder',
-        'output_extension',
-        'output_mime_type',
-        'output_node_id',
         'credits_cost',
         'last_processing_time_seconds',
         'popularity_score',
@@ -35,6 +32,8 @@ class Effect extends CentralModel
 
     protected $casts = [
         'category_id' => 'integer',
+        'workflow_id' => 'integer',
+        'property_overrides' => 'array',
         'tags' => 'array',
         'credits_cost' => 'float',
         'last_processing_time_seconds' => 'integer',
@@ -42,7 +41,6 @@ class Effect extends CentralModel
         'is_active' => 'boolean',
         'is_premium' => 'boolean',
         'is_new' => 'boolean',
-        'output_node_id' => 'string',
     ];
 
     public static function getRules($id = null)
@@ -52,16 +50,13 @@ class Effect extends CentralModel
             'slug' => 'string|required|max:255|unique:effects,slug' . ($id ? ',' . $id : ''),
             'description' => 'string|nullable',
             'category_id' => 'numeric|nullable|exists:categories,id',
+            'workflow_id' => 'numeric|nullable|exists:workflows,id',
+            'property_overrides' => 'array|nullable',
             'tags' => 'array|nullable',
             'tags.*' => 'string|max:64',
             'type' => 'string|required|max:255',
             'thumbnail_url' => 'string|nullable|max:2048',
             'preview_video_url' => 'string|nullable|max:2048',
-            'comfyui_workflow_path' => 'string|nullable|max:2048',
-            'comfyui_input_path_placeholder' => 'string|nullable|max:255',
-            'output_extension' => 'string|nullable|max:16',
-            'output_mime_type' => 'string|nullable|max:255',
-            'output_node_id' => 'string|nullable|max:64',
             'credits_cost' => 'numeric|required',
             'popularity_score' => 'numeric|required',
             'is_active' => 'boolean|required',
@@ -74,5 +69,10 @@ class Effect extends CentralModel
     public function category()
     {
         return $this->belongsTo(\App\Models\Category::class);
+    }
+
+    public function workflow()
+    {
+        return $this->belongsTo(\App\Models\Workflow::class);
     }
 }

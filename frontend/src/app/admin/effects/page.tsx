@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as z from "zod";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTableView, type DataTableFormField } from "@/components/ui/DataTable";
@@ -14,10 +14,12 @@ import {
   createAdminEffect,
   deleteAdminEffect,
   getAdminEffects,
+  getAdminWorkflows,
   initEffectAssetUpload,
   updateAdminEffect,
   type AdminEffect,
   type AdminEffectPayload,
+  type AdminWorkflow,
 } from "@/lib/api";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
@@ -69,6 +71,7 @@ const effectSchema = z.object({
   slug: z.string().min(1, "Slug is required").max(255),
   description: z.string().nullable().optional(),
   category_id: z.number().int().positive().nullable().optional(),
+  workflow_id: z.number().int().positive().nullable().optional(),
   tags: z.array(z.string()).nullable().optional(),
   type: z.string().min(1, "Type is required"),
   credits_cost: z.number({ error: "Must be a number" }).min(0, "Must be 0 or more"),
@@ -177,6 +180,8 @@ const initialFormState: Record<string, string> = {
   slug: "",
   description: "",
   category_id: "",
+  workflow_id: "",
+  property_overrides: "{}",
   tags: "",
   type: "configurable",
   credits_cost: "5",
@@ -203,6 +208,12 @@ export default function AdminEffectsPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<AdminEffect | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [workflows, setWorkflows] = useState<AdminWorkflow[]>([]);
+
+  // Load workflows for dropdown
+  useEffect(() => {
+    getAdminWorkflows({ perPage: 100 }).then((data) => setWorkflows(data.items ?? [])).catch(() => {});
+  }, []);
 
   const deletingIdRef = useRef(deletingId);
   deletingIdRef.current = deletingId;
@@ -210,6 +221,10 @@ export default function AdminEffectsPage() {
   const handleEdit = (item: AdminEffect) => {
     const newFormState: Record<string, any> = { ...initialFormState };
     Object.keys(newFormState).forEach((key) => {
+      if (key === "property_overrides") {
+        newFormState[key] = item.property_overrides ? JSON.stringify(item.property_overrides) : "{}";
+        return;
+      }
       if (item[key as keyof AdminEffect] !== undefined && item[key as keyof AdminEffect] !== null) {
         const val = item[key as keyof AdminEffect];
         if (Array.isArray(val)) {
@@ -357,6 +372,63 @@ export default function AdminEffectsPage() {
     { key: "slug", label: "Slug", type: "text", required: true, placeholder: "effect-slug" },
     { key: "description", label: "Description", type: "text", placeholder: "Effect description", fullWidth: true },
     { key: "category_id", label: "Category" },
+    {
+      key: "workflow_id",
+      label: "Workflow",
+      type: "select",
+      section: "Workflow",
+      options: [
+        { value: "", label: "-- None --" },
+        ...workflows.map((w) => ({ value: String(w.id), label: w.name || w.slug || `#${w.id}` })),
+      ],
+    },
+    {
+      key: "property_overrides",
+      label: "Property Overrides",
+      fullWidth: true,
+      render: ({ value, onChange, formState }) => {
+        const wfId = Number(formState.workflow_id);
+        const wf = workflows.find((w) => w.id === wfId);
+        const props = (wf?.properties ?? []).filter((p) => !p.is_primary_input);
+        let overrides: Record<string, string> = {};
+        try { overrides = JSON.parse(value || "{}"); } catch { /* empty */ }
+        if (props.length === 0) {
+          return <p className="text-xs text-muted-foreground">Select a workflow to configure property overrides.</p>;
+        }
+        return (
+          <div className="flex flex-col gap-2">
+            {props.map((prop) => (
+              <div key={prop.key}>
+                <label className="text-xs text-muted-foreground">{prop.name || prop.key} ({prop.type})</label>
+                {prop.type === "text" ? (
+                  <Input
+                    value={overrides[prop.key] ?? ""}
+                    onChange={(e) => {
+                      const next = { ...overrides, [prop.key]: e.target.value };
+                      if (!e.target.value) delete next[prop.key];
+                      onChange(JSON.stringify(next));
+                    }}
+                    placeholder={`Default: ${prop.default_value || "(empty)"}`}
+                    className="h-8 text-sm"
+                  />
+                ) : (
+                  <Input
+                    value={overrides[prop.key] ?? ""}
+                    onChange={(e) => {
+                      const next = { ...overrides, [prop.key]: e.target.value };
+                      if (!e.target.value) delete next[prop.key];
+                      onChange(JSON.stringify(next));
+                    }}
+                    placeholder={`S3 path for ${prop.type}`}
+                    className="h-8 text-sm"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      },
+    },
     { key: "tags", label: "Tags", type: "text", placeholder: "tag1, tag2, tag3" },
     {
       key: "type",
@@ -476,11 +548,22 @@ export default function AdminEffectsPage() {
 
     const catId = formState.category_id ? Number(formState.category_id) : null;
 
+    const wfId = formState.workflow_id ? Number(formState.workflow_id) : null;
+    let propertyOverrides: Record<string, string> | null = null;
+    try {
+      const parsed = JSON.parse(String(formState.property_overrides || "{}"));
+      if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+        propertyOverrides = parsed;
+      }
+    } catch { /* empty */ }
+
     return {
       name: str("name") || "",
       slug: str("slug") || "",
       description: str("description"),
       category_id: catId && Number.isFinite(catId) ? catId : null,
+      workflow_id: wfId && Number.isFinite(wfId) ? wfId : null,
+      property_overrides: propertyOverrides,
       tags,
       type: str("type") || "",
       credits_cost: parseNumber(String(formState.credits_cost || "")) ?? 0,

@@ -738,12 +738,114 @@ export type EffectUploadInitData = {
   public_url?: string | null;
 };
 
+// ---- Workflow types
+
+export type WorkflowProperty = {
+  key: string;
+  name: string;
+  description?: string;
+  type: "text" | "image" | "video";
+  placeholder: string;
+  default_value?: string | null;
+  default_value_hash?: string | null;
+  required?: boolean;
+  user_configurable?: boolean;
+  is_primary_input?: boolean;
+};
+
+export type AdminWorkflow = {
+  id: number;
+  name?: string;
+  slug?: string;
+  description?: string | null;
+  comfyui_workflow_path?: string | null;
+  properties?: WorkflowProperty[] | null;
+  output_node_id?: string | null;
+  output_extension?: string | null;
+  output_mime_type?: string | null;
+  is_active?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AdminWorkflowPayload = Partial<AdminWorkflow>;
+
+export type AdminWorkflowsIndexData = {
+  items: AdminWorkflow[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order: string;
+  search: string | null;
+  filters: unknown[];
+};
+
+// ---- Worker types
+
+export type AdminWorker = {
+  id: number;
+  worker_id?: string;
+  display_name?: string | null;
+  environment?: string | null;
+  capabilities?: Record<string, unknown> | null;
+  max_concurrency?: number;
+  current_load?: number;
+  last_seen_at?: string | null;
+  is_draining?: boolean;
+  is_approved?: boolean;
+  last_ip?: string | null;
+  workflows_count?: number;
+  workflows?: AdminWorkflow[];
+  recent_audit_logs?: WorkerAuditLog[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AdminWorkersIndexData = {
+  items: AdminWorker[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order: string;
+  search: string | null;
+  filters: unknown[];
+};
+
+// ---- Audit Log types
+
+export type WorkerAuditLog = {
+  id: number;
+  worker_id?: number | null;
+  worker_identifier?: string | null;
+  worker_display_name?: string | null;
+  event: string;
+  dispatch_id?: number | null;
+  ip_address?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export type AdminAuditLogsIndexData = {
+  items: WorkerAuditLog[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order: string;
+  search: string | null;
+  filters: unknown[];
+};
+
 export type AdminEffect = {
   id: number;
   name?: string;
   slug?: string;
   description?: string | null;
   category_id?: number | null;
+  workflow_id?: number | null;
+  property_overrides?: Record<string, string> | null;
   category?: { id: number; name?: string } | null;
   tags?: string[] | null;
   type?: string | null;
@@ -1070,5 +1172,131 @@ export function getTokenSpendingAnalytics(params: {
     granularity: params.granularity ?? "day",
   };
   return apiGet<TokenSpendingData>("/admin/analytics/token-spending", query);
+}
+
+// ---- Admin Workflows
+
+export async function getAdminWorkflows(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<AdminWorkflowsIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+  if (params.search) query.set("search", params.search);
+  if (params.order) query.set("order", params.order);
+  appendFilterParams(query, params.filters);
+  return apiRequest<AdminWorkflowsIndexData>(`/admin/workflows?${query.toString()}`, { method: "GET" });
+}
+
+export function createAdminWorkflow(payload: AdminWorkflowPayload): Promise<AdminWorkflow> {
+  return apiPost<AdminWorkflow>("/admin/workflows", payload);
+}
+
+export function updateAdminWorkflow(id: number, payload: AdminWorkflowPayload): Promise<AdminWorkflow> {
+  return apiRequest<AdminWorkflow>(`/admin/workflows/${id}`, { method: "PATCH", body: payload });
+}
+
+export function deleteAdminWorkflow(id: number): Promise<void> {
+  return apiRequest<void>(`/admin/workflows/${id}`, { method: "DELETE" });
+}
+
+export type WorkflowUploadInitRequest = {
+  kind: "workflow_json" | "property_asset";
+  workflow_id?: number;
+  property_key?: string;
+  mime_type: string;
+  size: number;
+  original_filename: string;
+};
+
+export type WorkflowUploadInitData = {
+  path: string;
+  upload_url: string;
+  upload_headers: Record<string, string | string[]>;
+  expires_in: number;
+};
+
+export function initWorkflowAssetUpload(payload: WorkflowUploadInitRequest): Promise<WorkflowUploadInitData> {
+  return apiPost<WorkflowUploadInitData>("/admin/workflows/uploads", payload);
+}
+
+// ---- Admin Workers
+
+export async function getAdminWorkers(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<AdminWorkersIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+  if (params.search) query.set("search", params.search);
+  if (params.order) query.set("order", params.order);
+  appendFilterParams(query, params.filters);
+  return apiRequest<AdminWorkersIndexData>(`/admin/workers?${query.toString()}`, { method: "GET" });
+}
+
+export function getAdminWorker(id: number): Promise<AdminWorker> {
+  return apiGet<AdminWorker>(`/admin/workers/${id}`);
+}
+
+export function updateAdminWorker(id: number, payload: { display_name?: string; is_draining?: boolean }): Promise<AdminWorker> {
+  return apiRequest<AdminWorker>(`/admin/workers/${id}`, { method: "PATCH", body: payload });
+}
+
+export function approveWorker(id: number): Promise<AdminWorker> {
+  return apiPost<AdminWorker>(`/admin/workers/${id}/approve`);
+}
+
+export function revokeWorker(id: number): Promise<AdminWorker> {
+  return apiPost<AdminWorker>(`/admin/workers/${id}/revoke`);
+}
+
+export function rotateWorkerToken(id: number): Promise<{ token: string; message: string }> {
+  return apiPost<{ token: string; message: string }>(`/admin/workers/${id}/rotate-token`);
+}
+
+export function assignWorkerWorkflows(id: number, workflowIds: number[]): Promise<AdminWorker> {
+  return apiRequest<AdminWorker>(`/admin/workers/${id}/workflows`, { method: "PUT", body: { workflow_ids: workflowIds } });
+}
+
+export function getWorkerAuditLogs(workerId: number, params: { page?: number; perPage?: number } = {}): Promise<AdminAuditLogsIndexData> {
+  const query: Query = { page: params.page ?? 1, perPage: params.perPage ?? 20 };
+  return apiGet<AdminAuditLogsIndexData>(`/admin/workers/${workerId}/audit-logs`, query);
+}
+
+// ---- Admin Audit Logs (global)
+
+export async function getAdminAuditLogs(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  event?: string;
+  worker_id?: number;
+  from_date?: string;
+  to_date?: string;
+  filters?: FilterValue[];
+} = {}): Promise<AdminAuditLogsIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+  if (params.search) query.set("search", params.search);
+  if (params.order) query.set("order", params.order);
+  if (params.event) query.set("event", params.event);
+  if (params.worker_id) query.set("worker_id", String(params.worker_id));
+  if (params.from_date) query.set("from_date", params.from_date);
+  if (params.to_date) query.set("to_date", params.to_date);
+  appendFilterParams(query, params.filters);
+  return apiRequest<AdminAuditLogsIndexData>(`/admin/audit-logs?${query.toString()}`, { method: "GET" });
 }
 

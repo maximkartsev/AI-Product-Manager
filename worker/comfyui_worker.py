@@ -1,3 +1,4 @@
+import hashlib
 import json
 import mimetypes
 import os
@@ -26,6 +27,9 @@ POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "3"))
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "30"))
 MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "1"))
 CAPABILITIES = os.environ.get("CAPABILITIES", "")
+
+# Asset upload cache: (endpoint, content_hash) → comfyui_filename
+_asset_cache: Dict[Tuple[str, str], str] = {}
 
 
 def _backend_headers() -> Dict[str, str]:
@@ -145,10 +149,80 @@ def upload_output(output_url: str, output_headers: Dict[str, str], output_path: 
         resp.raise_for_status()
 
 
-def prepare_workflow(input_payload: Dict[str, Any], input_reference: Optional[str]) -> Dict[str, Any]:
+def upload_to_comfyui(file_path: str, endpoint: str) -> str:
+    """Upload a file to local ComfyUI via POST /upload/image."""
+    url = f"{endpoint}/upload/image"
+    file_name = os.path.basename(file_path)
+    mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    with open(file_path, "rb") as handle:
+        files = {"image": (file_name, handle, mime_type)}
+        resp = requests.post(url, files=files, data={"type": "input", "overwrite": "true"}, timeout=300)
+        resp.raise_for_status()
+        result = resp.json()
+        name = result.get("name")
+        if not name:
+            raise RuntimeError("ComfyUI upload did not return a filename.")
+        return name
+
+
+def download_and_upload_assets(
+    assets: List[Dict[str, Any]],
+    provider: str,
+    endpoint: str,
+) -> Dict[str, str]:
+    """Download assets from presigned URLs and upload to ComfyUI.
+
+    Returns a mapping of placeholder → comfyui_filename.
+    """
+    placeholder_map: Dict[str, str] = {}
+    for asset in assets:
+        placeholder = asset.get("placeholder")
+        download_url = asset.get("download_url")
+        content_hash = asset.get("content_hash")
+        is_primary = asset.get("is_primary_input", False)
+
+        if not placeholder or not download_url:
+            continue
+
+        # Check cache for non-primary assets with a content hash
+        cache_key = (endpoint, content_hash) if content_hash and not is_primary else None
+        if cache_key and cache_key in _asset_cache:
+            placeholder_map[placeholder] = _asset_cache[cache_key]
+            continue
+
+        # Download the asset
+        tmp_path = download_input(download_url)
+        try:
+            # Upload to ComfyUI
+            if provider == "cloud":
+                asset_name = os.path.basename(download_url.split("?")[0])
+                upload_result = cloud_upload_input_file(tmp_path, asset_name, None)
+                comfyui_name = upload_result.get("name", asset_name)
+            else:
+                comfyui_name = upload_to_comfyui(tmp_path, endpoint)
+
+            placeholder_map[placeholder] = comfyui_name
+
+            # Cache for future use
+            if cache_key:
+                _asset_cache[cache_key] = comfyui_name
+        finally:
+            _safe_unlink(tmp_path)
+
+    return placeholder_map
+
+
+def prepare_workflow(input_payload: Dict[str, Any], input_reference: Optional[str], placeholder_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     workflow = input_payload.get("workflow") or input_payload.get("comfyui_workflow")
     if not workflow:
         raise ValueError("Missing ComfyUI workflow in input_payload.")
+
+    # Apply placeholder_map replacements (from asset pipeline)
+    if placeholder_map:
+        serialized = json.dumps(workflow)
+        for placeholder, filename in placeholder_map.items():
+            serialized = serialized.replace(placeholder, filename)
+        workflow = json.loads(serialized)
 
     if input_reference:
         placeholder = input_payload.get("input_path_placeholder", "__INPUT_PATH__")
@@ -386,20 +460,33 @@ def process_job(job: Dict[str, Any]) -> None:
     input_path = None
     output_path = None
 
+    # Handle asset pipeline if assets are present in input_payload
+    assets = input_payload.get("assets")
+    asset_placeholder_map: Optional[Dict[str, str]] = None
+
     try:
+        if assets and isinstance(assets, list):
+            comfyui_endpoint = COMFY_CLOUD_BASE_URL if provider == "cloud" else COMFYUI_BASE_URL
+            asset_placeholder_map = download_and_upload_assets(assets, provider, comfyui_endpoint)
+
         if provider == "cloud":
-            if not input_url:
+            if not input_url and not asset_placeholder_map:
                 raise RuntimeError("Missing input_url for cloud provider.")
 
-            asset_name = input_payload.get("input_name") or os.path.basename(input_url.split("?")[0])
-            input_path = download_input(input_url)
-            upload = cloud_upload_input_file(input_path, asset_name, input_payload.get("input_mime_type"))
-            input_reference = upload.get("name")
-            if not input_reference:
-                raise RuntimeError("Cloud input upload missing filename.")
+            if input_url and not asset_placeholder_map:
+                # Legacy path: no asset pipeline
+                asset_name = input_payload.get("input_name") or os.path.basename(input_url.split("?")[0])
+                input_path = download_input(input_url)
+                upload = cloud_upload_input_file(input_path, asset_name, input_payload.get("input_mime_type"))
+                input_reference = upload.get("name")
+                if not input_reference:
+                    raise RuntimeError("Cloud input upload missing filename.")
+                input_payload["input_reference_prefix"] = ""
+            elif input_url:
+                # Asset pipeline handled the primary input upload already
+                input_payload["input_reference_prefix"] = ""
 
-            input_payload["input_reference_prefix"] = ""
-            workflow = prepare_workflow(input_payload, input_reference)
+            workflow = prepare_workflow(input_payload, input_reference, asset_placeholder_map)
             extra_data = dict(input_payload.get("extra_data") or {})
             if COMFY_MANAGED_API_KEY:
                 extra_data.setdefault("api_key_comfy_org", COMFY_MANAGED_API_KEY)
@@ -414,7 +501,7 @@ def process_job(job: Dict[str, Any]) -> None:
             return
 
         input_path = download_input(input_url) if input_url else None
-        workflow = prepare_workflow(input_payload, input_path)
+        workflow = prepare_workflow(input_payload, input_path, asset_placeholder_map)
 
         extra_data = input_payload.get("extra_data")
         if provider == "managed":

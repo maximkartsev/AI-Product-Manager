@@ -482,7 +482,14 @@ export function useDataTable<T extends Record<string, any>>(
     }));
 
     if (extraColumns) {
-      cols.push(...extraColumns);
+      const extraMap = new Map(extraColumns.filter(ec => ec.id).map(ec => [ec.id, ec]));
+      // Replace dynamic cols with matching extras in-place
+      const merged = cols.map(c => (c.id && extraMap.has(c.id as string) ? extraMap.get(c.id as string)! : c));
+      // Append any extras that don't match existing dynamic columns
+      const existingIds = new Set(cols.map(c => c.id));
+      const newExtras = extraColumns.filter(ec => !existingIds.has(ec.id));
+      merged.push(...newExtras);
+      return merged;
     }
 
     return cols;

@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Category;
 use App\Models\Effect;
+use App\Models\Workflow;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
@@ -21,6 +22,10 @@ class EffectsSeeder extends Seeder
         if (!File::isDirectory($root)) {
             return;
         }
+
+        // Resolve the shared workflow for linking
+        $workflow = Workflow::query()->where('slug', 'kling-video-to-video')->first();
+        $workflowId = $workflow?->id;
 
         $folders = File::directories($root);
         sort($folders);
@@ -70,12 +75,57 @@ class EffectsSeeder extends Seeder
             }
 
             $assetMeta = $this->uploadEffectAssets($slug, $folder, $disk);
-            Effect::query()->updateOrCreate(
+
+            // Extract prompt and style image from the workflow JSON for property_overrides
+            $propertyOverrides = null;
+            $styleImageS3Path = null;
+            if ($workflowId && $workflowFullPath) {
+                $wfRaw = File::get($workflowFullPath);
+                $wfJson = json_decode($wfRaw, true);
+                if (is_array($wfJson)) {
+                    $overrides = [];
+
+                    // Extract prompt from node 6
+                    $prompt = $wfJson['6']['inputs']['prompt'] ?? null;
+                    if (is_string($prompt) && $prompt !== '' && $prompt !== '__POSITIVE_PROMPT__') {
+                        $overrides['positive_prompt'] = $prompt;
+                    }
+
+                    // Extract style image from node 3 and upload to organized path
+                    $styleImageName = $wfJson['3']['inputs']['image'] ?? null;
+                    if (is_string($styleImageName) && $styleImageName !== '' && $styleImageName !== '__STYLE_IMAGE__') {
+                        $refDir = $folder . DIRECTORY_SEPARATOR . 'reference_data';
+                        $styleImageLocalPath = $refDir . DIRECTORY_SEPARATOR . $styleImageName;
+                        if (File::exists($styleImageLocalPath)) {
+                            $ext = strtolower(pathinfo($styleImageName, PATHINFO_EXTENSION));
+                            $styleImageS3Path = sprintf(
+                                'workflows/%d/assets/style_image/%s-%s',
+                                $workflowId,
+                                $slug,
+                                $styleImageName
+                            );
+                            Storage::disk($disk)->put($styleImageS3Path, File::get($styleImageLocalPath), [
+                                'visibility' => 'private',
+                                'ContentType' => $this->contentTypeForExtension($ext),
+                            ]);
+                            $overrides['style_image'] = $styleImageS3Path;
+                        }
+                    }
+
+                    if (!empty($overrides)) {
+                        $propertyOverrides = $overrides;
+                    }
+                }
+            }
+
+            $effect = Effect::withTrashed()->updateOrCreate(
                 ['slug' => $slug],
                 [
                     'name' => $name,
                     'description' => $description,
                     'category_id' => $categoryId,
+                    'workflow_id' => $workflowId,
+                    'property_overrides' => $propertyOverrides,
                     'tags' => !empty($tags) ? array_values($tags) : null,
                     'type' => $type,
                     'thumbnail_url' => $assetMeta['thumbnail_url'] ?? null,
@@ -86,13 +136,11 @@ class EffectsSeeder extends Seeder
                     'is_active' => $isActive,
                     'is_premium' => $isPremium,
                     'is_new' => $isNew,
-                    'comfyui_workflow_path' => $workflowPath,
-                    'comfyui_input_path_placeholder' => '__INPUT_PATH__',
-                    'output_extension' => 'mp4',
-                    'output_mime_type' => 'video/mp4',
-                    'output_node_id' => '3',
                 ],
             );
+            if ($effect->trashed()) {
+                $effect->restore();
+            }
         }
     }
 

@@ -47,10 +47,13 @@ class CategoriesSeeder extends Seeder
                 continue;
             }
 
-            Category::query()->updateOrCreate(
+            $category = Category::withTrashed()->updateOrCreate(
                 ['slug' => $slug],
                 ['name' => $categoryName],
             );
+            if ($category->trashed()) {
+                $category->restore();
+            }
         }
     }
 

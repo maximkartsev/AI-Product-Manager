@@ -28,6 +28,9 @@ use \App\Http\Controllers\Admin\CategoriesController as AdminCategoriesControlle
 use \App\Http\Controllers\Admin\UiSettingsController as AdminUiSettingsController;
 use \App\Http\Controllers\Admin\UsersController as AdminUsersController;
 use \App\Http\Controllers\Admin\AnalyticsController as AdminAnalyticsController;
+use \App\Http\Controllers\Admin\WorkflowsController as AdminWorkflowsController;
+use \App\Http\Controllers\Admin\WorkersController as AdminWorkersController;
+use \App\Http\Controllers\Admin\AuditLogsController as AdminAuditLogsController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -121,6 +124,28 @@ Route::middleware([
             Route::get('/users/{id}/tokens', [AdminUsersController::class, 'tokens']);
 
             Route::get('/analytics/token-spending', [AdminAnalyticsController::class, 'tokenSpending']);
+
+            // Workflows
+            Route::get('/workflows', [AdminWorkflowsController::class, 'index']);
+            Route::get('/workflows/create', [AdminWorkflowsController::class, 'create']);
+            Route::post('/workflows/uploads', [AdminWorkflowsController::class, 'createUpload']);
+            Route::post('/workflows', [AdminWorkflowsController::class, 'store']);
+            Route::get('/workflows/{id}', [AdminWorkflowsController::class, 'show']);
+            Route::patch('/workflows/{id}', [AdminWorkflowsController::class, 'update']);
+            Route::delete('/workflows/{id}', [AdminWorkflowsController::class, 'destroy']);
+
+            // Workers
+            Route::get('/workers', [AdminWorkersController::class, 'index']);
+            Route::get('/workers/{id}', [AdminWorkersController::class, 'show']);
+            Route::patch('/workers/{id}', [AdminWorkersController::class, 'update']);
+            Route::post('/workers/{id}/approve', [AdminWorkersController::class, 'approve']);
+            Route::post('/workers/{id}/revoke', [AdminWorkersController::class, 'revoke']);
+            Route::post('/workers/{id}/rotate-token', [AdminWorkersController::class, 'rotateToken']);
+            Route::put('/workers/{id}/workflows', [AdminWorkersController::class, 'assignWorkflows']);
+            Route::get('/workers/{id}/audit-logs', [AdminWorkersController::class, 'auditLogs']);
+
+            // Audit Logs
+            Route::get('/audit-logs', [AdminAuditLogsController::class, 'index']);
         });
     });
 

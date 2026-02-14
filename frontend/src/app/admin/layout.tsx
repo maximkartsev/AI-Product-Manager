@@ -3,15 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { Sparkles, FolderOpen, Users, BarChart3, Menu, X } from "lucide-react";
+import { Sparkles, FolderOpen, Users, BarChart3, Menu, X, GitBranch, Server, ScrollText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 const NAV_ITEMS = [
   { label: "Effects", href: "/admin/effects", icon: Sparkles },
+  { label: "Workflows", href: "/admin/workflows", icon: GitBranch },
   { label: "Categories", href: "/admin/categories", icon: FolderOpen },
   { label: "Users", href: "/admin/users", icon: Users },
   { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
+  { label: "Workers", href: "/admin/workers", icon: Server },
+  { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
 ];
 
 function SidebarNav({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {

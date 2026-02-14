@@ -8,6 +8,7 @@ use App\Models\Effect;
 use App\Models\File;
 use App\Models\Video;
 use App\Services\TokenLedgerService;
+use App\Services\WorkflowPayloadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -176,6 +177,18 @@ class AiJobController extends BaseController
 
     private function buildInputPayload(Effect $effect, array $inputPayload, ?File $inputFile): array
     {
+        // New path: delegate to WorkflowPayloadService when effect has a workflow
+        if ($effect->workflow_id && $effect->workflow) {
+            $service = app(WorkflowPayloadService::class);
+            $userInput = array_filter([
+                'positive_prompt' => $this->normalizePrompt(data_get($inputPayload, 'positive_prompt')),
+                'negative_prompt' => $this->normalizePrompt(data_get($inputPayload, 'negative_prompt')),
+            ], fn ($v) => $v !== null);
+            $resolvedProps = $service->resolveProperties($effect->workflow, $effect, $userInput);
+            return $service->buildJobPayload($effect, $resolvedProps, $inputFile);
+        }
+
+        // Legacy path: effect without workflow_id (backward compat)
         if (!array_key_exists('workflow', $inputPayload)) {
             $inputPayload['workflow'] = $this->loadWorkflowFromEffect($effect);
         }
@@ -193,9 +206,6 @@ class AiJobController extends BaseController
             && str_contains($workflowSerialized, self::NEGATIVE_PROMPT_PLACEHOLDER);
 
         if ($hasPositivePlaceholder || $hasNegativePlaceholder) {
-            // Placeholder-style prompt injection (like __INPUT_PATH__):
-            // - Effect workflow contains __POSITIVE_PROMPT__ / __NEGATIVE_PROMPT__
-            // - We replace them with user-provided prompts (or empty string if unset).
             $inputPayload['workflow'] = $this->replacePromptPlaceholdersInValue(
                 $inputPayload['workflow'],
                 self::POSITIVE_PROMPT_PLACEHOLDER,
@@ -204,8 +214,6 @@ class AiJobController extends BaseController
                 $negativePrompt ?? ''
             );
         } elseif ($positivePrompt || $negativePrompt) {
-            // Backward compatibility: if no placeholders exist, fall back to the
-            // previous behavior that overrides known prompt keys when present.
             $inputPayload['workflow'] = $this->overrideWorkflowPrompts(
                 $inputPayload['workflow'],
                 $positivePrompt,
@@ -349,12 +357,19 @@ class AiJobController extends BaseController
 
     private function ensureDispatch(AiJob $job, int $priority = 0, ?string $provider = null): ?AiJobDispatch
     {
+        $workflowId = null;
+        $effect = Effect::query()->find($job->effect_id);
+        if ($effect && $effect->workflow_id) {
+            $workflowId = $effect->workflow_id;
+        }
+
         try {
             return AiJobDispatch::query()->firstOrCreate([
                 'tenant_id' => (string) $job->tenant_id,
                 'tenant_job_id' => $job->id,
             ], [
                 'provider' => $provider ?: ($job->provider ?: config('services.comfyui.default_provider', 'local')),
+                'workflow_id' => $workflowId,
                 'status' => 'queued',
                 'priority' => $priority,
                 'attempts' => 0,

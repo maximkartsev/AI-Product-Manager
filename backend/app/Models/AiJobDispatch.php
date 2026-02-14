@@ -10,6 +10,7 @@ class AiJobDispatch extends CentralModel
         'tenant_id',
         'tenant_job_id',
         'provider',
+        'workflow_id',
         'status',
         'priority',
         'attempts',
@@ -20,6 +21,7 @@ class AiJobDispatch extends CentralModel
     ];
 
     protected $casts = [
+        'workflow_id' => 'integer',
         'priority' => 'integer',
         'attempts' => 'integer',
         'lease_expires_at' => 'datetime',

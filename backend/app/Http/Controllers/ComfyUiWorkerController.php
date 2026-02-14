@@ -9,8 +9,10 @@ use App\Models\Effect;
 use App\Models\File;
 use App\Models\Tenant;
 use App\Models\Video;
+use App\Services\OutputValidationService;
 use App\Services\PresignedUrlService;
 use App\Services\TokenLedgerService;
+use App\Services\WorkerAuditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -41,10 +43,18 @@ class ComfyUiWorkerController extends BaseController
             return $this->sendError('Validation error.', $validator->errors(), 422);
         }
 
-        $worker = $this->upsertWorker($request);
+        // Use authenticated worker from middleware if available (per-worker token auth)
+        $authenticatedWorker = $request->attributes->get('authenticated_worker');
+        $worker = $authenticatedWorker
+            ? $this->updateWorkerFromRequest($authenticatedWorker, $request)
+            : $this->upsertWorker($request);
 
         if ($worker->is_draining) {
             return $this->sendResponse(['job' => null], 'Worker draining');
+        }
+
+        if (!$worker->is_approved && $authenticatedWorker) {
+            return $this->sendResponse(['job' => null], 'Worker not approved');
         }
 
         if ($worker->current_load >= $worker->max_concurrency) {
@@ -62,7 +72,11 @@ class ComfyUiWorkerController extends BaseController
         if (empty($providers)) {
             $providers = [config('services.comfyui.default_provider', 'local')];
         }
-        $dispatch = $this->leaseDispatch($worker->worker_id, $leaseTtlSeconds, $maxAttempts, $providers);
+
+        // Get worker's assigned workflow IDs for dispatch filtering
+        $workflowIds = $worker->workflows()->pluck('workflows.id')->toArray();
+
+        $dispatch = $this->leaseDispatch($worker->worker_id, $leaseTtlSeconds, $maxAttempts, $providers, $workflowIds);
         if (!$dispatch) {
             return $this->sendResponse(['job' => null], 'No jobs available');
         }
@@ -70,6 +84,19 @@ class ComfyUiWorkerController extends BaseController
         $payload = $this->buildJobPayload($dispatch);
         if (!$payload) {
             return $this->sendResponse(['job' => null], 'No job payload available');
+        }
+
+        // Audit log on job leased
+        try {
+            app(WorkerAuditService::class)->log(
+                'poll',
+                $worker->id,
+                $worker->worker_id,
+                $dispatch->id,
+                $request->ip()
+            );
+        } catch (\Throwable $e) {
+            // non-blocking
         }
 
         return $this->sendResponse(['job' => $payload], 'Job leased');
@@ -110,7 +137,7 @@ class ComfyUiWorkerController extends BaseController
         ], 'Lease extended');
     }
 
-    public function complete(Request $request, TokenLedgerService $ledger): JsonResponse
+    public function complete(Request $request, TokenLedgerService $ledger, OutputValidationService $outputValidator, WorkerAuditService $audit): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'dispatch_id' => 'integer|required',
@@ -189,10 +216,42 @@ class ComfyUiWorkerController extends BaseController
             return $this->sendError('Failed to complete job.', [], 500);
         }
 
+        // Output validation (non-blocking)
+        try {
+            if ($result->output_file_id) {
+                $outputFile = File::query()->find($result->output_file_id);
+                if ($outputFile && $outputFile->disk && $outputFile->path) {
+                    $validation = $outputValidator->validate($outputFile->disk, $outputFile->path);
+                    if (!($validation['valid'] ?? false)) {
+                        \Log::warning('Output validation failed', [
+                            'dispatch_id' => $dispatch->id,
+                            'error' => $validation['error'] ?? 'unknown',
+                        ]);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // non-blocking
+        }
+
+        // Audit log
+        try {
+            $worker = $request->attributes->get('authenticated_worker');
+            $audit->log(
+                'complete',
+                $worker?->id,
+                $request->input('worker_id'),
+                $dispatch->id,
+                $request->ip()
+            );
+        } catch (\Throwable $e) {
+            // non-blocking
+        }
+
         return $this->sendResponse(['job_id' => $result->id], 'Job completed');
     }
 
-    public function fail(Request $request, TokenLedgerService $ledger): JsonResponse
+    public function fail(Request $request, TokenLedgerService $ledger, WorkerAuditService $audit): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'dispatch_id' => 'integer|required',
@@ -246,6 +305,21 @@ class ComfyUiWorkerController extends BaseController
             return null;
         });
 
+        // Audit log
+        try {
+            $worker = $request->attributes->get('authenticated_worker');
+            $audit->log(
+                'fail',
+                $worker?->id,
+                $request->input('worker_id'),
+                $dispatch->id,
+                $request->ip(),
+                ['error' => $errorMessage]
+            );
+        } catch (\Throwable $e) {
+            // non-blocking
+        }
+
         return $this->sendResponse(['dispatch_id' => $dispatch->id], 'Job failed');
     }
 
@@ -275,6 +349,21 @@ class ComfyUiWorkerController extends BaseController
         return $firstLine !== false && trim($firstLine) !== '' ? trim($firstLine) : 'Processing failed.';
     }
 
+    private function updateWorkerFromRequest(ComfyUiWorker $worker, Request $request): ComfyUiWorker
+    {
+        $worker->fill([
+            'display_name' => $request->input('display_name') ?? $worker->display_name,
+            'environment' => $request->input('environment', $worker->environment ?? 'cloud'),
+            'capabilities' => $request->input('capabilities') ?? $worker->capabilities,
+            'max_concurrency' => $request->input('max_concurrency', $worker->max_concurrency ?? 1),
+            'current_load' => $request->input('current_load', $worker->current_load ?? 0),
+            'last_seen_at' => now(),
+            'last_ip' => $request->ip(),
+        ]);
+        $worker->save();
+        return $worker;
+    }
+
     private function upsertWorker(Request $request): ComfyUiWorker
     {
         $workerId = (string) $request->input('worker_id');
@@ -298,23 +387,33 @@ class ComfyUiWorkerController extends BaseController
         return ComfyUiWorker::query()->create(array_merge(['worker_id' => $workerId], $defaults));
     }
 
-    private function leaseDispatch(string $workerId, int $leaseTtlSeconds, int $maxAttempts, array $providers): ?AiJobDispatch
+    private function leaseDispatch(string $workerId, int $leaseTtlSeconds, int $maxAttempts, array $providers, array $workflowIds = []): ?AiJobDispatch
     {
-        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts, $providers) {
+        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts, $providers, $workflowIds) {
             $now = now();
 
-            $dispatch = AiJobDispatch::query()
+            $query = AiJobDispatch::query()
                 ->whereIn('provider', $providers)
                 ->where('attempts', '<', $maxAttempts)
-                ->where(function ($query) use ($now) {
-                    $query
+                ->where(function ($q) use ($now) {
+                    $q
                         ->where('status', 'queued')
                         ->orWhere(function ($sub) use ($now) {
                             $sub->where('status', 'leased')
                                 ->whereNotNull('lease_expires_at')
                                 ->where('lease_expires_at', '<=', $now);
                         });
-                })
+                });
+
+            // If worker has assigned workflows, filter dispatches to those workflows
+            if (!empty($workflowIds)) {
+                $query->where(function ($q) use ($workflowIds) {
+                    $q->whereIn('workflow_id', $workflowIds)
+                      ->orWhereNull('workflow_id');
+                });
+            }
+
+            $dispatch = $query
                 ->orderByDesc('priority')
                 ->orderBy('created_at')
                 ->lockForUpdate()
@@ -386,6 +485,26 @@ class ComfyUiWorkerController extends BaseController
                 );
             }
 
+            // Presign asset download URLs in input_payload
+            $inputPayload = $job->input_payload ?? [];
+            if (!empty($inputPayload['assets']) && is_array($inputPayload['assets'])) {
+                foreach ($inputPayload['assets'] as &$asset) {
+                    if (!empty($asset['s3_path']) && !empty($asset['s3_disk'])) {
+                        try {
+                            $asset['download_url'] = $presigned->downloadUrl(
+                                $asset['s3_disk'],
+                                $asset['s3_path'],
+                                $ttlSeconds
+                            );
+                        } catch (\Throwable $e) {
+                            $asset['download_url'] = null;
+                        }
+                    }
+                }
+                unset($asset);
+                $inputPayload['assets'] = array_values($inputPayload['assets']);
+            }
+
             return [
                 'dispatch_id' => $dispatch->id,
                 'lease_token' => $dispatch->lease_token,
@@ -394,7 +513,7 @@ class ComfyUiWorkerController extends BaseController
                 'tenant_id' => $dispatch->tenant_id,
                 'job_id' => $job->id,
                 'effect_id' => $job->effect_id,
-                'input_payload' => $job->input_payload,
+                'input_payload' => $inputPayload,
                 'input_file' => $inputFile ? [
                     'id' => $inputFile->id,
                     'path' => $inputFile->path,

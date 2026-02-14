@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\AiJob;
+use App\Models\AiJobDispatch;
 use App\Models\Effect;
 use App\Models\Tenant;
 use App\Models\TokenTransaction;
@@ -55,12 +56,35 @@ class AiJobsSeeder extends Seeder
         $this->ensureSeedBalance($wallet, $tenant);
         $wallet->refresh();
 
+        // Resolve workflow_id from effect
+        $effect = Effect::query()->find($effectId);
+        $workflowId = $effect?->workflow_id;
+
         $completedJob = $this->createJob($tenant, $user, $effectId, 'seed-completed');
+        $this->ensureDispatch($completedJob, $tenant, $workflowId, 'completed');
         $this->reserveAndConsume($completedJob, $wallet, $ledger);
 
         $wallet->refresh();
         $failedJob = $this->createJob($tenant, $user, $effectId, 'seed-failed');
+        $this->ensureDispatch($failedJob, $tenant, $workflowId, 'failed');
         $this->reserveAndRefund($failedJob, $wallet, $ledger);
+    }
+
+    private function ensureDispatch(AiJob $job, Tenant $tenant, ?int $workflowId, string $status): void
+    {
+        AiJobDispatch::query()->firstOrCreate(
+            [
+                'tenant_id' => (string) $tenant->id,
+                'tenant_job_id' => $job->id,
+            ],
+            [
+                'provider' => $job->provider ?: config('services.comfyui.default_provider', 'local'),
+                'workflow_id' => $workflowId,
+                'status' => $status,
+                'priority' => 0,
+                'attempts' => 1,
+            ]
+        );
     }
 
     private function createJob(Tenant $tenant, User $user, int $effectId, string $suffix): AiJob

@@ -231,3 +231,63 @@ body {
   }
 }
 
+/* Landing page animations */
+@keyframes glow-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.4; }
+  33% { transform: translate(30px, -20px) scale(1.1); opacity: 0.6; }
+  66% { transform: translate(-20px, 15px) scale(0.95); opacity: 0.35; }
+}
+
+@keyframes glow-drift-reverse {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.3; }
+  33% { transform: translate(-25px, 20px) scale(1.05); opacity: 0.5; }
+  66% { transform: translate(15px, -25px) scale(0.9); opacity: 0.25; }
+}
+
+@keyframes pulse-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(236, 72, 153, 0); }
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.75); }
+}
+
+@keyframes landing-fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.landing-entrance {
+  animation: landing-fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.landing-entrance-d1 { animation-delay: 0.1s; }
+.landing-entrance-d2 { animation-delay: 0.2s; }
+.landing-entrance-d3 { animation-delay: 0.35s; }
+.landing-entrance-d4 { animation-delay: 0.5s; }
+.landing-entrance-d5 { animation-delay: 0.65s; }
+
+.noise-overlay {
+  position: relative;
+}
+
+.noise-overlay::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-entrance { animation: none; opacity: 1; }
+  .landing-entrance-d1, .landing-entrance-d2, .landing-entrance-d3,
+  .landing-entrance-d4, .landing-entrance-d5 { animation-delay: 0s; }
+}
+

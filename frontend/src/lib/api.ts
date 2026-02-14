@@ -533,6 +533,18 @@ export function handleTikTokSignUpCallback(
   return apiGet<TikTokAuthCallbackData>("/auth/tiktok/signup/callback", query);
 }
 
+// ---- Apple OAuth
+
+export type AppleAuthRedirectData = { url: string };
+
+export function getAppleSignInUrl(): Promise<AppleAuthRedirectData> {
+  return apiGet<AppleAuthRedirectData>("/auth/apple/signin");
+}
+
+export function getAppleSignUpUrl(): Promise<AppleAuthRedirectData> {
+  return apiGet<AppleAuthRedirectData>("/auth/apple/signup");
+}
+
 // ---- Resource functions (preferred API surface)
 
 export function register(payload: RegisterRequest): Promise<AuthSuccessData> {

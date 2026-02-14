@@ -3,6 +3,8 @@
 import {
   ApiError,
   clearTenantDomain,
+  getAppleSignInUrl,
+  getAppleSignUpUrl,
   getGoogleSignInUrl,
   getGoogleSignUpUrl,
   getTikTokSignInUrl,
@@ -504,6 +506,21 @@ export default function AuthModal({ open, onClose, initialMode = "signup", messa
     }
   }
 
+  async function handleAppleClick() {
+    if (isBusy) return;
+    setSubmitState({ status: "loading" });
+    try {
+      const { url } = mode === "signup" ? await getAppleSignUpUrl() : await getAppleSignInUrl();
+      window.location.href = url;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setSubmitState({ status: "error", message: formatAuthError(err) });
+      } else {
+        setSubmitState({ status: "error", message: "Failed to connect to Apple." });
+      }
+    }
+  }
+
   /* ---------- render ---------- */
 
   if (!open) return null;
@@ -581,7 +598,7 @@ export default function AuthModal({ open, onClose, initialMode = "signup", messa
 
             <div className="mt-5 grid gap-3">
               <SocialButton label="Continue with Google" icon={<span className="text-base font-bold">G</span>} onClick={handleGoogleClick} disabled={isBusy} />
-              <SocialButton label="Continue with Apple" icon={<IconApple className="h-4 w-4" />} disabled={isBusy} />
+              <SocialButton label="Continue with Apple" icon={<IconApple className="h-4 w-4" />} onClick={handleAppleClick} disabled={isBusy} />
               <SocialButton label="Continue with TikTok" icon={<IconMusic className="h-5 w-5" />} onClick={handleTikTokClick} disabled={isBusy} />
             </div>
 

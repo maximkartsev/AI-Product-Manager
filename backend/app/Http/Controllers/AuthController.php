@@ -452,4 +452,199 @@ class AuthController extends BaseController
 
         return $this->sendResponse($result, 'User registered successfully via TikTok');
     }
+
+    // ---- Apple OAuth ----
+    // Apple uses response_mode=form_post, so Apple POSTs the auth code
+    // to the callback URL. The callbacks here receive that POST, process
+    // auth, then redirect the browser to the frontend with token data.
+
+    public function redirectToAppleSignIn(Request $request)
+    {
+        $state = base64_encode(json_encode(['action' => 'signin']));
+
+        $redirectUrl = Socialite::driver('apple')
+            ->stateless()
+            ->redirectUrl(env('FRONTEND_URL') . '/auth/apple/signin/callback')
+            ->scopes(['name', 'email'])
+            ->with(['state' => $state])
+            ->redirect()
+            ->getTargetUrl();
+
+        return $this->sendResponse(['url' => $redirectUrl], 'Apple sign-in redirect URL');
+    }
+
+    public function handleAppleSignInCallback(Request $request)
+    {
+        $frontendBase = env('FRONTEND_URL') . '/auth/apple/signin/done';
+
+        $code = $request->input('code');
+        if (!$code) {
+            return redirect($frontendBase . '?error=' . urlencode('Authorization code missing from Apple.'));
+        }
+
+        try {
+            $appleUser = Socialite::driver('apple')
+                ->stateless()
+                ->redirectUrl(env('FRONTEND_URL') . '/auth/apple/signin/callback')
+                ->user();
+        } catch (ClientException $e) {
+            return redirect($frontendBase . '?error=' . urlencode('Invalid credentials.'));
+        } catch (\Exception $e) {
+            return redirect($frontendBase . '?error=' . urlencode('Apple sign-in failed.'));
+        }
+
+        $email = $appleUser->getEmail();
+        if (!$email) {
+            return redirect($frontendBase . '?error=' . urlencode('Apple did not provide an email address.'));
+        }
+
+        $user = User::where('email', $email)->first();
+
+        if (!$user) {
+            return redirect($frontendBase . '?error=' . urlencode('No account found with this email. Please sign up first.') . '&error_code=404');
+        }
+
+        $user->update([
+            'last_login_at' => now(),
+            'last_login_ip' => $request->ip(),
+        ]);
+
+        $userAgent = $request->header('User-Agent', '');
+        $deviceInfo = $this->parseUserAgent($userAgent);
+        $deviceName = $deviceInfo['browser'] . ' on ' . $deviceInfo['platform'];
+
+        $token = $user->createToken($deviceName, ['*']);
+
+        $token->accessToken->update([
+            'device_name' => $deviceName,
+            'device_type' => $deviceInfo['device_type'],
+            'browser' => $deviceInfo['browser'],
+            'platform' => $deviceInfo['platform'],
+            'ip_address' => $request->ip(),
+        ]);
+
+        $tenant = Tenant::query()->where('user_id', $user->id)->first();
+
+        $query = http_build_query(array_filter([
+            'access_token' => $token->plainTextToken,
+            'tenant_domain' => $tenant?->domains()->first()?->domain,
+        ]));
+
+        return redirect($frontendBase . '?' . $query);
+    }
+
+    public function redirectToAppleSignUp(Request $request)
+    {
+        $state = base64_encode(json_encode(['action' => 'signup']));
+
+        $redirectUrl = Socialite::driver('apple')
+            ->stateless()
+            ->redirectUrl(env('FRONTEND_URL') . '/auth/apple/signup/callback')
+            ->scopes(['name', 'email'])
+            ->with(['state' => $state])
+            ->redirect()
+            ->getTargetUrl();
+
+        return $this->sendResponse(['url' => $redirectUrl], 'Apple sign-up redirect URL');
+    }
+
+    public function handleAppleSignUpCallback(Request $request)
+    {
+        $frontendBase = env('FRONTEND_URL') . '/auth/apple/signup/done';
+
+        $code = $request->input('code');
+        if (!$code) {
+            return redirect($frontendBase . '?error=' . urlencode('Authorization code missing from Apple.'));
+        }
+
+        try {
+            $appleUser = Socialite::driver('apple')
+                ->stateless()
+                ->redirectUrl(env('FRONTEND_URL') . '/auth/apple/signup/callback')
+                ->user();
+        } catch (ClientException $e) {
+            return redirect($frontendBase . '?error=' . urlencode('Invalid credentials.'));
+        } catch (\Exception $e) {
+            return redirect($frontendBase . '?error=' . urlencode('Apple sign-up failed.'));
+        }
+
+        $email = $appleUser->getEmail();
+        if (!$email) {
+            return redirect($frontendBase . '?error=' . urlencode('Apple did not provide an email address.'));
+        }
+
+        $existingUser = User::where('email', $email)->first();
+
+        if ($existingUser) {
+            $existingUser->update([
+                'last_login_at' => now(),
+                'last_login_ip' => $request->ip(),
+            ]);
+
+            $userAgent = $request->header('User-Agent', '');
+            $deviceInfo = $this->parseUserAgent($userAgent);
+            $deviceName = $deviceInfo['browser'] . ' on ' . $deviceInfo['platform'];
+
+            $token = $existingUser->createToken($deviceName, ['*']);
+
+            $token->accessToken->update([
+                'device_name' => $deviceName,
+                'device_type' => $deviceInfo['device_type'],
+                'browser' => $deviceInfo['browser'],
+                'platform' => $deviceInfo['platform'],
+                'ip_address' => $request->ip(),
+            ]);
+
+            $tenant = Tenant::query()->where('user_id', $existingUser->id)->first();
+
+            $query = http_build_query(array_filter([
+                'access_token' => $token->plainTextToken,
+                'tenant_domain' => $tenant?->domains()->first()?->domain,
+            ]));
+
+            return redirect($frontendBase . '?' . $query);
+        }
+
+        // Apple only provides name on first auth — fallback to email prefix
+        $fullName = $appleUser->getName() ?? '';
+        if (empty(trim($fullName))) {
+            $fullName = explode('@', $email)[0];
+        }
+        $nameParts = preg_split('/\s+/', trim($fullName), 2);
+        $firstName = $nameParts[0] ?? '';
+        $lastName = $nameParts[1] ?? '';
+
+        $user = User::create([
+            'name' => $fullName,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'email' => $email,
+            'password' => Hash::make(Str::random(32)),
+            'last_login_at' => now(),
+            'last_login_ip' => $request->ip(),
+        ]);
+
+        $tenant = $this->ensureTenantForUser($user);
+
+        $userAgent = $request->header('User-Agent', '');
+        $deviceInfo = $this->parseUserAgent($userAgent);
+        $deviceName = $deviceInfo['browser'] . ' on ' . $deviceInfo['platform'];
+
+        $token = $user->createToken($deviceName, ['*']);
+
+        $token->accessToken->update([
+            'device_name' => $deviceName,
+            'device_type' => $deviceInfo['device_type'],
+            'browser' => $deviceInfo['browser'],
+            'platform' => $deviceInfo['platform'],
+            'ip_address' => $request->ip(),
+        ]);
+
+        $query = http_build_query(array_filter([
+            'access_token' => $token->plainTextToken,
+            'tenant_domain' => $tenant->domains()->first()?->domain,
+        ]));
+
+        return redirect($frontendBase . '?' . $query);
+    }
 }

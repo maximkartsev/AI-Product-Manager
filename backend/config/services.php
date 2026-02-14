@@ -43,8 +43,11 @@ return [
 
     'apple' => [
         'client_id' => env('APPLE_CLIENT_ID'),
-        'client_secret' => env('APPLE_CLIENT_SECRET'),
-        'redirect' => env('APPLE_REDIRECT_URI') // Will be overridden dynamically per flow
+        'client_secret' => env('APPLE_CLIENT_SECRET'), // Empty — auto-generated from private key
+        'key_id' => env('APPLE_KEY_ID'),
+        'team_id' => env('APPLE_TEAM_ID'),
+        'private_key' => env('APPLE_PRIVATE_KEY'), // Absolute path to .p8 file
+        'redirect' => env('APPLE_REDIRECT_URI'), // Will be overridden dynamically per flow
     ],
 
     'tiktok' => [

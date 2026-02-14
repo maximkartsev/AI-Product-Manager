@@ -54,6 +54,12 @@ Route::get('auth/tiktok/signin/callback', [AuthController::class, 'handleTikTokS
 Route::get('auth/tiktok/signup', [AuthController::class, 'redirectToTikTokSignUp']);
 Route::get('auth/tiktok/signup/callback', [AuthController::class, 'handleTikTokSignUpCallback']);
 
+// Apple OAuth (callbacks are POST — Apple uses response_mode=form_post)
+Route::get('auth/apple/signin', [AuthController::class, 'redirectToAppleSignIn']);
+Route::post('auth/apple/signin/callback', [AuthController::class, 'handleAppleSignInCallback']);
+Route::get('auth/apple/signup', [AuthController::class, 'redirectToAppleSignUp']);
+Route::post('auth/apple/signup/callback', [AuthController::class, 'handleAppleSignUpCallback']);
+
 // Translations
 Route::get('translations/{lang}', [TranslationsController::class, 'show']);
 

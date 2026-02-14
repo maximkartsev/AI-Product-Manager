@@ -19,6 +19,8 @@
 /public/hot
 /public/storage
 /storage/*.key
+/storage/keys/*.p8
+/storage/keys/*.pem
 /storage/pail
 /vendor
 Homestead.json

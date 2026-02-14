@@ -74,7 +74,8 @@ class CategoriesController extends BaseController
         try {
             $item = Category::create($input);
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+                        \Log::error('Category operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         return $this->sendResponse(new CategoryResource($item), trans('Category created successfully'), [], 201);
@@ -109,7 +110,8 @@ class CategoriesController extends BaseController
         try {
             $item->save();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+                        \Log::error('Category operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         $item->fresh();
@@ -128,7 +130,8 @@ class CategoriesController extends BaseController
         try {
             $item->delete();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+                        \Log::error('Category operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         return $this->sendNoContent();

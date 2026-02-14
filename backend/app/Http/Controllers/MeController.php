@@ -56,9 +56,21 @@ class MeController extends BaseController
             return $this->sendError(trans('User not found'));
         }
 
-        $input = $request->all();
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|string|max:255',
+            'first_name' => 'sometimes|string|max:255',
+            'last_name' => 'sometimes|string|max:255',
+            'email' => 'sometimes|email|max:255|unique:users,email,' . $id,
+            'password' => 'sometimes|string|min:8',
+        ]);
 
-        if ($request->has('password')) {
+        if ($validator->fails()) {
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
+        }
+
+        $input = $request->only(['name', 'first_name', 'last_name', 'email', 'password']);
+
+        if (isset($input['password'])) {
             $input['password'] = bcrypt($input['password']);
         }
 

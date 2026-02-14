@@ -371,7 +371,8 @@ class VideoController extends BaseController
         try {
             $video->save();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+            \Log::error('Video update failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Video could not be updated. Please try again or contact support.', [], 500);
         }
 
         $video->fresh();
@@ -406,7 +407,8 @@ class VideoController extends BaseController
         try {
             $video->delete();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+            \Log::error('Video deletion failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Video could not be deleted. Please try again or contact support.', [], 500);
         }
 
         return $this->sendNoContent();

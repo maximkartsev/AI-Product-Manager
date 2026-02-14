@@ -78,7 +78,8 @@ class EffectsController extends BaseController
         try {
             $item = Effect::create($input);
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+                        \Log::error('Effect operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         return $this->sendResponse(new EffectResource($item), trans('Effect created successfully'), [], 201);
@@ -113,7 +114,8 @@ class EffectsController extends BaseController
         try {
             $item->save();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+                        \Log::error('Effect operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         $item->fresh();
@@ -132,7 +134,8 @@ class EffectsController extends BaseController
         try {
             $item->delete();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+                        \Log::error('Effect operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         return $this->sendNoContent();

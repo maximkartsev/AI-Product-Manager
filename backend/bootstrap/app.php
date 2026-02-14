@@ -25,11 +25,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // Tell Laravel to always render JSON for AuthenticationException
         // This prevents Laravel's default handler from trying to redirect to route('login')
         $exceptions->shouldRenderJsonWhen(function ($request, \Throwable $e) {
-            // Always return JSON for AuthenticationException to prevent redirects
+            // Always return JSON for API requests and AuthenticationException
             if ($e instanceof AuthenticationException) {
                 return true;
             }
-            return false;
+            return $request->expectsJson() || $request->is('api/*');
         });
         
         // Handle AuthenticationException and ALWAYS return JSON response
@@ -42,6 +42,26 @@ return Application::configure(basePath: dirname(__DIR__))
             ], 401);
         });
         
+        // Global catch-all for unhandled exceptions on API routes.
+        // Returns a user-friendly JSON error and logs the full trace.
+        $exceptions->render(function (\Throwable $e, $request) {
+            if ($e instanceof AuthenticationException) {
+                return null; // handled above
+            }
+            if ($request->expectsJson() || $request->is('api/*')) {
+                \Illuminate\Support\Facades\Log::error('Unhandled exception', [
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'An unexpected error occurred. Please try again or contact support.',
+                ], 500);
+            }
+        });
+
         // Set redirect callback to return empty string (not null) for all routes
         // Returning null causes Laravel to fallback to route('login')
         // Empty string prevents the fallback

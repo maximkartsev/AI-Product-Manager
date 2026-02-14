@@ -49,7 +49,7 @@ class Effect extends CentralModel
     {
         return [
             'name' => 'string|required|max:255',
-            'slug' => 'string|required|max:255',
+            'slug' => 'string|required|max:255|unique:effects,slug' . ($id ? ',' . $id : ''),
             'description' => 'string|nullable',
             'category_id' => 'numeric|nullable|exists:categories,id',
             'tags' => 'array|nullable',

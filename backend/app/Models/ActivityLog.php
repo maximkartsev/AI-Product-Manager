@@ -29,17 +29,17 @@ class ActivityLog extends TenantModel
     public static function getRules($id = null)
     {
         return [
-            'log_name' => 'string|nullable',
-            'description' => 'string|required',
-            'subject_type' => 'string|nullable',
+            'log_name' => 'string|nullable|max:255',
+            'description' => 'string|required|max:65535',
+            'subject_type' => 'string|nullable|max:255',
             'subject_id' => 'numeric|nullable',
-            'causer_type' => 'string|nullable',
+            'causer_type' => 'string|nullable|max:255',
             'causer_id' => 'numeric|nullable',
-            'properties' => 'string|nullable',
-            'changed_fields' => 'string|nullable',
-            'properties_diff' => 'string|nullable',
-            'batch_uuid' => 'string|nullable',
-            'event' => 'string|nullable',
+            'properties' => 'string|nullable|max:65535',
+            'changed_fields' => 'string|nullable|max:65535',
+            'properties_diff' => 'string|nullable|max:65535',
+            'batch_uuid' => 'string|nullable|max:36',
+            'event' => 'string|nullable|max:255',
         ];
     }
 

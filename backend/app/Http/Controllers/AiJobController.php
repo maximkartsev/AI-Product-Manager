@@ -41,6 +41,16 @@ class AiJobController extends BaseController
             return $this->sendError('Unauthorized.', [], 401);
         }
 
+        $activeJobCount = AiJob::where('user_id', $user->id)
+            ->whereIn('status', ['queued', 'processing'])
+            ->count();
+        if ($activeJobCount >= 5) {
+            return $this->sendError('Maximum concurrent processing jobs reached. Please wait for current jobs to complete.', [
+                'active_jobs' => $activeJobCount,
+                'max_allowed' => 5,
+            ], 422);
+        }
+
         $inputPayload = $request->input('input_payload');
         if (!is_array($inputPayload)) {
             $inputPayload = [];

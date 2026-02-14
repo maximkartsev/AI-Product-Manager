@@ -60,7 +60,7 @@ class ArticleController extends BaseController
     {
         $input = $request->all();
 
-        $validator = Validator::make($input, Article::getRules());
+        $validator = Validator::make($input, Article::getRules(), Article::getMessages());
 
         if ($validator->fails()) {
             return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
@@ -69,7 +69,8 @@ class ArticleController extends BaseController
         try {
             $item = Article::create($input);
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+            \Log::error('Article creation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Article could not be created. Please try again or contact support.', [], 500);
         }
 
         $item->load(['user']);
@@ -139,7 +140,7 @@ class ArticleController extends BaseController
             }
         }
 
-        $validator = Validator::make($input, $rules);
+        $validator = Validator::make($input, $rules, Article::getMessages());
 
         if ($validator->fails()) {
             return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
@@ -150,7 +151,8 @@ class ArticleController extends BaseController
         try {
             $item->save();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+            \Log::error('Article update failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Article could not be updated. Please try again or contact support.', [], 500);
         }
 
         $item->fresh();
@@ -179,7 +181,8 @@ class ArticleController extends BaseController
         try {
             $item->delete();
         } catch (\Exception $e) {
-            return $this->sendError($e->getMessage(), [], 409);
+            \Log::error('Article deletion failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Article could not be deleted. Please try again or contact support.', [], 500);
         }
 
         return $this->sendNoContent();

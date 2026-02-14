@@ -21,16 +21,16 @@ class RegisterController extends BaseController
     public function register(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required',
-            'email' => 'required|email',
-            'password' => 'required',
-            'c_password' => 'required|same:password',
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:users,email',
+            'password' => 'required|string|min:8',
+            'c_password' => 'required|string|same:password',
             'first_name' => 'nullable|string|max:255',
             'last_name' => 'nullable|string|max:255',
         ]);
 
         if($validator->fails()){
-            return $this->sendError(trans('Validation Error'), $validator->errors(),400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         $input = $request->all();
@@ -84,7 +84,7 @@ class RegisterController extends BaseController
         ]);
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         $user = User::where('email', $request->email)->first();
@@ -121,7 +121,7 @@ class RegisterController extends BaseController
             ]);
         } catch (\Exception $e) {
             \Log::error('Login token creation failed', ['error' => $e->getMessage(), 'user' => $user->id]);
-            return $this->sendError('Login failed: ' . $e->getMessage(), [], 500);
+            return $this->sendError('Login failed. Please try again or contact support.', [], 500);
         }
 
         $success['token'] = $token->plainTextToken;

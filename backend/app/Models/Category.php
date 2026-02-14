@@ -23,7 +23,7 @@ class Category extends CentralModel
     {
         return [
             'name' => 'string|required|max:255',
-            'slug' => 'string|required|max:255',
+            'slug' => 'string|required|max:255|unique:categories,slug' . ($id ? ',' . $id : ''),
             'description' => 'string|nullable',
             'sort_order' => 'numeric|required',
             'deleted_at' => 'date_format:Y-m-d H:i:s|nullable',

@@ -70,7 +70,8 @@ class ActivityLogController extends BaseController
         try{
             $item = ActivityLog::create($input);
         }catch(\Exception $e){
-            return $this->sendError($e->getMessage(),[],409);
+                        \Log::error('Activity log operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         $item->load(['causer']);
@@ -151,7 +152,8 @@ class ActivityLogController extends BaseController
         try{
             $item->save();
         }catch(\Exception $e){
-            return $this->sendError($e->getMessage(),[],409);
+                        \Log::error('Activity log operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         $item->fresh();
@@ -180,7 +182,8 @@ class ActivityLogController extends BaseController
         try{
             $item->delete();
         }catch(\Exception $e){
-            return $this->sendError($e->getMessage(),[],409);
+                        \Log::error('Activity log operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         return $this->sendNoContent();

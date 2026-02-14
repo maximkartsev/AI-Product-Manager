@@ -35,6 +35,7 @@ export default function UiGuardsProvider({ children }: { children: React.ReactNo
   const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
   const [walletState, setWalletState] = useState<WalletState>({ status: "idle" });
   const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const openAuth = useCallback(() => setAuthOpen(true), []);
 
@@ -44,11 +45,19 @@ export default function UiGuardsProvider({ children }: { children: React.ReactNo
       openAuth();
       router.replace("/", { scroll: false });
     }
+
+    const errorParam = searchParams.get("auth_error");
+    if (errorParam) {
+      setAuthError(errorParam);
+      openAuth();
+      router.replace("/", { scroll: false });
+    }
   }, [searchParams, openAuth, router]);
 
   const closeAuth = useCallback(() => {
     setAuthOpen(false);
     setAuthMessage(null);
+    setAuthError(null);
     if (!getAccessToken()) {
       setPendingNavigation(null);
     }
@@ -147,7 +156,7 @@ export default function UiGuardsProvider({ children }: { children: React.ReactNo
   return (
     <UiGuardsContext.Provider value={value}>
       {children}
-      <AuthModal open={authOpen} onClose={closeAuth} initialMode="signup" message={authMessage ?? undefined} />
+      <AuthModal open={authOpen} onClose={closeAuth} initialMode="signup" message={authMessage ?? undefined} error={authError ?? undefined} />
       <PlansModal
         open={plansOpen}
         onClose={closePlans}

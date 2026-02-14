@@ -47,6 +47,7 @@ type Props = {
   onClose: () => void;
   initialMode?: "signup" | "signin";
   message?: string;
+  error?: string;
 };
 
 type SubmitState =
@@ -179,7 +180,7 @@ function extractFieldErrors(error: z.core.$ZodError): Record<string, string> {
 /*  AuthModal                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function AuthModal({ open, onClose, initialMode = "signup", message }: Props) {
+export default function AuthModal({ open, onClose, initialMode = "signup", message, error }: Props) {
   const titleId = useId();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -568,6 +569,12 @@ export default function AuthModal({ open, onClose, initialMode = "signup", messa
             {banner ? (
               <div className="mt-4 rounded-2xl border border-fuchsia-400/20 bg-fuchsia-500/[0.08] px-4 py-3 text-balance text-center text-xs leading-5 text-fuchsia-100/90">
                 {banner}
+              </div>
+            ) : null}
+
+            {error ? (
+              <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-balance text-center text-xs leading-5 text-red-200">
+                {error}
               </div>
             ) : null}
 

@@ -59,7 +59,7 @@ export const features: Feature[] = [
   {
     id: "instant-processing",
     title: "Instant Processing",
-    description: "AI transforms your videos in seconds, not hours. Just upload and watch the magic happen.",
+    description: "AI transforms your videos in minutes, not hours. Just upload and watch the magic happen.",
   },
   {
     id: "one-click-effects",

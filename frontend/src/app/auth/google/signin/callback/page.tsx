@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   handleGoogleSignInCallback,
@@ -12,14 +12,13 @@ import {
 
 function SignInCallbackInner() {
   const searchParams = useSearchParams();
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const code = searchParams.get("code");
     const state = searchParams.get("state");
 
     if (!code) {
-      setError("Missing authorization code from Google.");
+      window.location.href = "/?auth_error=" + encodeURIComponent("Something went wrong. Please try again or use another sign-in method.");
       return;
     }
 
@@ -39,29 +38,12 @@ function SignInCallbackInner() {
           return;
         }
         if (err instanceof ApiError && err.status >= 500) {
-          setError("Something went wrong, we're already working on it. Please try again in a few minutes.");
+          window.location.href = "/?auth_error=" + encodeURIComponent("Something went wrong on our end. Please try again in a few minutes.");
         } else {
-          setError(err instanceof Error ? err.message : "Google sign-in failed.");
+          window.location.href = "/?auth_error=" + encodeURIComponent("Something went wrong. Please try again or use another sign-in method.");
         }
       });
   }, [searchParams]);
-
-  if (error) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4">
-        <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-center">
-          <h2 className="text-lg font-semibold text-red-200">Sign-in failed</h2>
-          <p className="mt-2 text-sm text-red-300">{error}</p>
-          <a
-            href="/"
-            className="mt-4 inline-block text-sm font-semibold text-fuchsia-300 hover:text-fuchsia-200"
-          >
-            Back to home
-          </a>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-950">

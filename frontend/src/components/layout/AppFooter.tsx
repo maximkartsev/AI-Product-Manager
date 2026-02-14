@@ -54,6 +54,12 @@ export default function AppFooter() {
               >
                 Content Policy
               </Link>
+              <Link
+                href="/2257"
+                className="transition hover:text-white"
+              >
+                2257 Compliance
+              </Link>
             </div>
           </div>
         </div>

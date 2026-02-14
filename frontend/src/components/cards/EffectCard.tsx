@@ -179,7 +179,7 @@ export function EffectCard(props: EffectCardProps) {
         as="button"
         type="button"
         onClick={onOpen}
-        className="group overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left shadow-[0_10px_24px_rgba(0,0,0,0.25)] transition hover:border-white/20"
+        className="group overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left shadow-[0_10px_24px_rgba(0,0,0,0.25)] transition-all duration-300 hover:border-white/20 hover:scale-[1.02] hover:shadow-[0_14px_32px_rgba(0,0,0,0.4)]"
         mediaClassName={`relative aspect-[3/4] bg-gradient-to-br ${g}`}
         bodyClassName="p-3"
         media={
@@ -256,8 +256,8 @@ export function EffectCard(props: EffectCardProps) {
       as="button"
       type="button"
       onClick={onTry}
-      className="w-32 text-left sm:w-36"
-      frameClassName="overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.25)]"
+      className="group w-32 text-left sm:w-36 transition-all duration-300 hover:scale-[1.03]"
+      frameClassName="overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_24px_rgba(0,0,0,0.25)] transition-all duration-300 group-hover:border-white/20 group-hover:shadow-[0_14px_32px_rgba(0,0,0,0.4)]"
       mediaClassName={`relative aspect-[3/4] bg-gradient-to-br ${g}`}
       bodyClassName="mt-2"
       media={

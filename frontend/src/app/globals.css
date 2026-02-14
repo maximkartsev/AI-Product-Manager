@@ -291,3 +291,20 @@ body {
   .landing-entrance-d4, .landing-entrance-d5 { animation-delay: 0s; }
 }
 
+/* Effects page entrance animations */
+.effects-entrance {
+  animation: landing-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.effects-entrance-d1 { animation-delay: 0.08s; }
+.effects-entrance-d2 { animation-delay: 0.16s; }
+.effects-entrance-d3 { animation-delay: 0.28s; }
+.effects-entrance-d4 { animation-delay: 0.4s; }
+.effects-entrance-d5 { animation-delay: 0.55s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .effects-entrance { animation: none; opacity: 1; }
+  .effects-entrance-d1, .effects-entrance-d2, .effects-entrance-d3,
+  .effects-entrance-d4, .effects-entrance-d5 { animation-delay: 0s; }
+}
+

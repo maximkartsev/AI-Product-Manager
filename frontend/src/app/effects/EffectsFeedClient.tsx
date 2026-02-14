@@ -64,27 +64,32 @@ function CategoryRow({
   });
 
   return (
-    <section className="mt-8" id={row.category.slug}>
-      <div className="flex items-center justify-between gap-6">
-        <div className="flex items-center gap-2">
-          <span className="text-base">{categoryEmoji(row.category.slug)}</span>
-          <div>
-            <h2 className="text-sm font-semibold text-white">{row.category.name}</h2>
-            {row.category.description ? (
-              <p className="mt-0.5 text-[11px] text-white/50">{row.category.description}</p>
-            ) : null}
+    <section className="mt-10" id={row.category.slug}>
+      {/* Subtle gradient divider */}
+      <div className="pointer-events-none -mt-6 mb-4 h-px w-full" aria-hidden="true">
+        <div className="mx-auto h-px w-2/3 bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
+      </div>
+
+      <div className="flex items-end justify-between gap-6">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <span className="h-1 w-5 rounded-full bg-gradient-to-r from-fuchsia-500 to-violet-500" aria-hidden="true" />
+            <h2 className="text-base font-semibold tracking-tight text-white sm:text-lg">{row.category.name}</h2>
           </div>
+          {row.category.description ? (
+            <p className="mt-1 text-xs text-white/45 sm:text-sm">{row.category.description}</p>
+          ) : null}
         </div>
         <Link
           href={`/effects/categories/${encodeURIComponent(row.category.slug)}`}
-          className="text-xs font-semibold text-fuchsia-300 transition hover:text-fuchsia-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-xs font-semibold text-white/70 transition-all duration-200 hover:border-white/20 hover:bg-white/[0.06] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
         >
           See All
         </Link>
       </div>
 
       <HorizontalCarousel
-        className="mt-3 -mx-4 lg:mx-0"
+        className="mt-4 -mx-4 lg:mx-0"
         showRightFade
         onReachEnd={() => onLoadMore(row.category.slug)}
         scrollRef={scrollRef}
@@ -99,25 +104,28 @@ function CategoryRow({
         {row.loadingMore ? <EffectCardSkeleton variant="effectsFeed" gradient={EFFECT_GRADIENTS[0]} /> : null}
       </HorizontalCarousel>
 
-      {showHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+      {showHint ? <p className="mt-2 text-center text-[11px] text-white/30">Swipe to explore</p> : null}
     </section>
   );
 }
 
 function CategoryRowSkeleton({ gradientIndex }: { gradientIndex: number }) {
   return (
-    <section className="mt-8">
-      <div className="flex items-center justify-between gap-6">
-        <div className="flex items-center gap-2">
-          <span className="text-base">⭐</span>
-          <div>
-            <div className="h-3 w-24 rounded bg-white/10 skeleton-shimmer" />
-            <div className="mt-1 h-3 w-32 rounded bg-white/5 skeleton-shimmer" />
-          </div>
-        </div>
-        <div className="h-3 w-12 rounded bg-white/10 skeleton-shimmer" />
+    <section className="mt-10">
+      <div className="pointer-events-none -mt-6 mb-4 h-px w-full" aria-hidden="true">
+        <div className="mx-auto h-px w-2/3 bg-gradient-to-r from-transparent via-white/[0.04] to-transparent" />
       </div>
-      <HorizontalCarousel className="mt-3 -mx-4 lg:mx-0" showRightFade>
+      <div className="flex items-end justify-between gap-6">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <span className="h-1 w-5 rounded-full bg-white/10 skeleton-shimmer" aria-hidden="true" />
+            <div className="h-4 w-28 rounded bg-white/10 skeleton-shimmer" />
+          </div>
+          <div className="mt-1.5 h-3 w-36 rounded bg-white/5 skeleton-shimmer" />
+        </div>
+        <div className="h-7 w-16 rounded-full bg-white/[0.04] skeleton-shimmer" />
+      </div>
+      <HorizontalCarousel className="mt-4 -mx-4 lg:mx-0" showRightFade>
         {EFFECT_GRADIENTS.map((g, idx) => (
           <EffectCardSkeleton
             key={`cat-skeleton-${gradientIndex}-${idx}`}
@@ -126,7 +134,6 @@ function CategoryRowSkeleton({ gradientIndex }: { gradientIndex: number }) {
           />
         ))}
       </HorizontalCarousel>
-      <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
     </section>
   );
 }
@@ -296,14 +303,14 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
   return (
     <>
       {popularState.status === "loading" ? (
-        <section className="mt-8">
-          <div className="flex items-center justify-between gap-6">
-            <div className="flex items-center gap-2">
-              <span className="text-base">{categoryEmoji("popular")}</span>
-              <div>
-                <h2 className="text-sm font-semibold text-white">Popular Effects</h2>
-                <p className="mt-0.5 text-[11px] text-white/50">Trending transformations loved by creators.</p>
+        <section className="mt-10">
+          <div className="flex items-end justify-between gap-6">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <span className="h-1 w-5 rounded-full bg-gradient-to-r from-fuchsia-500 to-violet-500" aria-hidden="true" />
+                <h2 className="text-base font-semibold tracking-tight text-white sm:text-lg">Popular Effects</h2>
               </div>
+              <p className="mt-1 text-xs text-white/45 sm:text-sm">Trending transformations loved by creators.</p>
             </div>
           </div>
           <HorizontalCarousel className="mt-4 -mx-4 lg:mx-0" scrollRef={popularCarouselRef}>
@@ -311,13 +318,13 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
               <EffectCardSkeleton key={idx} variant="effectsFeed" gradient={g} />
             ))}
           </HorizontalCarousel>
-          {showPopularHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+          {showPopularHint ? <p className="mt-2 text-center text-[11px] text-white/30">Swipe to explore</p> : null}
         </section>
       ) : null}
 
       {popularState.status === "error" ? (
-        <section className="mt-8">
-          <div className="rounded-3xl border border-red-500/25 bg-red-500/10 p-4">
+        <section className="mt-10">
+          <div className="rounded-3xl border border-red-500/20 bg-red-500/[0.07] p-5">
             <div className="text-sm font-semibold text-red-100">Could not load popular effects</div>
             <div className="mt-1 text-xs text-red-100/70">{popularState.message}</div>
             <button
@@ -332,38 +339,38 @@ export default function EffectsFeedClient({ showPopularSeeAll = false }: Effects
       ) : null}
 
       {popularState.status === "empty" ? (
-        <section className="mt-8">
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
+        <section className="mt-10">
+          <div className="rounded-3xl border border-white/[0.07] bg-white/[0.03] p-6 text-center text-sm text-white/60">
             No effects yet.
           </div>
         </section>
       ) : null}
 
       {popularState.status === "success" ? (
-        <section className="mt-8" id="popular">
-          <div className="flex items-center justify-between gap-6">
-            <div className="flex items-center gap-2">
-              <span className="text-base">{categoryEmoji("popular")}</span>
-              <div>
-                <h2 className="text-sm font-semibold text-white">Popular Effects</h2>
-                <p className="mt-0.5 text-[11px] text-white/50">Trending transformations loved by creators.</p>
+        <section className="mt-10" id="popular">
+          <div className="flex items-end justify-between gap-6">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <span className="h-1 w-5 rounded-full bg-gradient-to-r from-fuchsia-500 to-violet-500" aria-hidden="true" />
+                <h2 className="text-base font-semibold tracking-tight text-white sm:text-lg">Popular Effects</h2>
               </div>
+              <p className="mt-1 text-xs text-white/45 sm:text-sm">Trending transformations loved by creators.</p>
             </div>
             {showPopularSeeAll ? (
               <Link
                 href="/effects"
-                className="text-xs font-semibold text-fuchsia-300 transition hover:text-fuchsia-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-xs font-semibold text-white/70 transition-all duration-200 hover:border-white/20 hover:bg-white/[0.06] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
               >
                 See All
               </Link>
             ) : null}
           </div>
-          <HorizontalCarousel className="mt-3 -mx-4 lg:mx-0" showRightFade scrollRef={popularCarouselRef}>
+          <HorizontalCarousel className="mt-4 -mx-4 lg:mx-0" showRightFade scrollRef={popularCarouselRef}>
             {popularState.data.map((effect) => (
               <EffectCard key={effect.slug} variant="effectsFeed" effect={effect} onTry={() => handleOpenEffect(effect)} />
             ))}
           </HorizontalCarousel>
-          {showPopularHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+          {showPopularHint ? <p className="mt-2 text-center text-[11px] text-white/30">Swipe to explore</p> : null}
         </section>
       ) : null}
 

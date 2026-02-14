@@ -6,6 +6,7 @@ import EffectGridCard from "@/app/effects/_components/EffectGridCard";
 import useUiGuards from "@/components/guards/useUiGuards";
 import { EffectCardSkeleton } from "@/components/cards/EffectCard";
 import { EFFECT_GRADIENTS } from "@/lib/gradients";
+import { IconSparkles } from "@/app/_components/landing/icons";
 
 type EffectsState = {
   items: ApiEffect[];
@@ -85,10 +86,24 @@ export default function EffectsGridClient() {
   }, [state.loading, state.loadingMore, state.page, state.totalPages, state.error]);
 
   return (
-    <section className="mt-6">
+    <section className="relative mt-8">
+      {/* Ambient glow */}
+      <div
+        className="pointer-events-none absolute -top-12 left-1/2 h-32 w-64 -translate-x-1/2 rounded-full bg-violet-600/[0.05] blur-[70px]"
+        aria-hidden="true"
+      />
+
       {state.error ? (
-        <div className="rounded-3xl border border-red-500/25 bg-red-500/10 p-4 text-xs text-red-100">
-          {state.error}
+        <div className="rounded-3xl border border-red-500/20 bg-red-500/[0.07] p-5">
+          <div className="text-sm font-semibold text-red-100">Could not load effects</div>
+          <div className="mt-1 text-xs text-red-100/60">{state.error}</div>
+          <button
+            type="button"
+            onClick={() => void loadEffects(1)}
+            className="mt-3 inline-flex h-10 items-center justify-center rounded-2xl bg-white px-4 text-xs font-semibold text-black transition hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+          >
+            Retry
+          </button>
         </div>
       ) : null}
       {state.loading && state.items.length === 0 ? (
@@ -102,8 +117,12 @@ export default function EffectsGridClient() {
           ))}
         </div>
       ) : state.items.length === 0 && !state.loading ? (
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
-          No effects yet.
+        <div className="rounded-3xl border border-white/[0.07] bg-white/[0.03] p-8 text-center">
+          <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-fuchsia-500/20 to-violet-500/15">
+            <IconSparkles className="h-6 w-6 text-white/30" />
+          </div>
+          <div className="text-sm font-medium text-white/50">No effects yet</div>
+          <div className="mt-1 text-xs text-white/30">Check back soon for new creations.</div>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
@@ -116,9 +135,24 @@ export default function EffectsGridClient() {
           ))}
         </div>
       )}
-      {state.loadingMore ? <div className="mt-4 text-center text-xs text-white/50">Loading more…</div> : null}
+      {state.loadingMore ? (
+        <div className="mt-6 flex items-center justify-center gap-2 text-xs text-white/40">
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-fuchsia-400/60"
+            style={{ animation: "dot-pulse 1.5s ease-in-out infinite" }}
+          />
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-violet-400/60"
+            style={{ animation: "dot-pulse 1.5s ease-in-out infinite 0.3s" }}
+          />
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-cyan-400/60"
+            style={{ animation: "dot-pulse 1.5s ease-in-out infinite 0.6s" }}
+          />
+          <span className="ml-1">Loading more</span>
+        </div>
+      ) : null}
       <div ref={loadMoreRef} className="h-8" />
     </section>
   );
 }
-

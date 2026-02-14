@@ -53,7 +53,7 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
             onOpen();
           }
         }}
-        className="group overflow-hidden rounded-3xl bg-white/5 text-left shadow-[0_10px_30px_rgba(0,0,0,0.25)] ring-1 ring-inset ring-white/10 transition hover:ring-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+        className="group overflow-hidden rounded-3xl bg-white/5 text-left shadow-[0_10px_30px_rgba(0,0,0,0.25)] ring-1 ring-inset ring-white/10 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_14px_32px_rgba(0,0,0,0.4)] hover:ring-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
         aria-label={`Open public gallery item: ${item.title}`}
         mediaClassName={`relative aspect-[9/13] bg-gradient-to-br ${g}`}
         bodyClassName="p-3"
@@ -91,7 +91,7 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
 
             {showPlayOverlay ? (
               <div className="absolute inset-0 grid place-items-center">
-                <span className="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
+                <span className="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition-transform duration-300 group-hover:scale-105">
                   <IconPlay className="h-6 w-6 translate-x-0.5 text-white/90" />
                 </span>
               </div>
@@ -148,7 +148,7 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
           onOpen();
         }
       }}
-      className="group relative overflow-hidden rounded-3xl bg-white/5 text-left shadow-[0_10px_30px_rgba(0,0,0,0.25)] ring-1 ring-inset ring-white/10 transition hover:ring-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
+      className="group relative overflow-hidden rounded-3xl bg-white/5 text-left shadow-[0_10px_30px_rgba(0,0,0,0.25)] ring-1 ring-inset ring-white/10 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_14px_32px_rgba(0,0,0,0.4)] hover:ring-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-400"
       aria-label={`Open public gallery item: ${title}`}
       mediaClassName="relative aspect-[9/13] w-full"
       media={
@@ -205,7 +205,7 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
 
           {showPlayOverlay ? (
             <div className="absolute inset-0 grid place-items-center">
-              <span className="grid h-12 w-12 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition group-hover:scale-[1.02]">
+              <span className="grid h-12 w-12 place-items-center rounded-full border border-white/25 bg-black/30 backdrop-blur-sm transition-transform duration-300 group-hover:scale-105">
                 <Play className="h-5 w-5 translate-x-0.5 text-white/90" />
               </span>
             </div>

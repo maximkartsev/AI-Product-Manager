@@ -118,7 +118,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const isPremium = Boolean(data?.effect?.is_premium);
 
   return (
-    <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
+    <div className="noise-overlay min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
       <input
         ref={fileInputRef}
         type="file"
@@ -127,11 +127,23 @@ export default function ExploreDetailClient({ id }: { id: number }) {
         onChange={onFileSelected}
       />
       <div
-        className={`mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl ${
+        className={`relative mx-auto w-full max-w-md px-4 py-6 sm:max-w-xl lg:max-w-4xl ${
           state.status === "success" ? "pb-[calc(6.5rem+env(safe-area-inset-bottom))]" : ""
         }`}
       >
-        <header className="flex items-center gap-2 text-xs text-white/55">
+        {/* Ambient background glows */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <div
+            className="absolute -left-24 top-20 h-56 w-56 rounded-full bg-fuchsia-600/10 blur-[90px]"
+            style={{ animation: "glow-drift 16s ease-in-out infinite" }}
+          />
+          <div
+            className="absolute -right-16 top-64 h-44 w-44 rounded-full bg-violet-600/[0.08] blur-[80px]"
+            style={{ animation: "glow-drift-reverse 18s ease-in-out infinite" }}
+          />
+        </div>
+
+        <header className="effects-entrance relative flex items-center gap-2 text-xs text-white/55">
           <IconSparkles className="h-4 w-4 text-fuchsia-200" />
           <Link href="/explore" className="hover:text-white/80 transition">
             Gallery
@@ -141,7 +153,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
         </header>
 
         {state.status === "loading" && (
-          <div className="mt-4 overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+          <div className="effects-entrance effects-entrance-d1 mt-4 overflow-hidden rounded-3xl border border-white/[0.07] bg-white/[0.03]">
             <div className="relative aspect-[9/16] w-full animate-pulse bg-gradient-to-br from-fuchsia-500/15 to-indigo-500/10" />
             <div className="p-5">
               <div className="h-6 w-48 animate-pulse rounded bg-white/10" />
@@ -159,8 +171,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
         )}
 
         {state.status === "success" && (
-          <main className="mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+          <main className="effects-entrance effects-entrance-d1 mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <section className="overflow-hidden rounded-3xl border border-white/[0.07] bg-white/[0.03]">
               <div className="relative aspect-[9/16] w-full bg-gradient-to-br from-fuchsia-500/18 to-indigo-500/12">
                 {data?.processed_file_url ? (
                   <VideoPlayer
@@ -201,7 +213,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
               </div>
             </section>
 
-            <aside className="rounded-3xl border border-white/10 bg-white/5 p-5">
+            <aside className="rounded-3xl border border-white/[0.07] bg-white/[0.03] p-5">
               <div className="text-sm font-semibold text-white">Ready to try it?</div>
               <div className="mt-2 text-xs leading-5 text-white/60">
                 {token

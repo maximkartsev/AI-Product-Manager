@@ -596,6 +596,14 @@ export function unpublishVideo(videoId: number): Promise<VideoData> {
   return apiPost<VideoData>(`/videos/${videoId}/unpublish`);
 }
 
+export function updateVideo(id: number, payload: { title?: string | null }): Promise<VideoData> {
+  return apiRequest<VideoData>(`/videos/${id}`, { method: "PATCH", body: payload });
+}
+
+export function deleteVideo(id: number): Promise<void> {
+  return apiRequest<void>(`/videos/${id}`, { method: "DELETE" });
+}
+
 export function submitAiJob(payload: AiJobRequest): Promise<AiJobData> {
   return apiPost<AiJobData>("/ai-jobs", payload);
 }

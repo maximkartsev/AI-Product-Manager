@@ -63,7 +63,7 @@ class RecordTagController extends BaseController
         $validator = Validator::make($input, RecordTag::getRules());
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         try {
@@ -74,7 +74,7 @@ class RecordTagController extends BaseController
 
         $item->load(['tag', 'record']);
 
-        return $this->sendResponse(new RecordTagResource($item), trans('RecordTag created successfully'));
+        return $this->sendResponse(new RecordTagResource($item), trans('RecordTag created successfully'), [], 201);
     }
 
     /**
@@ -142,7 +142,7 @@ class RecordTagController extends BaseController
         $validator = Validator::make($input, $rules);
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         $item->fill($input);
@@ -182,7 +182,7 @@ class RecordTagController extends BaseController
             return $this->sendError($e->getMessage(), [], 409);
         }
 
-        return $this->sendResponse([], trans('RecordTag deleted successfully'));
+        return $this->sendNoContent();
 
     }
 }

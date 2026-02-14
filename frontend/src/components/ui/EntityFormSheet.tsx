@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import type { z } from "zod";
 import type { DataTableFormField } from "@/components/ui/DataTable";
 import type { ColumnConfig } from "@/lib/api";
+import { extractFieldErrors, extractErrorMessage } from "@/lib/apiErrors";
 
 export function EntityFormSheet<TCreate, TUpdate>({
   entityName,
@@ -136,8 +137,15 @@ export function EntityFormSheet<TCreate, TUpdate>({
       onSaved();
     } catch (error) {
       console.error(`Failed to save ${entityName}.`, error);
-      toast.error(`Failed to save ${entityName}`);
-      setFormError(`Failed to save ${entityName}.`);
+      const serverFieldErrors = extractFieldErrors(error);
+      if (Object.keys(serverFieldErrors).length > 0) {
+        setFieldErrors(serverFieldErrors);
+        const firstKey = Object.keys(serverFieldErrors)[0];
+        if (firstKey) document.getElementById(firstKey)?.focus();
+      }
+      const message = extractErrorMessage(error, `Failed to save ${entityName}.`);
+      toast.error(message);
+      setFormError(message);
     } finally {
       setIsSaving(false);
     }

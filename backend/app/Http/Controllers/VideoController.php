@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Resources\Video as VideoResource;
 use App\Models\Effect;
 use App\Models\File;
 use App\Models\GalleryVideo;
@@ -218,12 +219,7 @@ class VideoController extends BaseController
 
     public function store(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'effect_id' => 'numeric|required|exists:effects,id',
-            'original_file_id' => 'numeric|required',
-            'title' => 'string|nullable|max:255',
-            'input_payload' => 'array|nullable',
-        ]);
+        $validator = Validator::make($request->all(), Video::getRules());
 
         if ($validator->fails()) {
             return $this->sendError('Validation error.', $validator->errors(), 422);
@@ -264,7 +260,7 @@ class VideoController extends BaseController
             'input_payload' => $inputPayload,
         ]);
 
-        return $this->sendResponse($video, 'Video created');
+        return $this->sendResponse(new VideoResource($video), 'Video created', [], 201);
     }
 
     public function show(Request $request, int $id, PresignedUrlService $presigned): JsonResponse
@@ -336,6 +332,84 @@ class VideoController extends BaseController
         $payload['error'] = $error;
 
         return $this->sendResponse($payload, 'Video retrieved');
+    }
+
+    public function update(Request $request, $id): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->sendError('Unauthorized.', [], 401);
+        }
+
+        $video = Video::query()->find($id);
+        if (!$video) {
+            return $this->sendError('Video not found.', [], 404);
+        }
+
+        if ((int) $video->user_id !== (int) $user->id) {
+            return $this->sendError('Video ownership mismatch.', [], 403);
+        }
+
+        $input = $request->all();
+
+        $rules = Video::getRules($id);
+
+        foreach ($rules as $k => $v) {
+            if (!array_key_exists($k, $input)) {
+                unset($rules[$k]);
+            }
+        }
+
+        $validator = Validator::make($input, $rules);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $video->fill($input);
+
+        try {
+            $video->save();
+        } catch (\Exception $e) {
+            return $this->sendError($e->getMessage(), [], 409);
+        }
+
+        $video->fresh();
+
+        return $this->sendResponse(new VideoResource($video), 'Video updated');
+    }
+
+    public function destroy(Request $request, $id): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->sendError('Unauthorized.', [], 401);
+        }
+
+        $video = Video::query()->find($id);
+        if (!$video) {
+            return $this->sendError('Video not found.', [], 404);
+        }
+
+        if ((int) $video->user_id !== (int) $user->id) {
+            return $this->sendError('Video ownership mismatch.', [], 403);
+        }
+
+        GalleryVideo::query()
+            ->where('tenant_id', (string) $video->tenant_id)
+            ->where('video_id', $video->id)
+            ->update(['is_public' => false]);
+
+        $video->is_public = false;
+        $video->save();
+
+        try {
+            $video->delete();
+        } catch (\Exception $e) {
+            return $this->sendError($e->getMessage(), [], 409);
+        }
+
+        return $this->sendNoContent();
     }
 
     public function publish(Request $request, Video $video): JsonResponse

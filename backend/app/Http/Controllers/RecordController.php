@@ -60,7 +60,7 @@ class RecordController extends BaseController
         $validator = Validator::make($input, Record::getRules());
 
         if($validator->fails()){
-            return $this->sendError(trans('Validation Error'), $validator->errors(),400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(),422);
         }
 
         try{
@@ -69,7 +69,7 @@ class RecordController extends BaseController
             return $this->sendError($e->getMessage(),[],409);
         }
 
-        return $this->sendResponse(new RecordResource($item),trans('Record created successfully'));
+        return $this->sendResponse(new RecordResource($item),trans('Record created successfully'), [], 201);
     }
 
     /**
@@ -133,7 +133,7 @@ class RecordController extends BaseController
         $validator = Validator::make($input,$rules);
 
         if($validator->fails()){
-            return $this->sendError(trans('Validation Error'), $validator->errors(),400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(),422);
         }
 
         $item->fill($input);
@@ -171,7 +171,7 @@ class RecordController extends BaseController
             return $this->sendError($e->getMessage(),[],409);
         }
 
-        return $this->sendResponse([], trans('Record deleted successfully'));
+        return $this->sendNoContent();
 
     }
 }

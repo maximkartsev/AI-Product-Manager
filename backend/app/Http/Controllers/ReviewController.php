@@ -68,7 +68,7 @@ class ReviewController extends BaseController
         $validator = Validator::make($input, Review::getRules());
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         try {
@@ -79,7 +79,7 @@ class ReviewController extends BaseController
 
         $item->load(['user', 'record']);
 
-        return $this->sendResponse(new ReviewResource($item), trans('Review created successfully'));
+        return $this->sendResponse(new ReviewResource($item), trans('Review created successfully'), [], 201);
     }
 
     /**
@@ -151,7 +151,7 @@ class ReviewController extends BaseController
         $validator = Validator::make($input, $rules);
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         $item->fill($input);
@@ -191,7 +191,7 @@ class ReviewController extends BaseController
             return $this->sendError($e->getMessage(), [], 409);
         }
 
-        return $this->sendResponse([], trans('Review deleted successfully'));
+        return $this->sendNoContent();
 
     }
 }

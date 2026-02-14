@@ -32,4 +32,14 @@ class Video extends TenantModel
         'input_payload' => 'array',
         'expires_at' => 'datetime',
     ];
+
+    public static function getRules($id = null)
+    {
+        return [
+            'effect_id' => 'numeric|required|exists:effects,id',
+            'original_file_id' => 'numeric|required',
+            'title' => 'string|nullable|max:255',
+            'input_payload' => 'array|nullable',
+        ];
+    }
 }

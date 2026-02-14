@@ -102,13 +102,17 @@ Route::middleware([
 
         Route::prefix('admin')->group(function () {
             Route::get('/effects', [AdminEffectsController::class, 'index']);
+            Route::get('/effects/create', [AdminEffectsController::class, 'create']);
             Route::post('/effects/uploads', [AdminEffectsController::class, 'createUpload']);
             Route::post('/effects', [AdminEffectsController::class, 'store']);
+            Route::get('/effects/{id}', [AdminEffectsController::class, 'show']);
             Route::patch('/effects/{id}', [AdminEffectsController::class, 'update']);
             Route::delete('/effects/{id}', [AdminEffectsController::class, 'destroy']);
 
             Route::get('/categories', [AdminCategoriesController::class, 'index']);
+            Route::get('/categories/create', [AdminCategoriesController::class, 'create']);
             Route::post('/categories', [AdminCategoriesController::class, 'store']);
+            Route::get('/categories/{id}', [AdminCategoriesController::class, 'show']);
             Route::patch('/categories/{id}', [AdminCategoriesController::class, 'update']);
             Route::delete('/categories/{id}', [AdminCategoriesController::class, 'destroy']);
 
@@ -130,6 +134,8 @@ Route::middleware([
     Route::get('/videos', [VideoController::class, 'index']);
     Route::post('/videos', [VideoController::class, 'store']);
     Route::get('/videos/{id}', [VideoController::class, 'show']);
+    Route::patch('/videos/{id}', [VideoController::class, 'update']);
+    Route::delete('/videos/{id}', [VideoController::class, 'destroy']);
     Route::post('/videos/{video}/publish', [VideoController::class, 'publish']);
     Route::post('/videos/{video}/unpublish', [VideoController::class, 'unpublish']);
 

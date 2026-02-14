@@ -64,7 +64,7 @@ class ActivityLogController extends BaseController
         $validator = Validator::make($input, ActivityLog::getRules());
 
         if($validator->fails()){
-            return $this->sendError(trans('Validation Error'), $validator->errors(),400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(),422);
         }
 
         try{
@@ -75,7 +75,7 @@ class ActivityLogController extends BaseController
 
         $item->load(['causer']);
 
-        return $this->sendResponse(new ActivityLogResource($item),trans('Activity Log created successfully'));
+        return $this->sendResponse(new ActivityLogResource($item),trans('Activity Log created successfully'), [], 201);
     }
 
     /**
@@ -143,7 +143,7 @@ class ActivityLogController extends BaseController
         $validator = Validator::make($input,$rules);
 
         if($validator->fails()){
-            return $this->sendError(trans('Validation Error'), $validator->errors(),400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(),422);
         }
 
         $item->fill($input);
@@ -183,7 +183,7 @@ class ActivityLogController extends BaseController
             return $this->sendError($e->getMessage(),[],409);
         }
 
-        return $this->sendResponse([], trans('Activity Log deleted successfully'));
+        return $this->sendNoContent();
 
     }
 }

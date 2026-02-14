@@ -47,6 +47,24 @@ class EffectsController extends BaseController
         return $this->sendResponse($response, trans('Effects retrieved successfully'));
     }
 
+    public function show($id): JsonResponse
+    {
+        $item = Effect::find($id);
+
+        if (is_null($item)) {
+            return $this->sendError(trans('Effect not found'));
+        }
+
+        return $this->sendResponse(new EffectResource($item), trans('Effect retrieved successfully'));
+    }
+
+    public function create(Request $request): JsonResponse
+    {
+        $item = new Effect();
+
+        return $this->sendResponse(new EffectResource($item), null);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $input = $request->all();
@@ -54,7 +72,7 @@ class EffectsController extends BaseController
         $validator = Validator::make($input, Effect::getRules());
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         try {
@@ -63,7 +81,7 @@ class EffectsController extends BaseController
             return $this->sendError($e->getMessage(), [], 409);
         }
 
-        return $this->sendResponse(new EffectResource($item), trans('Effect created successfully'));
+        return $this->sendResponse(new EffectResource($item), trans('Effect created successfully'), [], 201);
     }
 
     public function update(Request $request, $id): JsonResponse
@@ -87,7 +105,7 @@ class EffectsController extends BaseController
         $validator = Validator::make($input, $rules);
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         $item->fill($input);
@@ -117,7 +135,7 @@ class EffectsController extends BaseController
             return $this->sendError($e->getMessage(), [], 409);
         }
 
-        return $this->sendResponse([], trans('Effect deleted successfully'));
+        return $this->sendNoContent();
     }
 
     public function createUpload(Request $request, PresignedUrlService $presigned): JsonResponse

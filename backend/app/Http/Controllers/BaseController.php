@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Validator as Validator;
 
 class BaseController extends Controller
 {
-    public function sendResponse($result, $message, $additionalFirstLevelFields = []): \Illuminate\Http\JsonResponse
+    public function sendResponse($result, $message, $additionalFirstLevelFields = [], $code = 200): \Illuminate\Http\JsonResponse
     {
         $response = [];
         foreach ($additionalFirstLevelFields as $field => $value) {
@@ -23,7 +23,12 @@ class BaseController extends Controller
         $response['data'] = $result;
         $response['message'] = $message;
 
-        return response()->json($response, 200);
+        return response()->json($response, $code);
+    }
+
+    public function sendNoContent(): \Illuminate\Http\JsonResponse
+    {
+        return response()->json(null, 204);
     }
 
     public function sendError($error, $errorMessages = [], $code = 404)

@@ -63,7 +63,7 @@ class ArticleController extends BaseController
         $validator = Validator::make($input, Article::getRules());
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         try {
@@ -74,7 +74,7 @@ class ArticleController extends BaseController
 
         $item->load(['user']);
 
-        return $this->sendResponse(new ArticleResource($item), trans('Article created successfully'));
+        return $this->sendResponse(new ArticleResource($item), trans('Article created successfully'), [], 201);
     }
 
     /**
@@ -142,7 +142,7 @@ class ArticleController extends BaseController
         $validator = Validator::make($input, $rules);
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         $item->fill($input);
@@ -182,7 +182,7 @@ class ArticleController extends BaseController
             return $this->sendError($e->getMessage(), [], 409);
         }
 
-        return $this->sendResponse([], trans('Article deleted successfully'));
+        return $this->sendNoContent();
 
     }
 }

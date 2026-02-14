@@ -8,6 +8,7 @@ import EffectsFeedClient from "@/app/effects/EffectsFeedClient";
 import {
   ApiError,
   clearAccessToken,
+  deleteVideo,
   getAccessToken,
   getVideo,
   getVideosIndex,
@@ -22,7 +23,7 @@ import HorizontalCarousel from "@/components/ui/HorizontalCarousel";
 import useCarouselScrollHint from "@/components/ui/useCarouselScrollHint";
 import UserVideoCard, { resolveVideoStatus, UserVideoCardSkeleton } from "@/components/cards/UserVideoCard";
 import { EFFECT_GRADIENTS } from "@/lib/gradients";
-import { ChevronLeft, Download, Globe2, Loader2, Wand2, X } from "lucide-react";
+import { ChevronLeft, Download, Globe2, Loader2, Trash2, Wand2, X } from "lucide-react";
 import useAuthToken from "@/lib/useAuthToken";
 
 type VideosState = {
@@ -94,6 +95,8 @@ export default function UserVideosClient() {
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [publishLoading, setPublishLoading] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [videosState, setVideosState] = useState<VideosState>({
     items: [],
     page: 0,
@@ -229,6 +232,24 @@ export default function UserVideosClient() {
     }
   };
 
+  const handleDeleteVideo = async () => {
+    if (!drawerVideo || deleteLoading) return;
+    setDeleteLoading(true);
+    try {
+      await deleteVideo(drawerVideo.id);
+      setVideosState((prev) => ({
+        ...prev,
+        items: prev.items.filter((v) => v.id !== drawerVideo.id),
+      }));
+      handleCloseDrawer();
+    } catch (err) {
+      setDrawerError(err instanceof ApiError ? err.message : "Unable to delete the video.");
+    } finally {
+      setDeleteLoading(false);
+      setDeleteConfirm(false);
+    }
+  };
+
   const handleCloseDrawer = () => {
     setDrawerOpen(false);
     window.setTimeout(() => {
@@ -237,6 +258,7 @@ export default function UserVideosClient() {
       setDrawerError(null);
       setPublishLoading(false);
       setPublishError(null);
+      setDeleteConfirm(false);
     }, 280);
   };
 
@@ -703,6 +725,42 @@ export default function UserVideosClient() {
                   <Wand2 className="h-4 w-4" />
                   Repeat
                 </button>
+              </div>
+
+              <div className="mt-6 border-t border-white/[0.07] pt-4">
+                {deleteConfirm ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-red-100/80">Are you sure? This cannot be undone.</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirm(false)}
+                        disabled={deleteLoading}
+                        className="inline-flex h-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-xs font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeleteVideo}
+                        disabled={deleteLoading}
+                        className="inline-flex h-10 items-center justify-center gap-1.5 rounded-2xl border border-red-500/30 bg-red-500/15 text-xs font-semibold text-red-100 transition hover:bg-red-500/25 disabled:opacity-60"
+                      >
+                        {deleteLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirm(true)}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-xs font-semibold text-white/50 transition hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-100"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete Video
+                  </button>
+                )}
               </div>
             </div>
           </aside>

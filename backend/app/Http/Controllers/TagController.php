@@ -61,7 +61,7 @@ class TagController extends BaseController
         $validator = Validator::make($input, Tag::getRules());
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         try {
@@ -70,7 +70,7 @@ class TagController extends BaseController
             return $this->sendError($e->getMessage(), [], 409);
         }
 
-        return $this->sendResponse(new TagResource($item), trans('Tag created successfully'));
+        return $this->sendResponse(new TagResource($item), trans('Tag created successfully'), [], 201);
     }
 
     /**
@@ -134,7 +134,7 @@ class TagController extends BaseController
         $validator = Validator::make($input, $rules);
 
         if ($validator->fails()) {
-            return $this->sendError(trans('Validation Error'), $validator->errors(), 400);
+            return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
         $item->fill($input);
@@ -172,7 +172,7 @@ class TagController extends BaseController
             return $this->sendError($e->getMessage(), [], 409);
         }
 
-        return $this->sendResponse([], trans('Tag deleted successfully'));
+        return $this->sendNoContent();
 
     }
 }

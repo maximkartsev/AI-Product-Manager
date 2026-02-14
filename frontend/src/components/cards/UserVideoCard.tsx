@@ -83,7 +83,7 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
           aria-label={`Open video: ${title}`}
           disabled={!canOpen}
         >
-          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition group-hover:border-white/20 disabled:opacity-70">
+          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition-all duration-300 group-hover:border-white/20 group-hover:shadow-[0_14px_32px_rgba(0,0,0,0.4)] disabled:opacity-70">
             <div className="relative aspect-[9/13] w-full">
               {previewUrl ? (
                 <VideoPlayer
@@ -115,7 +115,7 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
               <div className="absolute inset-0 grid place-items-center">
                 <span
                   className={cn(
-                    "grid place-items-center rounded-full border border-white/25 bg-black/30 text-white/90 backdrop-blur-sm transition group-hover:scale-[1.02]",
+                    "grid place-items-center rounded-full border border-white/25 bg-black/30 text-white/90 backdrop-blur-sm transition-transform duration-300 group-hover:scale-105",
                     isCarousel ? "h-9 w-9" : "h-11 w-11",
                   )}
                 >

@@ -58,8 +58,12 @@ function GroupedVideoRow({
 
   return (
     <section>
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-white">{group.name}</div>
+      <div className="flex items-center gap-2.5">
+        <span
+          className="h-1 w-5 rounded-full bg-gradient-to-r from-fuchsia-500 to-violet-500"
+          aria-hidden="true"
+        />
+        <div className="text-base font-semibold tracking-tight text-white sm:text-lg">{group.name}</div>
       </div>
       <HorizontalCarousel className="mt-3 -mx-4" showRightFade scrollRef={scrollRef}>
         {group.items.map((video) => (
@@ -73,7 +77,7 @@ function GroupedVideoRow({
           </div>
         ))}
       </HorizontalCarousel>
-      {showHint ? <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p> : null}
+      {showHint ? <p className="mt-2 text-center text-[11px] text-white/30">Swipe to explore</p> : null}
     </section>
   );
 }
@@ -328,10 +332,39 @@ export default function UserVideosClient() {
   }, [videosState.items]);
 
   return (
-    <div className="min-h-screen bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
-      <div className="mx-auto w-full max-w-md px-4 pb-12 pt-4 sm:max-w-xl lg:max-w-4xl">
-        <div className="mt-4 flex items-center justify-between">
-          <h1 className="text-base font-semibold text-white">My Videos</h1>
+    <div className="noise-overlay min-h-screen overflow-x-hidden bg-[#05050a] font-sans text-white selection:bg-fuchsia-500/30 selection:text-white">
+      <div className="relative mx-auto w-full max-w-md px-4 pb-12 pt-4 sm:max-w-xl lg:max-w-4xl">
+        {/* Ambient background glows */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <div
+            className="absolute -left-32 top-12 h-64 w-64 rounded-full bg-fuchsia-600/15 blur-[100px]"
+            style={{ animation: "glow-drift 14s ease-in-out infinite" }}
+          />
+          <div
+            className="absolute -right-20 top-72 h-48 w-48 rounded-full bg-violet-600/10 blur-[80px]"
+            style={{ animation: "glow-drift-reverse 16s ease-in-out infinite" }}
+          />
+          <div
+            className="absolute left-1/3 top-[55%] h-40 w-40 rounded-full bg-cyan-500/[0.07] blur-[90px]"
+            style={{ animation: "glow-drift 18s ease-in-out infinite 3s" }}
+          />
+        </div>
+
+        <section className="effects-entrance relative flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-fuchsia-500/25 to-violet-500/20">
+              <IconSparkles className="h-5 w-5 text-fuchsia-200" />
+            </span>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+                My{" "}
+                <span className="bg-gradient-to-r from-fuchsia-400 via-violet-400 to-cyan-400 bg-clip-text text-transparent">
+                  Videos
+                </span>
+              </h1>
+              <p className="mt-0.5 text-sm text-white/50">Your processed AI video creations.</p>
+            </div>
+          </div>
           <Link
             href="/explore"
             className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/80 transition hover:bg-white/10"
@@ -339,12 +372,18 @@ export default function UserVideosClient() {
           >
             <Globe2 className="h-4 w-4" />
           </Link>
-        </div>
+        </section>
 
-        <main className="mt-6">
+        <main className="relative mt-6">
           {!showAuthPrompt && !showEmptyState ? (
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="text-xs text-white/50">Your creations</div>
+            <div className="effects-entrance effects-entrance-d1 mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="h-1 w-5 rounded-full bg-gradient-to-r from-fuchsia-500 to-violet-500"
+                  aria-hidden="true"
+                />
+                <span className="text-xs font-medium text-white/55">Your creations</span>
+              </div>
               <div className="inline-flex rounded-full border border-white/10 bg-white/5 p-1 text-[11px] font-semibold">
                 <button
                   type="button"
@@ -374,7 +413,10 @@ export default function UserVideosClient() {
             </div>
           ) : null}
           {showAuthPrompt ? (
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center">
+            <div className="effects-entrance effects-entrance-d1 rounded-3xl border border-white/[0.07] bg-white/[0.03] p-6 text-center">
+              <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-fuchsia-500/20 to-violet-500/15">
+                <IconSparkles className="h-5 w-5 text-fuchsia-200" />
+              </div>
               <div className="text-sm font-semibold text-white">Sign in to see your videos</div>
               <div className="mt-2 text-xs text-white/60">
                 Your processed videos are stored in your account.
@@ -390,14 +432,15 @@ export default function UserVideosClient() {
           ) : null}
 
           {videosState.error ? (
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-100">
-              {videosState.error}
+            <div className="rounded-3xl border border-red-500/20 bg-red-500/[0.07] p-5">
+              <div className="text-sm font-semibold text-red-100">Error</div>
+              <div className="mt-1 text-xs text-red-100/75">{videosState.error}</div>
             </div>
           ) : null}
 
           {!showAuthPrompt && videosState.loading && videosState.items.length === 0 ? (
             viewMode === "grid" ? (
-              <div className="flex flex-wrap -mx-1.5">
+              <div className="effects-entrance effects-entrance-d2 flex flex-wrap -mx-1.5">
                 {Array.from({ length: 6 }).map((_, idx) => (
                   <div key={idx} className="mb-3 w-1/2 px-1.5 lg:w-1/4">
                     <UserVideoCardSkeleton
@@ -408,10 +451,13 @@ export default function UserVideosClient() {
                 ))}
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="effects-entrance effects-entrance-d2 space-y-6">
                 {Array.from({ length: 2 }).map((_, sectionIdx) => (
                   <section key={sectionIdx}>
-                    <div className="h-3 w-28 rounded bg-white/10 skeleton-shimmer" />
+                    <div className="flex items-center gap-2.5">
+                      <span className="h-1 w-5 rounded-full bg-white/10 skeleton-shimmer" />
+                      <div className="h-4 w-28 rounded bg-white/10 skeleton-shimmer" />
+                    </div>
                     <HorizontalCarousel className="mt-3 -mx-4" showRightFade>
                       {Array.from({ length: 6 }).map((__, idx) => (
                         <div key={idx} className="snap-start">
@@ -422,7 +468,7 @@ export default function UserVideosClient() {
                         </div>
                       ))}
                     </HorizontalCarousel>
-                    <p className="mt-2 text-center text-[11px] text-white/40">Swipe to explore</p>
+                    <p className="mt-2 text-center text-[11px] text-white/30">Swipe to explore</p>
                   </section>
                 ))}
               </div>
@@ -430,8 +476,8 @@ export default function UserVideosClient() {
           ) : null}
 
           {showEmptyState ? (
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-center text-sm text-white/60">
-              <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-white/10">
+            <div className="effects-entrance effects-entrance-d1 rounded-3xl border border-white/[0.07] bg-white/[0.03] p-6 text-center">
+              <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-fuchsia-500/20 to-violet-500/15">
                 <IconSparkles className="h-5 w-5 text-fuchsia-200" />
               </div>
               <div className="text-base font-semibold text-white">No videos yet</div>
@@ -443,39 +489,60 @@ export default function UserVideosClient() {
 
           {videosState.items.length > 0 ? (
             viewMode === "grid" ? (
-              <div className="flex flex-wrap -mx-1.5">
-                {videosState.items.map((video) => (
-                  <div key={video.id} className="mb-3 w-1/2 px-1.5 lg:w-1/4">
-                    <UserVideoCard
-                      variant="grid"
-                      video={video}
-                      onOpen={() => handleOpenVideo(video)}
-                      onRepeat={() => handleRepeatVideo(video)}
-                    />
-                  </div>
-                ))}
+              <div className="effects-entrance effects-entrance-d2 relative">
+                <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-fuchsia-600/[0.06] blur-[60px]" aria-hidden="true" />
+                <div className="flex flex-wrap -mx-1.5">
+                  {videosState.items.map((video) => (
+                    <div key={video.id} className="mb-3 w-1/2 px-1.5 lg:w-1/4">
+                      <UserVideoCard
+                        variant="grid"
+                        video={video}
+                        onOpen={() => handleOpenVideo(video)}
+                        onRepeat={() => handleRepeatVideo(video)}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : (
-              <div className="space-y-6">
-                {groupedVideos.map((group) => (
-                  <GroupedVideoRow
-                    key={group.key}
-                    group={group}
-                    onOpen={handleOpenVideo}
-                    onRepeat={handleRepeatVideo}
-                  />
+              <div className="effects-entrance effects-entrance-d2 space-y-6">
+                {groupedVideos.map((group, idx) => (
+                  <div key={group.key}>
+                    {idx > 0 ? (
+                      <div className="mb-6 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
+                    ) : null}
+                    <GroupedVideoRow
+                      group={group}
+                      onOpen={handleOpenVideo}
+                      onRepeat={handleRepeatVideo}
+                    />
+                  </div>
                 ))}
               </div>
             )
           ) : null}
 
           {videosState.loadingMore ? (
-            <div className="mt-4 text-center text-xs text-white/50">Loading more…</div>
+            <div className="mt-6 flex items-center justify-center gap-1.5">
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-fuchsia-400/60"
+                style={{ animation: "dot-pulse 1.5s ease-in-out infinite" }}
+              />
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-violet-400/60"
+                style={{ animation: "dot-pulse 1.5s ease-in-out infinite 0.3s" }}
+              />
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-cyan-400/60"
+                style={{ animation: "dot-pulse 1.5s ease-in-out infinite 0.6s" }}
+              />
+            </div>
           ) : null}
           <div ref={loadMoreRef} className="h-8" />
         </main>
 
-        <div className="mt-10">
+        <div className="relative mt-8">
+          <div className="mb-8 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
           <EffectsFeedClient showPopularSeeAll />
         </div>
       </div>
@@ -497,7 +564,7 @@ export default function UserVideosClient() {
           />
           <aside
             className={cn(
-              "absolute right-0 top-0 h-full w-[90vw] bg-[#05050a] font-sans text-white shadow-2xl transition-transform duration-300 ease-out",
+              "absolute right-0 top-0 h-full w-[80vw] sm:w-[24rem] bg-[#05050a] font-sans text-white shadow-2xl transition-transform duration-300 ease-out",
               drawerOpen ? "translate-x-0" : "translate-x-full",
             )}
           >
@@ -528,15 +595,16 @@ export default function UserVideosClient() {
               </header>
 
               {drawerError ? (
-                <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-100">
-                  {drawerError}
+                <div className="mt-4 rounded-3xl border border-red-500/20 bg-red-500/[0.07] p-5">
+                  <div className="text-sm font-semibold text-red-100">Error</div>
+                  <div className="mt-1 text-xs text-red-100/75">{drawerError}</div>
                 </div>
               ) : null}
 
-              <section className="relative mt-4 aspect-[9/16] w-full overflow-hidden rounded-3xl border border-white/10 bg-black">
+              <section className="relative mt-4 aspect-[9/16] w-full overflow-hidden rounded-3xl border border-white/[0.07] bg-black">
                 {drawerVideo.processed_file_url || drawerVideo.original_file_url ? (
                   <VideoPlayer
-                    className="h-full w-full object-contain"
+                    className="h-full w-full object-cover"
                     src={drawerVideo.processed_file_url ?? drawerVideo.original_file_url}
                     playsInline
                     autoPlay
@@ -573,14 +641,16 @@ export default function UserVideosClient() {
               </section>
 
               {drawerVideo.status === "failed" && drawerVideo.error ? (
-                <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-100">
-                  {drawerVideo.error}
+                <div className="mt-4 rounded-3xl border border-red-500/20 bg-red-500/[0.07] p-5">
+                  <div className="text-sm font-semibold text-red-100">Processing failed</div>
+                  <div className="mt-1 text-xs text-red-100/75">{drawerVideo.error}</div>
                 </div>
               ) : null}
 
               {publishError ? (
-                <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-xs text-red-100">
-                  {publishError}
+                <div className="mt-4 rounded-3xl border border-red-500/20 bg-red-500/[0.07] p-5">
+                  <div className="text-sm font-semibold text-red-100">Publish error</div>
+                  <div className="mt-1 text-xs text-red-100/75">{publishError}</div>
                 </div>
               ) : null}
 

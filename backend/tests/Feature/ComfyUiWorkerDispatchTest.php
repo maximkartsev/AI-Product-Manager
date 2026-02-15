@@ -10,7 +10,10 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Models\File;
 use App\Services\PresignedUrlService;
+use App\Services\OutputValidationService;
 use App\Services\TokenLedgerService;
+use App\Models\Workflow;
+use App\Models\WorkerAuditLog;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -65,8 +68,14 @@ class ComfyUiWorkerDispatchTest extends TestCase
     private function resetState(): void
     {
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('users')->truncate();
+        DB::connection('central')->table('tenants')->truncate();
+        DB::connection('central')->table('personal_access_tokens')->truncate();
         DB::connection('central')->table('ai_job_dispatches')->truncate();
         DB::connection('central')->table('comfy_ui_workers')->truncate();
+        DB::connection('central')->table('worker_audit_logs')->truncate();
+        DB::connection('central')->table('worker_workflows')->truncate();
+        DB::connection('central')->table('workflows')->truncate();
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
 
         DB::connection('tenant_pool_1')->statement('SET FOREIGN_KEY_CHECKS=0');
@@ -728,6 +737,391 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->assertSame('queued', $jobB->status);
     }
 
+    // ========================================================================
+    // New tests: per-worker auth, workflow filtering, audit logging, etc.
+    // ========================================================================
+
+    public function test_poll_with_per_worker_token_uses_authenticated_worker(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->createDispatch($tenant->id, $job->id);
+
+        $perWorkerToken = 'per-worker-secret-token-xyz';
+        $worker = ComfyUiWorker::query()->create([
+            'worker_id' => 'known-worker',
+            'display_name' => 'Known Worker',
+            'token_hash' => hash('sha256', $perWorkerToken),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 2,
+        ]);
+
+        $response = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'different-id-in-body',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer ' . $perWorkerToken,
+        ]);
+
+        $response->assertStatus(200);
+        $dispatchId = $response->json('data.job.dispatch_id');
+        if ($dispatchId) {
+            $dispatch = AiJobDispatch::query()->find($dispatchId);
+            // Dispatch should be leased to the DB worker's worker_id, not the request body's
+            $this->assertSame('known-worker', $dispatch->worker_id);
+        }
+
+        // Verify no new worker was created with 'different-id-in-body'
+        $this->assertNull(ComfyUiWorker::query()->where('worker_id', 'different-id-in-body')->first());
+    }
+
+    public function test_poll_filters_dispatches_by_worker_assigned_workflows(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        $wfA = $this->createWorkflow(['name' => 'A', 'slug' => 'wf-a']);
+        $wfB = $this->createWorkflow(['name' => 'B', 'slug' => 'wf-b']);
+
+        $jobA = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $jobB = $this->createTenantJob($tenant, $user, $effect, $fileId);
+
+        $this->createDispatch($tenant->id, $jobA->id, ['workflow_id' => $wfA->id]);
+        $this->createDispatch($tenant->id, $jobB->id, ['workflow_id' => $wfB->id]);
+
+        $perToken = 'wf-filter-token';
+        $worker = ComfyUiWorker::query()->create([
+            'worker_id' => 'wf-filter-worker',
+            'token_hash' => hash('sha256', $perToken),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 2,
+        ]);
+        // Assign only to workflow A
+        $worker->workflows()->sync([$wfA->id]);
+
+        $response = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'wf-filter-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer ' . $perToken,
+        ]);
+
+        $response->assertStatus(200);
+        $jobId = $response->json('data.job.job_id');
+        $this->assertSame($jobA->id, $jobId);
+    }
+
+    public function test_poll_without_workflow_assignment_gets_all_dispatches(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        $wfA = $this->createWorkflow(['name' => 'A', 'slug' => 'wf-all-a']);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->createDispatch($tenant->id, $job->id, ['workflow_id' => $wfA->id]);
+
+        $perToken = 'no-wf-token';
+        ComfyUiWorker::query()->create([
+            'worker_id' => 'no-wf-worker',
+            'token_hash' => hash('sha256', $perToken),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 2,
+        ]);
+        // No workflow assignments — worker should get any dispatch
+
+        $response = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'no-wf-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer ' . $perToken,
+        ]);
+
+        $response->assertStatus(200);
+        $this->assertSame($job->id, $response->json('data.job.job_id'));
+    }
+
+    public function test_poll_logs_audit_event(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->createDispatch($tenant->id, $job->id);
+
+        $this->postJson('/api/worker/poll', [
+            'worker_id' => 'audit-poll-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ])->assertStatus(200);
+
+        $log = WorkerAuditLog::query()
+            ->where('event', 'poll')
+            ->where('worker_identifier', 'audit-poll-worker')
+            ->first();
+        $this->assertNotNull($log);
+    }
+
+    public function test_complete_logs_audit_event(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $this->reserveTokens($tenant, $job, 5);
+        $this->createDispatch($tenant->id, $job->id);
+
+        $poll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'audit-complete-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $this->postJson('/api/worker/complete', [
+            'dispatch_id' => $poll->json('data.job.dispatch_id'),
+            'lease_token' => $poll->json('data.job.lease_token'),
+            'worker_id' => 'audit-complete-worker',
+            'provider_job_id' => 'prompt-audit',
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ])->assertStatus(200);
+
+        $log = WorkerAuditLog::query()
+            ->where('event', 'complete')
+            ->where('worker_identifier', 'audit-complete-worker')
+            ->first();
+        $this->assertNotNull($log);
+    }
+
+    public function test_fail_logs_audit_event_with_error_metadata(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $this->reserveTokens($tenant, $job, 5);
+        $this->createDispatch($tenant->id, $job->id);
+
+        $poll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'audit-fail-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $this->postJson('/api/worker/fail', [
+            'dispatch_id' => $poll->json('data.job.dispatch_id'),
+            'lease_token' => $poll->json('data.job.lease_token'),
+            'worker_id' => 'audit-fail-worker',
+            'error_message' => 'GPU out of memory',
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ])->assertStatus(200);
+
+        $log = WorkerAuditLog::query()
+            ->where('event', 'fail')
+            ->where('worker_identifier', 'audit-fail-worker')
+            ->first();
+        $this->assertNotNull($log);
+        $this->assertArrayHasKey('error', $log->metadata);
+        $this->assertSame('GPU out of memory', $log->metadata['error']);
+    }
+
+    public function test_complete_presigns_asset_download_urls(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+
+        // Set input_payload with assets
+        $this->setJobInputPayload($tenant->id, $job->id, [
+            'output_extension' => 'mp4',
+            'assets' => [
+                [
+                    'key' => 'bg',
+                    's3_path' => 'workflows/1/assets/bg.png',
+                    's3_disk' => 's3',
+                    'placeholder' => '{{BG}}',
+                    'type' => 'image',
+                ],
+            ],
+        ]);
+
+        $this->createDispatch($tenant->id, $job->id);
+
+        $response = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'asset-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $response->assertStatus(200);
+        $assets = $response->json('data.job.input_payload.assets');
+        $this->assertNotEmpty($assets);
+        $this->assertArrayHasKey('download_url', $assets[0]);
+        $this->assertNotNull($assets[0]['download_url']);
+    }
+
+    public function test_complete_runs_output_validation_non_blocking(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $this->reserveTokens($tenant, $job, 5);
+        $this->createDispatch($tenant->id, $job->id);
+
+        // Mock OutputValidationService to throw
+        app()->instance(OutputValidationService::class, new class extends OutputValidationService {
+            public function validate(string $disk, string $path): array
+            {
+                throw new \RuntimeException('Validation service crashed');
+            }
+        });
+
+        $poll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'validation-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $response = $this->postJson('/api/worker/complete', [
+            'dispatch_id' => $poll->json('data.job.dispatch_id'),
+            'lease_token' => $poll->json('data.job.lease_token'),
+            'worker_id' => 'validation-worker',
+            'provider_job_id' => 'prompt-val',
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        // Should still return 200 despite validation crash
+        $response->assertStatus(200);
+    }
+
+    public function test_fail_sanitizes_json_error_message(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $this->reserveTokens($tenant, $job, 5);
+        $this->createDispatch($tenant->id, $job->id);
+
+        $poll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'sanitize-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $this->postJson('/api/worker/fail', [
+            'dispatch_id' => $poll->json('data.job.dispatch_id'),
+            'lease_token' => $poll->json('data.job.lease_token'),
+            'worker_id' => 'sanitize-worker',
+            'error_message' => json_encode(['exception_message' => 'Out of memory']),
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ])->assertStatus(200);
+
+        $dispatch = AiJobDispatch::query()->find($poll->json('data.job.dispatch_id'));
+        $this->assertSame('Out of memory', $dispatch->last_error);
+    }
+
+    public function test_fail_sanitizes_empty_error_message(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $this->reserveTokens($tenant, $job, 5);
+        $this->createDispatch($tenant->id, $job->id);
+
+        $poll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'empty-err-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ]);
+
+        $this->postJson('/api/worker/fail', [
+            'dispatch_id' => $poll->json('data.job.dispatch_id'),
+            'lease_token' => $poll->json('data.job.lease_token'),
+            'worker_id' => 'empty-err-worker',
+            'error_message' => '',
+        ], [
+            'Authorization' => 'Bearer test-token',
+        ])->assertStatus(200);
+
+        $dispatch = AiJobDispatch::query()->find($poll->json('data.job.dispatch_id'));
+        $this->assertSame('Processing failed.', $dispatch->last_error);
+    }
+
+    public function test_poll_updates_worker_last_ip(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->createDispatch($tenant->id, $job->id);
+
+        // Per-worker auth sets last_ip via updateWorkerFromRequest
+        $perToken = 'ip-test-token';
+        $worker = ComfyUiWorker::query()->create([
+            'worker_id' => 'ip-worker',
+            'token_hash' => hash('sha256', $perToken),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 2,
+        ]);
+
+        $this->assertNull($worker->last_ip);
+
+        $this->postJson('/api/worker/poll', [
+            'worker_id' => 'ip-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer ' . $perToken,
+        ])->assertStatus(200);
+
+        $worker->refresh();
+        $this->assertNotNull($worker->last_ip);
+    }
+
+    // ========================================================================
+    // Helper methods
+    // ========================================================================
+
     private function createUserTenant(): array
     {
         $user = User::factory()->create();
@@ -879,5 +1273,24 @@ class ComfyUiWorkerDispatchTest extends TestCase
         } finally {
             $tenancy->end();
         }
+    }
+
+    private function createWorkflow(array $overrides = []): Workflow
+    {
+        $uid = uniqid();
+        $defaults = [
+            'name' => 'Workflow ' . $uid,
+            'slug' => 'workflow-' . $uid,
+            'is_active' => true,
+        ];
+
+        return Workflow::query()->create(array_merge($defaults, $overrides));
+    }
+
+    private function setJobInputPayload(string $tenantId, int $jobId, array $payload): void
+    {
+        DB::connection('tenant_pool_1')->table('ai_jobs')
+            ->where('id', $jobId)
+            ->update(['input_payload' => json_encode($payload)]);
     }
 }

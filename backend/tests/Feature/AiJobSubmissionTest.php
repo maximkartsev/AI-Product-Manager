@@ -6,6 +6,7 @@ use App\Models\Effect;
 use App\Models\AiJob;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Models\Workflow;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -45,6 +46,17 @@ class AiJobSubmissionTest extends TestCase
             'resources/comfyui/workflows/cloud_video_effect.json',
             json_encode(['1' => ['inputs' => []]])
         );
+
+        $this->resetState();
+    }
+
+    private function resetState(): void
+    {
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('users')->truncate();
+        DB::connection('central')->table('tenants')->truncate();
+        DB::connection('central')->table('personal_access_tokens')->truncate();
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
     public function test_ai_job_submission_reserves_tokens_and_is_idempotent(): void
@@ -85,13 +97,6 @@ class AiJobSubmissionTest extends TestCase
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
         $effect = $this->createEffect(5.0);
-        $effect->update([
-            'comfyui_workflow_path' => 'resources/comfyui/workflows/cloud_video_effect.json',
-            'comfyui_input_path_placeholder' => '__INPUT_PATH__',
-            'output_extension' => 'mp4',
-            'output_mime_type' => 'video/mp4',
-            'output_node_id' => '3',
-        ]);
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $this->seedWallet($tenant->id, $user->id, 25);
 
@@ -139,8 +144,13 @@ class AiJobSubmissionTest extends TestCase
             ],
         ]));
 
-        $effect->update([
+        $effect->workflow->update([
             'comfyui_workflow_path' => $workflowPath,
+            'properties' => [
+                ['key' => 'positive_prompt', 'type' => 'text', 'placeholder' => '__POSITIVE_PROMPT__', 'user_configurable' => true, 'default_value' => ''],
+                ['key' => 'negative_prompt', 'type' => 'text', 'placeholder' => '__NEGATIVE_PROMPT__', 'user_configurable' => true, 'default_value' => ''],
+                ['key' => 'input_video', 'type' => 'video', 'placeholder' => '__INPUT_PATH__', 'is_primary_input' => true],
+            ],
         ]);
 
         $fileId = $this->createTenantFile($tenant->id, $user->id);
@@ -222,18 +232,26 @@ class AiJobSubmissionTest extends TestCase
 
     private function createEffect(float $creditsCost): Effect
     {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'comfyui_workflow_path' => 'resources/comfyui/workflows/cloud_video_effect.json',
+            'output_node_id' => '3',
+            'output_extension' => 'mp4',
+            'output_mime_type' => 'video/mp4',
+            'is_active' => true,
+        ]);
+
         return Effect::query()->create([
             'name' => 'Effect ' . uniqid(),
             'slug' => 'effect-' . uniqid(),
             'description' => 'Effect description',
             'type' => 'video',
             'credits_cost' => $creditsCost,
-            'processing_time_estimate' => 10,
-            'popularity_score' => 0,
-            'sort_order' => 0,
             'is_active' => true,
             'is_premium' => false,
             'is_new' => false,
+            'workflow_id' => $workflow->id,
         ]);
     }
 

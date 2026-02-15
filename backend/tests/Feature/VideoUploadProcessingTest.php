@@ -7,6 +7,7 @@ use App\Models\Effect;
 use App\Models\GalleryVideo;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Models\Workflow;
 use App\Services\PresignedUrlService;
 use App\Services\VideoCleanupService;
 use Illuminate\Support\Facades\Artisan;
@@ -78,6 +79,9 @@ class VideoUploadProcessingTest extends TestCase
     private function resetState(): void
     {
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('users')->truncate();
+        DB::connection('central')->table('tenants')->truncate();
+        DB::connection('central')->table('personal_access_tokens')->truncate();
         DB::connection('central')->table('ai_job_dispatches')->truncate();
         DB::connection('central')->table('gallery_videos')->truncate();
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
@@ -286,7 +290,7 @@ class VideoUploadProcessingTest extends TestCase
             'title' => 'My video',
         ]);
 
-        $response->assertStatus(200)
+        $response->assertStatus(201)
             ->assertJsonPath('data.status', 'queued')
             ->assertJsonPath('data.is_public', false);
     }
@@ -733,18 +737,26 @@ class VideoUploadProcessingTest extends TestCase
 
     private function createEffect(): Effect
     {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'comfyui_workflow_path' => 'resources/comfyui/workflows/cloud_video_effect.json',
+            'output_node_id' => '3',
+            'output_extension' => 'mp4',
+            'output_mime_type' => 'video/mp4',
+            'is_active' => true,
+        ]);
+
         return Effect::query()->create([
             'name' => 'Effect ' . uniqid(),
             'slug' => 'effect-' . uniqid(),
             'description' => 'Effect description',
             'type' => 'video',
             'credits_cost' => 5,
-            'processing_time_estimate' => 10,
-            'popularity_score' => 0,
-            'sort_order' => 0,
             'is_active' => true,
             'is_premium' => false,
             'is_new' => false,
+            'workflow_id' => $workflow->id,
         ]);
     }
 

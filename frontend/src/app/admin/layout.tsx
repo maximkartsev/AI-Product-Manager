@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { Sparkles, FolderOpen, Users, BarChart3, Menu, X, GitBranch, Server, ScrollText } from "lucide-react";
+import { Sparkles, FolderOpen, Users, BarChart3, Menu, X, GitBranch, Server, ScrollText, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { label: "Categories", href: "/admin/categories", icon: FolderOpen },
   { label: "Users", href: "/admin/users", icon: Users },
   { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
+  { label: "Workload", href: "/admin/workload", icon: Activity },
   { label: "Workers", href: "/admin/workers", icon: Server },
   { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
 ];

@@ -31,6 +31,7 @@ use \App\Http\Controllers\Admin\AnalyticsController as AdminAnalyticsController;
 use \App\Http\Controllers\Admin\WorkflowsController as AdminWorkflowsController;
 use \App\Http\Controllers\Admin\WorkersController as AdminWorkersController;
 use \App\Http\Controllers\Admin\AuditLogsController as AdminAuditLogsController;
+use \App\Http\Controllers\Admin\WorkloadController as AdminWorkloadController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -143,6 +144,10 @@ Route::middleware([
             Route::post('/workers/{id}/rotate-token', [AdminWorkersController::class, 'rotateToken']);
             Route::put('/workers/{id}/workflows', [AdminWorkersController::class, 'assignWorkflows']);
             Route::get('/workers/{id}/audit-logs', [AdminWorkersController::class, 'auditLogs']);
+
+            // Workload
+            Route::get('/workload', [AdminWorkloadController::class, 'index']);
+            Route::put('/workload/workflows/{id}/workers', [AdminWorkloadController::class, 'assignWorkers']);
 
             // Audit Logs
             Route::get('/audit-logs', [AdminAuditLogsController::class, 'index']);

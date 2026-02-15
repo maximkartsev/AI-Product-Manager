@@ -5,6 +5,7 @@ ngrok http --url=minio.ngrok.pizza 9000
 cd ~/projects/AI-Product-Manager/laradock
 docker compose -p bp exec workspace bash -c "cd /var/www && composer require socialiteproviders/tiktok"
 docker compose -p bp exec workspace bash -c "cd /var/www && php artisan migrate:fresh"
+docker compose -p bp exec workspace bash -c "cd /var/www && php artisan test"
 
 “migrate → seed” flow for this repo (pooled tenancy)
 

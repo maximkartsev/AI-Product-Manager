@@ -18,6 +18,7 @@ class AiJobDispatch extends CentralModel
         'lease_token',
         'lease_expires_at',
         'last_error',
+        'duration_seconds',
     ];
 
     protected $casts = [
@@ -25,5 +26,6 @@ class AiJobDispatch extends CentralModel
         'priority' => 'integer',
         'attempts' => 'integer',
         'lease_expires_at' => 'datetime',
+        'duration_seconds' => 'integer',
     ];
 }

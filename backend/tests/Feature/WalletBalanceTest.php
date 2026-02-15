@@ -34,6 +34,17 @@ class WalletBalanceTest extends TestCase
             Artisan::call('tenancy:pools-migrate');
             static::$prepared = true;
         }
+
+        $this->resetState();
+    }
+
+    private function resetState(): void
+    {
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('users')->truncate();
+        DB::connection('central')->table('tenants')->truncate();
+        DB::connection('central')->table('personal_access_tokens')->truncate();
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
     public function test_wallet_returns_balance_and_auto_creates_wallet(): void

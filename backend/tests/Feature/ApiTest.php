@@ -56,7 +56,7 @@ class ApiTest extends TestCase
         $registerEndpoint = '/api/register';
 
         $email = 'test+' . uniqid() . '@test.com';
-        $password = '123456';
+        $password = '12345678';
 
         $registerResponse = $this->post($registerEndpoint, [
             'name' => 'Test User',

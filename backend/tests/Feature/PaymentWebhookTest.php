@@ -41,6 +41,17 @@ class PaymentWebhookTest extends TestCase
 
         config(['queue.default' => 'sync']);
         $this->setPaymentWebhookSecret('');
+
+        $this->resetState();
+    }
+
+    private function resetState(): void
+    {
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('users')->truncate();
+        DB::connection('central')->table('tenants')->truncate();
+        DB::connection('central')->table('personal_access_tokens')->truncate();
+        DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
     public function test_successful_payment_creates_payment_and_credits_tokens(): void

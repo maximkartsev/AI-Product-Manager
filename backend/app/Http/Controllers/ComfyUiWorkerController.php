@@ -612,6 +612,16 @@ class ComfyUiWorkerController extends BaseController
         $dispatch->status = 'completed';
         $dispatch->worker_id = $workerId ?? $dispatch->worker_id;
         $dispatch->lease_expires_at = null;
+
+        // Compute duration from audit log poll event
+        $pollTime = \App\Models\WorkerAuditLog::query()
+            ->where('dispatch_id', $dispatch->id)
+            ->where('event', 'poll')
+            ->min('created_at');
+        if ($pollTime) {
+            $dispatch->duration_seconds = (int) abs(now()->diffInSeconds(\Carbon\Carbon::parse($pollTime)));
+        }
+
         $dispatch->save();
     }
 

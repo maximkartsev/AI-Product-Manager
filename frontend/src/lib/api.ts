@@ -1273,6 +1273,54 @@ export function getWorkerAuditLogs(workerId: number, params: { page?: number; pe
   return apiGet<AdminAuditLogsIndexData>(`/admin/workers/${workerId}/audit-logs`, query);
 }
 
+// ---- Admin Workload
+
+export type WorkloadWorkflowStats = {
+  queued: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  avg_duration_seconds: number | null;
+  total_duration_seconds: number | null;
+};
+
+export type WorkloadWorkflow = {
+  id: number;
+  name: string;
+  slug: string;
+  is_active: boolean;
+  stats: WorkloadWorkflowStats;
+  worker_ids: number[];
+};
+
+export type WorkloadWorker = {
+  id: number;
+  worker_id: string;
+  display_name: string | null;
+  is_approved: boolean;
+  is_draining: boolean;
+  current_load: number;
+  max_concurrency: number;
+  last_seen_at: string | null;
+};
+
+export type WorkloadData = {
+  workflows: WorkloadWorkflow[];
+  workers: WorkloadWorker[];
+};
+
+export function getWorkload(period?: string): Promise<WorkloadData> {
+  const query: Query = { period: period ?? undefined };
+  return apiGet<WorkloadData>("/admin/workload", query);
+}
+
+export function assignWorkflowWorkers(workflowId: number, workerIds: number[]): Promise<unknown> {
+  return apiRequest(`/admin/workload/workflows/${workflowId}/workers`, {
+    method: "PUT",
+    body: { worker_ids: workerIds },
+  });
+}
+
 // ---- Admin Audit Logs (global)
 
 export async function getAdminAuditLogs(params: {

@@ -23,6 +23,7 @@ use Tests\TestCase;
 class ComfyUiWorkerDispatchTest extends TestCase
 {
     protected static bool $prepared = false;
+    private string $defaultToken;
 
     protected function setUp(): void
     {
@@ -45,12 +46,21 @@ class ComfyUiWorkerDispatchTest extends TestCase
             static::$prepared = true;
         }
 
-        config(['services.comfyui.worker_token' => 'test-token']);
-        config(['services.comfyui.default_provider' => 'local']);
+        config(['services.comfyui.default_provider' => 'self_hosted']);
         config(['services.comfyui.presigned_ttl_seconds' => 60]);
         config(['services.comfyui.max_attempts' => 3]);
 
         $this->resetState();
+
+        $this->defaultToken = 'default-worker-token-' . uniqid();
+        ComfyUiWorker::query()->create([
+            'worker_id' => 'default-worker',
+            'token_hash' => hash('sha256', $this->defaultToken),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 5,
+        ]);
 
         app()->instance(PresignedUrlService::class, new class extends PresignedUrlService {
             public function downloadUrl(string $disk, string $path, int $ttlSeconds): string
@@ -101,7 +111,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $first->assertStatus(200)
@@ -113,7 +123,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $second->assertStatus(200)
@@ -121,7 +131,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
 
         $dispatch->refresh();
         $this->assertSame('leased', $dispatch->status);
-        $this->assertSame('worker-1', $dispatch->worker_id);
+        $this->assertSame('default-worker', $dispatch->worker_id);
         $this->assertNotEmpty($dispatch->lease_token);
     }
 
@@ -140,11 +150,11 @@ class ComfyUiWorkerDispatchTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/worker/poll', [
-            'worker_id' => 'worker-1',
+            'worker_id' => 'default-worker',
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $response->assertStatus(200)
@@ -152,7 +162,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
 
         $dispatch->refresh();
         $this->assertSame('leased', $dispatch->status);
-        $this->assertSame('worker-1', $dispatch->worker_id);
+        $this->assertSame('default-worker', $dispatch->worker_id);
         $this->assertNotSame('old-token', $dispatch->lease_token);
         $this->assertSame(2, $dispatch->attempts);
     }
@@ -174,7 +184,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $poll->assertStatus(200);
@@ -193,12 +203,12 @@ class ComfyUiWorkerDispatchTest extends TestCase
         ];
 
         $first = $this->postJson('/api/worker/complete', $completePayload, [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
         $first->assertStatus(200);
 
         $second = $this->postJson('/api/worker/complete', $completePayload, [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
         $second->assertStatus(200);
 
@@ -222,7 +232,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 1,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $response->assertStatus(200)
@@ -238,8 +248,11 @@ class ComfyUiWorkerDispatchTest extends TestCase
 
         $this->createDispatch($tenant->id, $job->id);
 
+        $drainToken = 'drain-token-' . uniqid();
         ComfyUiWorker::query()->create([
             'worker_id' => 'worker-drain',
+            'token_hash' => hash('sha256', $drainToken),
+            'is_approved' => true,
             'environment' => 'cloud',
             'max_concurrency' => 1,
             'current_load' => 0,
@@ -251,7 +264,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $drainToken,
         ]);
 
         $response->assertStatus(200)
@@ -272,7 +285,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $response->assertStatus(200)
@@ -289,12 +302,14 @@ class ComfyUiWorkerDispatchTest extends TestCase
 
         $this->createDispatch($tenant->id, $job->id);
 
+        $token = $this->createApprovedWorkerWithToken('worker-heartbeat');
+
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-heartbeat',
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $token,
         ]);
 
         $leaseToken = $poll->json('data.job.lease_token');
@@ -307,7 +322,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'lease_token' => $leaseToken,
             'worker_id' => 'worker-heartbeat',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $token,
         ])->assertStatus(200);
 
         $after = AiJobDispatch::query()->find($dispatchId);
@@ -330,21 +345,21 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'dispatch_id' => $dispatch->id,
             'lease_token' => 'invalid',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(404);
 
         $this->postJson('/api/worker/complete', [
             'dispatch_id' => $dispatch->id,
             'lease_token' => 'invalid',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(404);
 
         $this->postJson('/api/worker/fail', [
             'dispatch_id' => $dispatch->id,
             'lease_token' => 'invalid',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(404);
     }
 
@@ -365,7 +380,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $dispatchId = $poll->json('data.job.dispatch_id');
@@ -377,7 +392,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-fail',
             'error_message' => 'boom',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $this->postJson('/api/worker/fail', [
@@ -386,7 +401,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-fail',
             'error_message' => 'boom',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $this->assertSame(1, $this->getJobTransactionCount($tenant->id, $job->id, 'JOB_REFUND'));
@@ -417,7 +432,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $dispatchId = $poll->json('data.job.dispatch_id');
@@ -429,7 +444,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-complete',
             'provider_job_id' => 'prompt-1',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $this->postJson('/api/worker/fail', [
@@ -438,7 +453,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-complete',
             'error_message' => 'late-fail',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $job = $this->fetchTenantJob($tenant, $job->id);
@@ -463,7 +478,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $dispatchId = $poll->json('data.job.dispatch_id');
@@ -475,7 +490,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-fail-first',
             'error_message' => 'fail-first',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $this->postJson('/api/worker/complete', [
@@ -484,7 +499,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-fail-first',
             'provider_job_id' => 'prompt-late',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $job = $this->fetchTenantJob($tenant, $job->id);
@@ -512,7 +527,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $dispatchId = $poll->json('data.job.dispatch_id');
@@ -528,7 +543,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
                 'mime_type' => 'video/mp4',
             ],
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $file = $this->fetchTenantFile($tenant, $outputFileId);
@@ -554,7 +569,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $dispatchId = $poll->json('data.job.dispatch_id');
@@ -566,7 +581,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-no-output',
             'provider_job_id' => 'prompt-3',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $job = $this->fetchTenantJob($tenant, $job->id);
@@ -585,7 +600,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $response->assertStatus(200)
@@ -614,7 +629,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $poll->assertStatus(200)
@@ -632,11 +647,11 @@ class ComfyUiWorkerDispatchTest extends TestCase
 
         $localPoll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-local',
-            'providers' => ['local'],
+            'providers' => ['self_hosted'],
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $localPoll->assertStatus(200)
@@ -648,7 +663,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $cloudPoll->assertStatus(200)
@@ -672,7 +687,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $response->assertStatus(200)
@@ -718,7 +733,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $dispatchId = $poll->json('data.job.dispatch_id');
@@ -730,7 +745,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-isolation',
             'provider_job_id' => 'prompt-iso',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $jobB = $this->fetchTenantJob($tenantB, $jobB->id);
@@ -861,12 +876,14 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
         $this->createDispatch($tenant->id, $job->id);
 
+        $token = $this->createApprovedWorkerWithToken('audit-poll-worker');
+
         $this->postJson('/api/worker/poll', [
             'worker_id' => 'audit-poll-worker',
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $token,
         ])->assertStatus(200);
 
         $log = WorkerAuditLog::query()
@@ -886,12 +903,14 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->reserveTokens($tenant, $job, 5);
         $this->createDispatch($tenant->id, $job->id);
 
+        $token = $this->createApprovedWorkerWithToken('audit-complete-worker');
+
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'audit-complete-worker',
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $token,
         ]);
 
         $this->postJson('/api/worker/complete', [
@@ -900,7 +919,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'audit-complete-worker',
             'provider_job_id' => 'prompt-audit',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $token,
         ])->assertStatus(200);
 
         $log = WorkerAuditLog::query()
@@ -920,12 +939,14 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->reserveTokens($tenant, $job, 5);
         $this->createDispatch($tenant->id, $job->id);
 
+        $token = $this->createApprovedWorkerWithToken('audit-fail-worker');
+
         $poll = $this->postJson('/api/worker/poll', [
             'worker_id' => 'audit-fail-worker',
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $token,
         ]);
 
         $this->postJson('/api/worker/fail', [
@@ -934,7 +955,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'audit-fail-worker',
             'error_message' => 'GPU out of memory',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $token,
         ])->assertStatus(200);
 
         $log = WorkerAuditLog::query()
@@ -974,7 +995,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $response->assertStatus(200);
@@ -1007,7 +1028,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $response = $this->postJson('/api/worker/complete', [
@@ -1016,7 +1037,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'validation-worker',
             'provider_job_id' => 'prompt-val',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         // Should still return 200 despite validation crash
@@ -1038,7 +1059,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $this->postJson('/api/worker/fail', [
@@ -1047,7 +1068,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'sanitize-worker',
             'error_message' => json_encode(['exception_message' => 'Out of memory']),
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $dispatch = AiJobDispatch::query()->find($poll->json('data.job.dispatch_id'));
@@ -1069,7 +1090,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 1,
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
         $this->postJson('/api/worker/fail', [
@@ -1078,7 +1099,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'empty-err-worker',
             'error_message' => '',
         ], [
-            'Authorization' => 'Bearer test-token',
+            'Authorization' => 'Bearer ' . $this->defaultToken,
         ])->assertStatus(200);
 
         $dispatch = AiJobDispatch::query()->find($poll->json('data.job.dispatch_id'));
@@ -1121,6 +1142,20 @@ class ComfyUiWorkerDispatchTest extends TestCase
     // ========================================================================
     // Helper methods
     // ========================================================================
+
+    private function createApprovedWorkerWithToken(string $workerId): string
+    {
+        $token = 'test-token-' . $workerId . '-' . uniqid();
+        ComfyUiWorker::query()->create([
+            'worker_id' => $workerId,
+            'token_hash' => hash('sha256', $token),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 5,
+        ]);
+        return $token;
+    }
 
     private function createUserTenant(): array
     {
@@ -1218,7 +1253,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $defaults = [
             'tenant_id' => $tenantId,
             'tenant_job_id' => $jobId,
-            'provider' => config('services.comfyui.default_provider', 'local'),
+            'provider' => config('services.comfyui.default_provider', 'self_hosted'),
             'status' => 'queued',
             'priority' => 0,
             'attempts' => 0,

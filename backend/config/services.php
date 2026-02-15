@@ -57,8 +57,7 @@ return [
     ],
 
     'comfyui' => [
-        'worker_token' => env('COMFYUI_WORKER_TOKEN'),
-        'default_provider' => env('COMFYUI_DEFAULT_PROVIDER', 'local'),
+        'default_provider' => env('COMFYUI_DEFAULT_PROVIDER', 'self_hosted'),
         'lease_ttl_seconds' => env('COMFYUI_LEASE_TTL_SECONDS', 900),
         'max_attempts' => env('COMFYUI_MAX_ATTEMPTS', 3),
         'presigned_ttl_seconds' => env('COMFYUI_PRESIGNED_TTL_SECONDS', 900),
@@ -70,6 +69,11 @@ return [
             'video/webm',
             'video/x-matroska',
         ],
+        'fleet_secret' => env('COMFYUI_FLEET_SECRET'),
+        'max_fleet_workers' => env('COMFYUI_MAX_FLEET_WORKERS', 50),
+        'stale_worker_hours' => env('COMFYUI_STALE_WORKER_HOURS', 2),
+        'validate_asg_instance' => env('COMFYUI_VALIDATE_ASG_INSTANCE', false),
+        'aws_region' => env('COMFYUI_AWS_REGION', 'us-east-1'),
     ],
 
 ];

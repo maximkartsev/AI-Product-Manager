@@ -32,8 +32,6 @@ class EnsureWorkerTokenTest extends TestCase
             static::$prepared = true;
         }
 
-        config(['services.comfyui.worker_token' => 'shared-secret']);
-
         $this->resetState();
     }
 
@@ -103,14 +101,14 @@ class EnsureWorkerTokenTest extends TestCase
             ->assertJsonPath('message', 'Worker not approved.');
     }
 
-    public function test_shared_token_fallback_works(): void
+    public function test_unknown_token_returns_401(): void
     {
         $response = $this->postJson('/api/worker/poll', $this->pollPayload(), [
-            'Authorization' => 'Bearer shared-secret',
+            'Authorization' => 'Bearer some-valid-looking-but-unregistered-token',
         ]);
 
-        // Shared token should pass middleware
-        $response->assertStatus(200);
+        $response->assertStatus(401)
+            ->assertJsonPath('message', 'Unauthorized.');
     }
 
     public function test_no_token_returns_401(): void
@@ -138,11 +136,15 @@ class EnsureWorkerTokenTest extends TestCase
             'is_approved' => true,
         ]);
 
-        // Bearer is the per-worker token (found in DB → authenticated)
-        // X-Worker-Token is the shared secret (should be ignored because Bearer is used first)
+        $this->createWorker([
+            'token_hash' => hash('sha256', 'x-header-token'),
+            'is_approved' => true,
+        ]);
+
+        // Bearer header should take priority over X-Worker-Token
         $response = $this->postJson('/api/worker/poll', $this->pollPayload(), [
             'Authorization' => 'Bearer per-worker-bearer',
-            'X-Worker-Token' => 'shared-secret',
+            'X-Worker-Token' => 'x-header-token',
         ]);
 
         $response->assertStatus(200);

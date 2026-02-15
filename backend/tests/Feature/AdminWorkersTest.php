@@ -392,4 +392,60 @@ class AdminWorkersTest extends TestCase
     {
         $this->adminGet('/api/admin/workers/99999/audit-logs')->assertStatus(404);
     }
+
+    public function test_store_creates_worker_and_returns_token(): void
+    {
+        $response = $this->adminPost('/api/admin/workers', [
+            'worker_id' => 'new-gpu-node',
+            'display_name' => 'New GPU Node',
+        ]);
+
+        $response->assertStatus(201);
+
+        $token = $response->json('data.token');
+        $this->assertNotNull($token);
+        $this->assertSame(64, strlen($token));
+
+        $worker = ComfyUiWorker::query()->where('worker_id', 'new-gpu-node')->first();
+        $this->assertNotNull($worker);
+        $this->assertSame('New GPU Node', $worker->display_name);
+        $this->assertFalse($worker->is_approved);
+        $this->assertSame(hash('sha256', $token), $worker->token_hash);
+
+        // Verify audit log
+        $log = WorkerAuditLog::query()
+            ->where('worker_id', $worker->id)
+            ->where('event', 'created')
+            ->first();
+        $this->assertNotNull($log);
+    }
+
+    public function test_store_rejects_duplicate_worker_id(): void
+    {
+        $this->createWorker(['worker_id' => 'dup-worker']);
+
+        $response = $this->adminPost('/api/admin/workers', [
+            'worker_id' => 'dup-worker',
+        ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_store_requires_admin(): void
+    {
+        $this->postJson('/api/admin/workers', [
+            'worker_id' => 'unauth-worker',
+        ])->assertStatus(401);
+
+        $nonAdmin = User::factory()->create(['is_admin' => false]);
+        Tenant::query()->create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $nonAdmin->id,
+            'db_pool' => 'tenant_pool_1',
+        ]);
+        Sanctum::actingAs($nonAdmin);
+        $this->postJson('/api/admin/workers', [
+            'worker_id' => 'unauth-worker',
+        ])->assertStatus(403);
+    }
 }

@@ -787,7 +787,6 @@ export type AdminWorker = {
   id: number;
   worker_id?: string;
   display_name?: string | null;
-  environment?: string | null;
   capabilities?: Record<string, unknown> | null;
   max_concurrency?: number;
   current_load?: number;
@@ -795,6 +794,7 @@ export type AdminWorker = {
   is_draining?: boolean;
   is_approved?: boolean;
   last_ip?: string | null;
+  registration_source?: string | null;
   workflows_count?: number;
   workflows?: AdminWorkflow[];
   recent_audit_logs?: WorkerAuditLog[];

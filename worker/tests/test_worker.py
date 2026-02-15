@@ -1,7 +1,5 @@
-import json
 import os
 import sys
-import tempfile
 import unittest
 from unittest import mock
 
@@ -27,9 +25,8 @@ class DummyResponse:
 
 class WorkerTests(unittest.TestCase):
     def setUp(self):
-        worker.COMFY_PROVIDER = "local"
+        worker.COMFY_PROVIDER = "self_hosted"
         worker.COMFY_PROVIDERS = ""
-        worker.COMFY_MANAGED_API_KEY = ""
         worker.COMFY_CLOUD_API_KEY = "cloud-key"
         worker.COMFY_CLOUD_BASE_URL = "https://cloud.comfy.org"
 
@@ -117,42 +114,6 @@ class WorkerTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             worker.run_comfyui({"node": {}}, None)
-
-    def test_managed_provider_injects_api_key(self):
-        worker.COMFY_PROVIDER = "managed"
-        worker.COMFY_MANAGED_API_KEY = "managed-key"
-
-        input_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        input_file.write(b"input")
-        input_file.close()
-
-        output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        output_file.write(b"output")
-        output_file.close()
-
-        captured = {}
-
-        def fake_run_comfyui(workflow, output_node_id, extra_data=None):
-            captured["extra_data"] = extra_data
-            return "prompt-1", {"node": {"videos": [{"filename": "out.mp4", "subfolder": "", "type": "output"}]}}
-
-        with mock.patch("comfyui_worker.download_input", return_value=input_file.name), \
-                mock.patch("comfyui_worker.run_comfyui", side_effect=fake_run_comfyui), \
-                mock.patch("comfyui_worker.download_comfyui_output", return_value=output_file.name), \
-                mock.patch("comfyui_worker.upload_output"), \
-                mock.patch("comfyui_worker.complete_job"):
-            worker.process_job({
-                "dispatch_id": 1,
-                "lease_token": "token",
-                "provider": "managed",
-                "input_url": "https://example.com/input.mp4",
-                "output_url": "https://example.com/output.mp4",
-                "output_headers": {},
-                "input_payload": {"workflow": {"node": {}}, "output_node_id": None},
-            })
-
-        self.assertIsNotNone(captured.get("extra_data"))
-        self.assertEqual(captured["extra_data"].get("api_key"), "managed-key")
 
     @mock.patch("comfyui_worker.requests.request")
     def test_cloud_submit_prompt_uses_api_key(self, mock_request):

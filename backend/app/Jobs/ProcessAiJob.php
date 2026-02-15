@@ -46,7 +46,7 @@ class ProcessAiJob implements ShouldQueue
                 'tenant_id' => (string) $job->tenant_id,
                 'tenant_job_id' => $job->id,
             ], [
-                'provider' => $job->provider ?: config('services.comfyui.default_provider', 'local'),
+                'provider' => $job->provider ?: config('services.comfyui.default_provider', 'self_hosted'),
                 'status' => 'queued',
                 'priority' => 0,
                 'attempts' => 0,

@@ -1,9 +1,12 @@
 <?php
 
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -67,5 +70,12 @@ return Application::configure(basePath: dirname(__DIR__))
         // Empty string prevents the fallback
         \Illuminate\Auth\AuthenticationException::redirectUsing(function ($request) {
             return '';
+        });
+    })->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
+        $schedule->command('workers:publish-metrics')->everyMinute();
+        $schedule->command('workers:cleanup-stale')->everyFifteenMinutes();
+    })->booted(function () {
+        RateLimiter::for('fleet-register', function (Request $request) {
+            return Limit::perMinute(10)->by($request->ip());
         });
     })->create();

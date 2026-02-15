@@ -19,7 +19,7 @@ class WorkersController extends BaseController
 
         [$perPage, $page, $fieldsToSelect, $searchStr, $from] = $this->buildParamsFromRequest($request, $query);
 
-        $searchFields = ['worker_id', 'display_name', 'environment'];
+        $searchFields = ['worker_id', 'display_name'];
         $this->addSearchCriteria($searchStr, $query, $searchFields);
 
         $orderStr = $request->get('order', 'id:asc');

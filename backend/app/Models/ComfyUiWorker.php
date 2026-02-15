@@ -12,7 +12,6 @@ class ComfyUiWorker extends CentralModel
         'worker_id',
         'token_hash',
         'display_name',
-        'environment',
         'capabilities',
         'max_concurrency',
         'current_load',
@@ -20,6 +19,7 @@ class ComfyUiWorker extends CentralModel
         'is_draining',
         'is_approved',
         'last_ip',
+        'registration_source',
     ];
 
     protected $casts = [

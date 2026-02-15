@@ -61,7 +61,7 @@ class AiJobController extends BaseController
             if (in_array($existing->status, ['queued', 'processing'], true)) {
                 $existingProvider = $existing->provider ?: (string) $request->input(
                     'provider',
-                    config('services.comfyui.default_provider', 'local')
+                    config('services.comfyui.default_provider', 'self_hosted')
                 );
                 $dispatch = $this->ensureDispatch(
                     $existing,
@@ -79,8 +79,12 @@ class AiJobController extends BaseController
             return $this->sendError('Effect not found.', [], 404);
         }
 
+        if (!$effect->workflow_id) {
+            return $this->sendError('Effect has no configured workflow.', [], 422);
+        }
+
         $tokenCost = (int) ceil((float) $effect->credits_cost);
-        $provider = (string) $request->input('provider', config('services.comfyui.default_provider', 'local'));
+        $provider = (string) $request->input('provider', config('services.comfyui.default_provider', 'self_hosted'));
         $videoId = $request->input('video_id');
         $inputFileId = $request->input('input_file_id');
 
@@ -209,7 +213,7 @@ class AiJobController extends BaseController
                 'tenant_id' => (string) $job->tenant_id,
                 'tenant_job_id' => $job->id,
             ], [
-                'provider' => $provider ?: ($job->provider ?: config('services.comfyui.default_provider', 'local')),
+                'provider' => $provider ?: ($job->provider ?: config('services.comfyui.default_provider', 'self_hosted')),
                 'workflow_id' => $workflowId,
                 'status' => 'queued',
                 'priority' => $priority,

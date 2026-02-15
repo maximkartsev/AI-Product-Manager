@@ -22,27 +22,21 @@ class EnsureWorkerToken
         $tokenHash = hash('sha256', $provided);
         $worker = ComfyUiWorker::query()->where('token_hash', $tokenHash)->first();
 
-        if ($worker) {
-            if (!$worker->is_approved) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Worker not approved.',
-                ], 401);
-            }
-
-            $request->attributes->set('authenticated_worker', $worker);
-            return $next($request);
+        if (!$worker) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized.',
+            ], 401);
         }
 
-        // 2. Fallback: shared token via hash_equals (backward compat)
-        $expected = (string) config('services.comfyui.worker_token');
-        if ($expected !== '' && hash_equals($expected, $provided)) {
-            return $next($request);
+        if (!$worker->is_approved) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Worker not approved.',
+            ], 401);
         }
 
-        return response()->json([
-            'success' => false,
-            'message' => 'Unauthorized.',
-        ], 401);
+        $request->attributes->set('authenticated_worker', $worker);
+        return $next($request);
     }
 }

@@ -7,6 +7,7 @@ use App\Http\Middleware\EnsureTenantMatchesUser;
 use App\Http\Middleware\InitializeTenancyByDomainOrUser;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureWorkerToken;
+use App\Http\Middleware\EnsureFleetSecret;
 use App\Http\Controllers\ComfyUiWorkerController;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
 use App\Http\Controllers\AiJobController;
@@ -73,12 +74,21 @@ Route::get('gallery/{id}', [GalleryController::class,'show']);
 // Central-domain webhooks (tenant is resolved from the central purchase record).
 Route::post('webhooks/payments', [PaymentWebhookController::class, 'handle']);
 
+// Fleet self-registration (fleet-secret protected, rate-limited).
+Route::middleware([EnsureFleetSecret::class, 'throttle:fleet-register'])
+    ->prefix('worker')
+    ->group(function () {
+        Route::post('register', [ComfyUiWorkerController::class, 'register']);
+    });
+
 // Worker endpoints (central, token-protected).
 Route::middleware([EnsureWorkerToken::class])->prefix('worker')->group(function () {
     Route::post('poll', [ComfyUiWorkerController::class, 'poll']);
     Route::post('heartbeat', [ComfyUiWorkerController::class, 'heartbeat']);
     Route::post('complete', [ComfyUiWorkerController::class, 'complete']);
     Route::post('fail', [ComfyUiWorkerController::class, 'fail']);
+    Route::post('requeue', [ComfyUiWorkerController::class, 'requeue']);
+    Route::post('deregister', [ComfyUiWorkerController::class, 'deregister']);
 });
 
 /**

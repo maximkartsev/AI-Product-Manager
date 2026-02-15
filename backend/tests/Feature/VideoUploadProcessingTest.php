@@ -42,7 +42,6 @@ class VideoUploadProcessingTest extends TestCase
             static::$prepared = true;
         }
 
-        config(['services.comfyui.worker_token' => 'test-token']);
         config(['services.comfyui.upload_max_bytes' => 1024 * 1024]);
         config(['services.comfyui.presigned_ttl_seconds' => 900]);
         config(['services.comfyui.workflow_disk' => 's3']);

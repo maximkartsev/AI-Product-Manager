@@ -135,7 +135,7 @@ class WorkloadTest extends TestCase
         $defaults = [
             'tenant_id' => $this->tenant->id,
             'tenant_job_id' => ++static::$tenantJobSeq,
-            'provider' => 'local',
+            'provider' => 'self_hosted',
             'status' => 'queued',
             'priority' => 0,
             'attempts' => 0,

@@ -2,7 +2,9 @@ import hashlib
 import json
 import mimetypes
 import os
+import signal
 import tempfile
+import threading
 import time
 import uuid
 from typing import Any, Dict, Optional, Tuple, List
@@ -14,19 +16,28 @@ import requests
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost")
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4()}")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
+FLEET_SECRET = os.environ.get("FLEET_SECRET", "")
 
-COMFY_PROVIDER = os.environ.get("COMFY_PROVIDER", "local").lower()
+COMFY_PROVIDER = os.environ.get("COMFY_PROVIDER", "self_hosted").lower()
 COMFY_PROVIDERS = os.environ.get("COMFY_PROVIDERS", "")
 
 COMFYUI_BASE_URL = os.environ.get("COMFYUI_BASE_URL", "http://localhost:8188")
 COMFY_CLOUD_BASE_URL = os.environ.get("COMFY_CLOUD_BASE_URL", "https://cloud.comfy.org")
 COMFY_CLOUD_API_KEY = os.environ.get("COMFY_CLOUD_API_KEY", "")
-COMFY_MANAGED_API_KEY = os.environ.get("COMFY_MANAGED_API_KEY", "")
 
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "3"))
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "30"))
 MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "1"))
 CAPABILITIES = os.environ.get("CAPABILITIES", "")
+
+# ASG / Spot instance support
+ASG_NAME = os.environ.get("ASG_NAME", "")
+WORKFLOW_SLUGS = os.environ.get("WORKFLOW_SLUGS", "")
+
+# Shutdown state
+_shutdown_requested = False
+_shutdown_reason = ""
+_current_job: Optional[Dict[str, Any]] = None
 
 # Asset upload cache: (endpoint, content_hash) → comfyui_filename
 _asset_cache: Dict[Tuple[str, str], str] = {}
@@ -76,7 +87,101 @@ def _parse_providers() -> List[str]:
         return [provider.strip() for provider in COMFY_PROVIDERS.split(",") if provider.strip()]
     if COMFY_PROVIDER:
         return [COMFY_PROVIDER]
-    return ["local"]
+    return ["self_hosted"]
+
+
+def _check_spot_interruption() -> bool:
+    """Check EC2 instance metadata for Spot interruption notice (2-min warning)."""
+    try:
+        tok = requests.put(
+            "http://169.254.169.254/latest/api/token",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "30"},
+            timeout=1,
+        ).text
+        resp = requests.get(
+            "http://169.254.169.254/latest/meta-data/spot/instance-action",
+            headers={"X-aws-ec2-metadata-token": tok},
+            timeout=1,
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _spot_monitor() -> None:
+    """Background thread polling for Spot interruption every 5 seconds."""
+    global _shutdown_requested, _shutdown_reason
+    while not _shutdown_requested:
+        if _check_spot_interruption():
+            _shutdown_requested = True
+            _shutdown_reason = "spot_interruption"
+            print("[worker] Spot interruption notice received!")
+            break
+        time.sleep(5)
+
+
+def _requeue_job(dispatch_id: int, lease_token: str, reason: str) -> None:
+    """Ask backend to requeue job (don't count as failed attempt)."""
+    try:
+        requests.post(
+            f"{API_BASE_URL}/api/worker/requeue",
+            json={"dispatch_id": dispatch_id, "lease_token": lease_token, "reason": reason},
+            headers=_backend_headers(),
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[worker] Requeue failed: {e}")
+
+
+def _set_scale_in_protection(protected: bool) -> None:
+    """Set ASG scale-in protection for this instance."""
+    if not ASG_NAME:
+        return
+    try:
+        import boto3
+        client = boto3.client("autoscaling")
+        client.set_instance_protection(
+            InstanceIds=[WORKER_ID],
+            AutoScalingGroupName=ASG_NAME,
+            ProtectedFromScaleIn=protected,
+        )
+    except Exception as e:
+        print(f"[worker] Scale-in protection error: {e}")
+
+
+def _fleet_register() -> Tuple[str, str]:
+    """Register this worker with the backend via fleet secret. Returns (worker_id, token)."""
+    slugs = [s.strip() for s in WORKFLOW_SLUGS.split(",") if s.strip()] if WORKFLOW_SLUGS else []
+    payload: Dict[str, Any] = {
+        "worker_id": WORKER_ID,
+        "display_name": WORKER_ID,
+        "capabilities": _parse_capabilities(),
+        "max_concurrency": MAX_CONCURRENCY,
+        "workflow_slugs": slugs,
+    }
+
+    resp = requests.post(
+        f"{API_BASE_URL}/api/worker/register",
+        json=payload,
+        headers={"Content-Type": "application/json", "X-Fleet-Secret": FLEET_SECRET},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data", {})
+    return data["worker_id"], data["token"]
+
+
+def _fleet_deregister() -> None:
+    """Deregister this worker from the backend."""
+    try:
+        requests.post(
+            f"{API_BASE_URL}/api/worker/deregister",
+            json={},
+            headers=_backend_headers(),
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[worker] Deregister failed: {e}")
 
 
 def poll(current_load: int) -> Optional[Dict[str, Any]]:
@@ -488,8 +593,6 @@ def process_job(job: Dict[str, Any]) -> None:
 
             workflow = prepare_workflow(input_payload, input_reference, asset_placeholder_map)
             extra_data = dict(input_payload.get("extra_data") or {})
-            if COMFY_MANAGED_API_KEY:
-                extra_data.setdefault("api_key_comfy_org", COMFY_MANAGED_API_KEY)
             prompt_id = cloud_submit_prompt(workflow, extra_data or None)
             cloud_wait_for_job(prompt_id)
             outputs = cloud_fetch_outputs(prompt_id)
@@ -500,16 +603,11 @@ def process_job(job: Dict[str, Any]) -> None:
             complete_job(dispatch_id, lease_token, prompt_id, output_path)
             return
 
+        # self_hosted: run on local ComfyUI instance
         input_path = download_input(input_url) if input_url else None
         workflow = prepare_workflow(input_payload, input_path, asset_placeholder_map)
 
         extra_data = input_payload.get("extra_data")
-        if provider == "managed":
-            if not COMFY_MANAGED_API_KEY:
-                raise RuntimeError("COMFY_MANAGED_API_KEY is required for managed provider.")
-            extra_data = dict(extra_data or {})
-            extra_data.setdefault("api_key_comfy_org", COMFY_MANAGED_API_KEY)
-
         provider_job_id, outputs = run_comfyui(workflow, output_node_id, extra_data)
         output_file_info = extract_output_file(outputs, output_node_id)
         output_path = download_comfyui_output(output_file_info)
@@ -522,14 +620,41 @@ def process_job(job: Dict[str, Any]) -> None:
 
 
 def main() -> None:
+    global WORKER_ID, WORKER_TOKEN, _shutdown_requested, _shutdown_reason, _current_job
+
+    # SIGTERM handler for graceful shutdown
+    def _handle_sigterm(signum, frame):
+        global _shutdown_requested, _shutdown_reason
+        _shutdown_requested = True
+        if not _shutdown_reason:
+            _shutdown_reason = "sigterm"
+        print(f"[worker] Received SIGTERM, shutting down...")
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
+    # Fleet self-registration (ASG workers)
+    if FLEET_SECRET and not WORKER_TOKEN:
+        print(f"[worker] Fleet registration as {WORKER_ID}...")
+        WORKER_ID, WORKER_TOKEN = _fleet_register()
+        print(f"[worker] Registered as {WORKER_ID}")
+
+    print(f"[worker] Starting as {WORKER_ID}")
+
+    # Start Spot interruption monitor for ASG instances
+    if ASG_NAME:
+        threading.Thread(target=_spot_monitor, daemon=True).start()
+
     current_load = 0
-    while True:
+    while not _shutdown_requested:
         try:
+            _set_scale_in_protection(False)
             job = poll(current_load)
             if not job:
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            _set_scale_in_protection(True)
+            _current_job = job
             current_load += 1
             last_heartbeat = time.time()
 
@@ -542,11 +667,28 @@ def main() -> None:
                     process_job(job)
                     break
             except Exception as exc:
-                fail_job(job["dispatch_id"], job["lease_token"], str(exc))
+                if _shutdown_requested and _shutdown_reason == "spot_interruption":
+                    _requeue_job(job["dispatch_id"], job["lease_token"], "spot_interruption")
+                else:
+                    fail_job(job["dispatch_id"], job["lease_token"], str(exc))
             finally:
+                _current_job = None
                 current_load = max(0, current_load - 1)
         except Exception:
             time.sleep(POLL_INTERVAL_SECONDS)
+
+    # Graceful shutdown
+    _set_scale_in_protection(False)
+
+    # If interrupted with an active job, requeue it
+    if _current_job and _shutdown_reason in ("spot_interruption", "capacity_rebalance"):
+        _requeue_job(_current_job["dispatch_id"], _current_job["lease_token"], _shutdown_reason)
+
+    # Deregister if fleet-registered
+    if FLEET_SECRET:
+        _fleet_deregister()
+
+    print(f"[worker] Shutdown complete. Reason: {_shutdown_reason or 'normal'}")
 
 
 if __name__ == "__main__":

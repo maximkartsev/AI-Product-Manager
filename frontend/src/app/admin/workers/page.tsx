@@ -145,6 +145,7 @@ export default function AdminWorkersPage() {
       if (columnKey === "last_seen_at") return <span className="text-muted-foreground">{relativeTime(worker.last_seen_at)}</span>;
       if (columnKey === "is_approved") return worker.is_approved ? <Badge label="Approved" variant="green" /> : <Badge label="Pending" variant="red" />;
       if (columnKey === "is_draining") return worker.is_draining ? <Badge label="Draining" variant="yellow" /> : <Badge label="Active" variant="gray" />;
+      if (columnKey === "registration_source") return worker.registration_source === "fleet" ? <Badge label="Fleet" variant="yellow" /> : <Badge label="Admin" variant="gray" />;
       if (columnKey === "current_load") return <span className="text-muted-foreground">{worker.current_load ?? 0}/{worker.max_concurrency ?? 1}</span>;
       if (columnKey === "workflows_count") return <span className="text-muted-foreground">{worker.workflows_count ?? 0}</span>;
       const value = worker[columnKey as keyof AdminWorker];
@@ -256,6 +257,10 @@ export default function AdminWorkersPage() {
                 <Button size="sm" variant={detailWorker.is_approved ? "destructive" : "default"} onClick={handleApproveToggle}>
                   {detailWorker.is_approved ? "Revoke" : "Approve"}
                 </Button>
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-xs text-muted-foreground">Source:</span>
+                {detailWorker.registration_source === "fleet" ? <Badge label="Fleet" variant="yellow" /> : <Badge label="Admin" variant="gray" />}
               </div>
             </AdminDetailSection>
 

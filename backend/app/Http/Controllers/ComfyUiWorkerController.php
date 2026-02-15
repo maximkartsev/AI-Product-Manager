@@ -9,6 +9,7 @@ use App\Models\Effect;
 use App\Models\File;
 use App\Models\Tenant;
 use App\Models\Video;
+use App\Models\Workflow;
 use App\Services\OutputValidationService;
 use App\Services\PresignedUrlService;
 use App\Services\TokenLedgerService;
@@ -26,12 +27,195 @@ class ComfyUiWorkerController extends BaseController
     private const DEFAULT_LEASE_TTL_SECONDS = 900;
     private const DEFAULT_MAX_ATTEMPTS = 3;
 
+    /**
+     * Fleet self-registration: ASG workers register themselves to receive a token.
+     */
+    public function register(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'worker_id' => 'required|string|max:255',
+            'display_name' => 'string|nullable|max:255',
+            'capabilities' => 'array|nullable',
+            'max_concurrency' => 'integer|nullable|min:1',
+            'workflow_slugs' => 'required|array|min:1',
+            'workflow_slugs.*' => 'required|string|max:255|exists:workflows,slug',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $maxFleetWorkers = (int) config('services.comfyui.max_fleet_workers', 50);
+        $currentFleetCount = ComfyUiWorker::query()
+            ->where('registration_source', 'fleet')
+            ->count();
+
+        if ($currentFleetCount >= $maxFleetWorkers) {
+            return $this->sendError('Fleet worker limit reached.', [], 403);
+        }
+
+        $workerId = $request->input('worker_id');
+
+        // Prevent duplicate registration
+        $existing = ComfyUiWorker::query()->where('worker_id', $workerId)->first();
+        if ($existing) {
+            return $this->sendError('Worker already registered.', [], 409);
+        }
+
+        // Validate instance belongs to a known ASG (if worker_id looks like an EC2 instance ID)
+        if (str_starts_with($workerId, 'i-') && config('services.comfyui.validate_asg_instance', false)) {
+            try {
+                $asgClient = new \Aws\AutoScaling\AutoScalingClient([
+                    'region' => config('services.comfyui.aws_region', config('services.ses.region', 'us-east-1')),
+                    'version' => 'latest',
+                ]);
+                $result = $asgClient->describeAutoScalingInstances([
+                    'InstanceIds' => [$workerId],
+                ]);
+                if (empty($result['AutoScalingInstances'])) {
+                    return $this->sendError('Instance not found in any ASG.', [], 403);
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('ASG instance validation failed', [
+                    'worker_id' => $workerId,
+                    'error' => $e->getMessage(),
+                ]);
+                // Fail open — allow registration if AWS API is unreachable
+            }
+        }
+
+        $plainToken = Str::random(64);
+        $tokenHash = hash('sha256', $plainToken);
+
+        // Resolve workflow slugs to IDs — reject if none are valid/active
+        $slugs = (array) $request->input('workflow_slugs', []);
+        $workflowIds = Workflow::query()
+            ->whereIn('slug', $slugs)
+            ->where('is_active', true)
+            ->pluck('id')
+            ->toArray();
+
+        if (empty($workflowIds)) {
+            return $this->sendError('No valid active workflows found for provided slugs.', [], 422);
+        }
+
+        $worker = ComfyUiWorker::query()->create([
+            'worker_id' => $workerId,
+            'token_hash' => $tokenHash,
+            'display_name' => $request->input('display_name', $workerId),
+            'capabilities' => $request->input('capabilities'),
+            'max_concurrency' => $request->input('max_concurrency', 1),
+            'current_load' => 0,
+            'last_seen_at' => now(),
+            'is_draining' => false,
+            'is_approved' => true,
+            'last_ip' => $request->ip(),
+            'registration_source' => 'fleet',
+        ]);
+
+        $worker->workflows()->sync($workflowIds);
+
+        try {
+            app(WorkerAuditService::class)->log(
+                'registered',
+                $worker->id,
+                $worker->worker_id,
+                null,
+                $request->ip(),
+                ['registration_source' => 'fleet', 'workflow_slugs' => $slugs]
+            );
+        } catch (\Throwable $e) {
+            // non-blocking
+        }
+
+        return $this->sendResponse([
+            'worker_id' => $worker->worker_id,
+            'token' => $plainToken,
+            'workflows_assigned' => $worker->workflows()->pluck('slug')->toArray(),
+        ], 'Worker registered');
+    }
+
+    /**
+     * Fleet deregistration: worker removes itself on shutdown.
+     */
+    public function deregister(Request $request): JsonResponse
+    {
+        $worker = $request->attributes->get('authenticated_worker');
+
+        try {
+            app(WorkerAuditService::class)->log(
+                'deregistered',
+                $worker->id,
+                $worker->worker_id,
+                null,
+                $request->ip()
+            );
+        } catch (\Throwable $e) {
+            // non-blocking
+        }
+
+        $worker->workflows()->detach();
+        $worker->delete();
+
+        return $this->sendResponse(null, 'Worker deregistered');
+    }
+
+    /**
+     * Requeue a job due to infrastructure interruption (Spot, preemption).
+     * Resets dispatch to 'queued' without counting as an attempt.
+     */
+    public function requeue(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'dispatch_id' => 'required|integer',
+            'lease_token' => 'required|string|max:64',
+            'reason' => 'required|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $dispatch = AiJobDispatch::query()->find($request->input('dispatch_id'));
+        if (!$dispatch || $dispatch->lease_token !== $request->input('lease_token')) {
+            return $this->sendError('Invalid dispatch or lease token.', [], 404);
+        }
+
+        $dispatch->update([
+            'status' => 'queued',
+            'worker_id' => null,
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'last_error' => 'Requeued: ' . $request->input('reason'),
+        ]);
+
+        if ($dispatch->attempts > 0) {
+            $dispatch->decrement('attempts');
+        }
+
+        $worker = $request->attributes->get('authenticated_worker');
+
+        try {
+            app(WorkerAuditService::class)->log(
+                'requeued',
+                $worker?->id,
+                $worker?->worker_id,
+                $dispatch->id,
+                $request->ip(),
+                ['reason' => $request->input('reason')]
+            );
+        } catch (\Throwable $e) {
+            // non-blocking
+        }
+
+        return $this->sendResponse(null, 'Job requeued');
+    }
+
     public function poll(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'worker_id' => 'string|required|max:255',
             'display_name' => 'string|nullable|max:255',
-            'environment' => 'string|nullable|max:50',
             'capabilities' => 'array|nullable',
             'providers' => 'array|nullable',
             'providers.*' => 'string|max:50',
@@ -43,18 +227,11 @@ class ComfyUiWorkerController extends BaseController
             return $this->sendError('Validation error.', $validator->errors(), 422);
         }
 
-        // Use authenticated worker from middleware if available (per-worker token auth)
         $authenticatedWorker = $request->attributes->get('authenticated_worker');
-        $worker = $authenticatedWorker
-            ? $this->updateWorkerFromRequest($authenticatedWorker, $request)
-            : $this->upsertWorker($request);
+        $worker = $this->updateWorkerFromRequest($authenticatedWorker, $request);
 
         if ($worker->is_draining) {
             return $this->sendResponse(['job' => null], 'Worker draining');
-        }
-
-        if (!$worker->is_approved && $authenticatedWorker) {
-            return $this->sendResponse(['job' => null], 'Worker not approved');
         }
 
         if ($worker->current_load >= $worker->max_concurrency) {
@@ -66,13 +243,12 @@ class ComfyUiWorkerController extends BaseController
 
         $providers = (array) $request->input(
             'providers',
-            [config('services.comfyui.default_provider', 'local')]
+            [config('services.comfyui.default_provider', 'self_hosted')]
         );
         $providers = array_values(array_filter($providers));
         if (empty($providers)) {
-            $providers = [config('services.comfyui.default_provider', 'local')];
+            $providers = [config('services.comfyui.default_provider', 'self_hosted')];
         }
-
         // Get worker's assigned workflow IDs for dispatch filtering
         $workflowIds = $worker->workflows()->pluck('workflows.id')->toArray();
 
@@ -353,7 +529,6 @@ class ComfyUiWorkerController extends BaseController
     {
         $worker->fill([
             'display_name' => $request->input('display_name') ?? $worker->display_name,
-            'environment' => $request->input('environment', $worker->environment ?? 'cloud'),
             'capabilities' => $request->input('capabilities') ?? $worker->capabilities,
             'max_concurrency' => $request->input('max_concurrency', $worker->max_concurrency ?? 1),
             'current_load' => $request->input('current_load', $worker->current_load ?? 0),
@@ -362,29 +537,6 @@ class ComfyUiWorkerController extends BaseController
         ]);
         $worker->save();
         return $worker;
-    }
-
-    private function upsertWorker(Request $request): ComfyUiWorker
-    {
-        $workerId = (string) $request->input('worker_id');
-
-        $defaults = [
-            'display_name' => $request->input('display_name'),
-            'environment' => $request->input('environment', 'cloud'),
-            'capabilities' => $request->input('capabilities'),
-            'max_concurrency' => $request->input('max_concurrency', 1),
-            'current_load' => $request->input('current_load', 0),
-            'last_seen_at' => now(),
-        ];
-
-        $worker = ComfyUiWorker::query()->where('worker_id', $workerId)->first();
-        if ($worker) {
-            $worker->fill($defaults);
-            $worker->save();
-            return $worker;
-        }
-
-        return ComfyUiWorker::query()->create(array_merge(['worker_id' => $workerId], $defaults));
     }
 
     private function leaseDispatch(string $workerId, int $leaseTtlSeconds, int $maxAttempts, array $providers, array $workflowIds = []): ?AiJobDispatch
@@ -405,13 +557,12 @@ class ComfyUiWorkerController extends BaseController
                         });
                 });
 
-            // If worker has assigned workflows, filter dispatches to those workflows
-            if (!empty($workflowIds)) {
-                $query->where(function ($q) use ($workflowIds) {
-                    $q->whereIn('workflow_id', $workflowIds)
-                      ->orWhereNull('workflow_id');
-                });
+            // Strict workflow filtering: workers only get jobs for their assigned workflows
+            if (empty($workflowIds)) {
+                // Worker has no workflow assignments — gets ZERO jobs
+                return null;
             }
+            $query->whereIn('workflow_id', $workflowIds);
 
             $dispatch = $query
                 ->orderByDesc('priority')

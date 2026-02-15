@@ -50,7 +50,7 @@ class Effect extends CentralModel
             'slug' => 'string|required|max:255|unique:effects,slug' . ($id ? ',' . $id : ''),
             'description' => 'string|nullable',
             'category_id' => 'numeric|nullable|exists:categories,id',
-            'workflow_id' => 'numeric|nullable|exists:workflows,id',
+            'workflow_id' => 'numeric|required|exists:workflows,id',
             'property_overrides' => 'array|nullable',
             'tags' => 'array|nullable',
             'tags.*' => 'string|max:64',

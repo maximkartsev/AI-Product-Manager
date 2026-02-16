@@ -368,11 +368,4 @@ class WorkflowPayloadServiceTest extends TestCase
         $this->service->buildJobPayload($effect, [], null);
     }
 
-    public function test_build_job_payload_throws_when_effect_has_no_workflow(): void
-    {
-        $effect = $this->createEffect(['workflow_id' => null]);
-
-        $this->expectException(\RuntimeException::class);
-        $this->service->buildJobPayload($effect, [], null);
-    }
 }

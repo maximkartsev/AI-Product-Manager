@@ -60,6 +60,34 @@ class WorkersController extends BaseController
         return $this->sendResponse($data, 'Worker retrieved successfully');
     }
 
+    public function store(Request $request, WorkerAuditService $audit): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'worker_id' => 'required|string|max:255|unique:comfy_ui_workers,worker_id',
+            'display_name' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation Error', $validator->errors(), 422);
+        }
+
+        $plaintext = Str::random(64);
+
+        $worker = ComfyUiWorker::query()->create([
+            'worker_id' => $request->input('worker_id'),
+            'token_hash' => hash('sha256', $plaintext),
+            'display_name' => $request->input('display_name'),
+            'is_approved' => false,
+        ]);
+
+        $audit->log('created', $worker->id, $worker->worker_id, null, $request->ip());
+
+        return $this->sendResponse([
+            'token' => $plaintext,
+            'message' => 'Save this token now. It will not be shown again.',
+        ], 'Worker created', [], 201);
+    }
+
     public function update(Request $request, $id): JsonResponse
     {
         $worker = ComfyUiWorker::find($id);

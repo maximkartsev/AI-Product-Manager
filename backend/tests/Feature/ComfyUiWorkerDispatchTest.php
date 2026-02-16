@@ -24,6 +24,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
 {
     protected static bool $prepared = false;
     private string $defaultToken;
+    private Workflow $defaultWorkflow;
 
     protected function setUp(): void
     {
@@ -61,6 +62,15 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 5,
         ]);
+
+        $this->defaultWorkflow = Workflow::query()->create([
+            'name' => 'Default Workflow',
+            'slug' => 'default-wf-' . uniqid(),
+            'is_active' => true,
+        ]);
+
+        $defaultWorker = ComfyUiWorker::query()->where('worker_id', 'default-worker')->first();
+        $defaultWorker->workflows()->sync([$this->defaultWorkflow->id]);
 
         app()->instance(PresignedUrlService::class, new class extends PresignedUrlService {
             public function downloadUrl(string $disk, string $path, int $ttlSeconds): string
@@ -253,7 +263,6 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'worker_id' => 'worker-drain',
             'token_hash' => hash('sha256', $drainToken),
             'is_approved' => true,
-            'environment' => 'cloud',
             'max_concurrency' => 1,
             'current_load' => 0,
             'is_draining' => true,
@@ -835,7 +844,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->assertSame($jobA->id, $jobId);
     }
 
-    public function test_poll_without_workflow_assignment_gets_all_dispatches(): void
+    public function test_poll_without_workflow_assignment_gets_no_dispatches(): void
     {
         [$user, $tenant] = $this->createUserTenant();
         $effect = $this->createEffect();
@@ -854,7 +863,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 2,
         ]);
-        // No workflow assignments — worker should get any dispatch
+        // No workflow assignments — worker should get zero dispatches
 
         $response = $this->postJson('/api/worker/poll', [
             'worker_id' => 'no-wf-worker',
@@ -865,7 +874,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         ]);
 
         $response->assertStatus(200);
-        $this->assertSame($job->id, $response->json('data.job.job_id'));
+        $this->assertNull($response->json('data.job'));
     }
 
     public function test_poll_logs_audit_event(): void
@@ -1146,7 +1155,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
     private function createApprovedWorkerWithToken(string $workerId): string
     {
         $token = 'test-token-' . $workerId . '-' . uniqid();
-        ComfyUiWorker::query()->create([
+        $worker = ComfyUiWorker::query()->create([
             'worker_id' => $workerId,
             'token_hash' => hash('sha256', $token),
             'is_approved' => true,
@@ -1154,6 +1163,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'current_load' => 0,
             'max_concurrency' => 5,
         ]);
+        $worker->workflows()->sync([$this->defaultWorkflow->id]);
         return $token;
     }
 
@@ -1169,7 +1179,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
         return [$user, $tenant];
     }
 
-    private function createEffect(): Effect
+    private function createEffect(?int $workflowId = null): Effect
     {
         return Effect::query()->create([
             'name' => 'Effect ' . uniqid(),
@@ -1183,6 +1193,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'is_active' => true,
             'is_premium' => false,
             'is_new' => false,
+            'workflow_id' => $workflowId ?? $this->defaultWorkflow->id,
         ]);
     }
 
@@ -1257,6 +1268,7 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'status' => 'queued',
             'priority' => 0,
             'attempts' => 0,
+            'workflow_id' => $this->defaultWorkflow->id,
         ];
 
         return AiJobDispatch::query()->create(array_merge($defaults, $overrides));

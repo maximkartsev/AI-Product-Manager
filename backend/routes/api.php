@@ -147,6 +147,7 @@ Route::middleware([
 
             // Workers
             Route::get('/workers', [AdminWorkersController::class, 'index']);
+            Route::post('/workers', [AdminWorkersController::class, 'store']);
             Route::get('/workers/{id}', [AdminWorkersController::class, 'show']);
             Route::patch('/workers/{id}', [AdminWorkersController::class, 'update']);
             Route::post('/workers/{id}/approve', [AdminWorkersController::class, 'approve']);

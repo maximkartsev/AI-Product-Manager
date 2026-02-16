@@ -286,6 +286,7 @@ class FleetRegistrationTest extends TestCase
     public function test_requeue_resets_dispatch_to_queued(): void
     {
         $token = $this->createApprovedWorkerWithToken('requeue-worker');
+        $workflow = Workflow::query()->create(['name' => 'Requeue WF', 'slug' => 'requeue-wf-' . uniqid(), 'is_active' => true]);
 
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
@@ -297,6 +298,7 @@ class FleetRegistrationTest extends TestCase
             'worker_id' => 'requeue-worker',
             'lease_token' => 'lease-abc',
             'lease_expires_at' => now()->addMinutes(15),
+            'workflow_id' => $workflow->id,
         ]);
 
         $response = $this->postJson('/api/worker/requeue', [
@@ -321,6 +323,7 @@ class FleetRegistrationTest extends TestCase
     public function test_requeue_rejects_invalid_lease_token(): void
     {
         $token = $this->createApprovedWorkerWithToken('requeue-invalid');
+        $workflow = Workflow::query()->create(['name' => 'Requeue WF', 'slug' => 'requeue-wf-' . uniqid(), 'is_active' => true]);
 
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
@@ -332,6 +335,7 @@ class FleetRegistrationTest extends TestCase
             'worker_id' => 'requeue-invalid',
             'lease_token' => 'correct-token',
             'lease_expires_at' => now()->addMinutes(15),
+            'workflow_id' => $workflow->id,
         ]);
 
         $response = $this->postJson('/api/worker/requeue', [
@@ -348,6 +352,7 @@ class FleetRegistrationTest extends TestCase
     public function test_requeue_logs_audit_event(): void
     {
         $token = $this->createApprovedWorkerWithToken('requeue-audit-worker');
+        $workflow = Workflow::query()->create(['name' => 'Requeue WF', 'slug' => 'requeue-wf-' . uniqid(), 'is_active' => true]);
 
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
@@ -359,6 +364,7 @@ class FleetRegistrationTest extends TestCase
             'worker_id' => 'requeue-audit-worker',
             'lease_token' => 'lease-xyz',
             'lease_expires_at' => now()->addMinutes(15),
+            'workflow_id' => $workflow->id,
         ]);
 
         $this->postJson('/api/worker/requeue', [
@@ -381,6 +387,7 @@ class FleetRegistrationTest extends TestCase
     public function test_requeue_does_not_decrement_below_zero(): void
     {
         $token = $this->createApprovedWorkerWithToken('requeue-zero');
+        $workflow = Workflow::query()->create(['name' => 'Requeue WF', 'slug' => 'requeue-wf-' . uniqid(), 'is_active' => true]);
 
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
@@ -392,6 +399,7 @@ class FleetRegistrationTest extends TestCase
             'worker_id' => 'requeue-zero',
             'lease_token' => 'lease-zero',
             'lease_expires_at' => now()->addMinutes(15),
+            'workflow_id' => $workflow->id,
         ]);
 
         $this->postJson('/api/worker/requeue', [

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Effect;
+use App\Models\Workflow;
 use Illuminate\Support\Facades\Artisan;
 use Tests\TestCase;
 
@@ -22,6 +23,12 @@ class EffectsApiTest extends TestCase
 
     public function test_effects_index_returns_only_active_effects(): void
     {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+        ]);
+
         $active = Effect::query()->create([
             'name' => 'Active Effect ' . uniqid(),
             'slug' => 'active-' . uniqid(),
@@ -30,6 +37,7 @@ class EffectsApiTest extends TestCase
             'preview_video_url' => 'https://example.com/preview.mp4',
             'is_premium' => false,
             'is_active' => true,
+            'workflow_id' => $workflow->id,
         ]);
 
         $inactive = Effect::query()->create([
@@ -38,6 +46,7 @@ class EffectsApiTest extends TestCase
             'description' => 'Inactive effect description',
             'is_premium' => false,
             'is_active' => false,
+            'workflow_id' => $workflow->id,
         ]);
 
         $response = $this->getJson('/api/effects');
@@ -53,12 +62,19 @@ class EffectsApiTest extends TestCase
 
     public function test_effect_show_by_slug_returns_effect(): void
     {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+        ]);
+
         $effect = Effect::query()->create([
             'name' => 'Show Effect ' . uniqid(),
             'slug' => 'show-' . uniqid(),
             'description' => 'Show effect description',
             'is_premium' => true,
             'is_active' => true,
+            'workflow_id' => $workflow->id,
         ]);
 
         $response = $this->getJson('/api/effects/' . $effect->slug);

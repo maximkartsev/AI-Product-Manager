@@ -132,6 +132,11 @@ class WorkloadTest extends TestCase
 
     private function createDispatch(array $overrides = []): AiJobDispatch
     {
+        if (!isset($overrides['workflow_id'])) {
+            $overrides['workflow_id'] = Workflow::query()->first()?->id
+                ?? $this->createWorkflow()->id;
+        }
+
         $defaults = [
             'tenant_id' => $this->tenant->id,
             'tenant_job_id' => ++static::$tenantJobSeq,
@@ -563,19 +568,6 @@ class WorkloadTest extends TestCase
         $this->assertCount(2, $workflows);
         $this->assertTrue($workflows->firstWhere('id', $active->id)['is_active']);
         $this->assertFalse($workflows->firstWhere('id', $inactive->id)['is_active']);
-    }
-
-    public function test_dispatches_with_null_workflow_id_not_crash_stats(): void
-    {
-        $wf = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-        $this->createDispatch(['workflow_id' => $wf->id, 'status' => 'queued']);
-        $this->createDispatch(['workflow_id' => null, 'status' => 'queued']);
-
-        $response = $this->adminGet('/api/admin/workload');
-        $response->assertStatus(200);
-
-        $workflows = collect($response->json('data.workflows'));
-        $this->assertSame(1, $workflows->firstWhere('id', $wf->id)['stats']['queued']);
     }
 
     public function test_workflows_ordered_by_name(): void

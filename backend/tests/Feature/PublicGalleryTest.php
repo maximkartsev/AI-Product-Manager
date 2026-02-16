@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Effect;
 use App\Models\GalleryVideo;
+use App\Models\Workflow;
 use App\Services\PresignedUrlService;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Storage;
@@ -38,12 +39,19 @@ class PublicGalleryTest extends TestCase
 
     public function test_gallery_index_returns_public_items_with_presigned_urls(): void
     {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+        ]);
+
         $effect = Effect::query()->create([
             'name' => 'Gallery Effect ' . uniqid(),
             'slug' => 'gallery-' . uniqid(),
             'description' => 'Gallery effect',
             'is_premium' => false,
             'is_active' => true,
+            'workflow_id' => $workflow->id,
         ]);
 
         $public = GalleryVideo::query()->create([
@@ -86,12 +94,19 @@ class PublicGalleryTest extends TestCase
 
     public function test_gallery_show_requires_public_item(): void
     {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+        ]);
+
         $effect = Effect::query()->create([
             'name' => 'Gallery Effect ' . uniqid(),
             'slug' => 'gallery-' . uniqid(),
             'description' => 'Gallery effect',
             'is_premium' => false,
             'is_active' => true,
+            'workflow_id' => $workflow->id,
         ]);
 
         $public = GalleryVideo::query()->create([

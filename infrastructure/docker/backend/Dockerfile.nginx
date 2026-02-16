@@ -1,0 +1,18 @@
+# Nginx reverse proxy for PHP-FPM (Laravel backend)
+# Target: linux/arm64 for Graviton Fargate tasks
+FROM --platform=linux/arm64 nginx:1.27-alpine
+
+# Remove default config
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copy custom config
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+
+# Copy Laravel public assets (built in PHP-FPM stage)
+# In ECS, nginx and php-fpm share a task, so this is mainly for static files.
+# The actual PHP files are served via fastcgi_pass to the php-fpm container.
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD wget -q -O /dev/null http://localhost/up || exit 1

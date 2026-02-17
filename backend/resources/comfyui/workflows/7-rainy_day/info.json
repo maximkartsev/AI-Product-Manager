@@ -1,0 +1,12 @@
+{
+	"name": "Rainy Day",
+	"slug": "rainy-day",
+	"description": "Realistic rain overlay",
+	"type": "simple",
+	"category": "Weather",
+	"tags": ["rain", "weather", "overlay", "realistic"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

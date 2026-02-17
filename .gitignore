@@ -45,3 +45,15 @@ Thumbs.db
 
 # Docker
 *.log
+
+.venv/
+*.iml
+.claude/
+.cursor/
+.mcp.json
+aios/
+aios
+aios.7z
+nul
+Lectures
+run_worker_cloud.bat

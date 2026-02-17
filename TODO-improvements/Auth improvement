@@ -1,0 +1,289 @@
+● Google OAuth Authentication — Deep Audit Report
+
+  I've thoroughly analyzed every file in the project related to Google OAuth. Here's the assessment against all 10
+  requirement sections:
+
+  ---
+  Section 1: What Socialite Actually Does (And What It Does NOT Do)
+  Requirement: Socialite used only for redirect + user retrieval
+  Status: DONE
+  Details: AuthController.php uses Socialite only for redirect() and user()
+  ────────────────────────────────────────
+  Requirement: Socialite does NOT create users
+  Status: DONE
+  Details: User creation handled manually in handleGoogleSignUpCallback()
+  ────────────────────────────────────────
+  Requirement: Socialite does NOT authenticate API
+  Status: DONE
+  Details: Sanctum token issued separately after Socialite call
+  ────────────────────────────────────────
+  Requirement: Socialite does NOT manage sessions/tokens
+  Status: DONE
+  Details: Sanctum createToken() handles app auth
+  ────────────────────────────────────────
+  Requirement: Product logic lives outside Socialite
+  Status: DONE
+  Details: Tenant creation, login tracking all in AuthController domain logic
+  Verdict: PASS
+
+  ---
+  Section 2: The Two-Route Rule (Redirect + Callback)
+  Requirement: Redirect route builds Google URL
+  Status: DONE
+  Details: redirectToGoogleSignIn() and redirectToGoogleSignUp()
+  ────────────────────────────────────────
+  Requirement: Callback route finishes handshake
+  Status: DONE
+  Details: handleGoogleSignInCallback() and handleGoogleSignUpCallback()
+  ────────────────────────────────────────
+  Requirement: URL returned as JSON (not server redirect)
+  Status: DONE
+  Details: Returns { url: ... } for SPA consumption
+  ────────────────────────────────────────
+  Requirement: Split signin vs signup flows
+  Status: DONE
+  Details: 4 distinct routes: signin redirect, signin callback, signup redirect, signup callback
+  ────────────────────────────────────────
+  Requirement: Frontend callback pattern
+  Status: DONE
+  Details: Google redirects to Next.js pages, which then call backend API
+  ────────────────────────────────────────
+  Requirement: Sanctum token issued in callback
+  Status: DONE
+  Details: createToken() called in both callback handlers
+  Verdict: PASS
+
+  ---
+  Section 3: Configuration Contract (services.php, .env, Redirect URIs)
+  Requirement: config/services.php with Google credentials
+  Status: DONE
+  Details: client_id, client_secret from env vars
+  ────────────────────────────────────────
+  Requirement: .env with environment-specific values
+  Status: DONE
+  Details: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, FRONTEND_URL present
+  ────────────────────────────────────────
+  Requirement: Dynamic redirect URI (not static)
+  Status: DONE
+  Details: ->redirectUrl(env('FRONTEND_URL') . '/auth/google/...') built at runtime
+  ────────────────────────────────────────
+  Requirement: FRONTEND_URL used for redirect building
+  Status: DONE
+  Details: Correctly separates frontend domain from backend
+  ────────────────────────────────────────
+  Requirement: .env.example documents required vars
+  Status: PARTIAL
+  Details: Has GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET but GOOGLE_REDIRECT_URI in example is unused (dynamic redirect
+    used instead)
+  Verdict: PASS (minor .env.example cleanup recommended)
+
+  ---
+  Section 4: Callback URL Deep Mechanics + State Security + CSRF
+  ┌────────────────────────────────────┬─────────┬────────────────────────────────────────────────────────────┐
+  │            Requirement             │ Status  │                          Details                           │
+  ├────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ State parameter generated          │ DONE    │ base64_encode(json_encode(['action' => 'signin']))         │
+  ├────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ State sent with OAuth redirect     │ DONE    │ ->with(['state' => $state])                                │
+  ├────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ State validated in callback        │ MISSING │ State is received but never validated in callback handlers │
+  ├────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Google error parameter checked     │ MISSING │ No check for ?error= or ?error_description= from Google    │
+  ├────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Code exchanged server-side         │ DONE    │ Socialite::driver('google')->stateless()->user()           │
+  ├────────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Frontend forwards code immediately │ DONE    │ Callback pages extract code and call backend API           │
+  └────────────────────────────────────┴─────────┴────────────────────────────────────────────────────────────┘
+  Verdict: FAIL — State validation is missing (CSRF vulnerability)
+
+  ---
+  Section 5: Stateless OAuth vs Session OAuth
+  ┌────────────────────────────────────────┬────────┬───────────────────────────────────────────────────┐
+  │              Requirement               │ Status │                      Details                      │
+  ├────────────────────────────────────────┼────────┼───────────────────────────────────────────────────┤
+  │ ->stateless() used                     │ DONE   │ All 4 Socialite calls use ->stateless()           │
+  ├────────────────────────────────────────┼────────┼───────────────────────────────────────────────────┤
+  │ No session dependency                  │ DONE   │ API routes, no session middleware on OAuth routes │
+  ├────────────────────────────────────────┼────────┼───────────────────────────────────────────────────┤
+  │ Token-based auth (not session cookies) │ DONE   │ Sanctum personal access tokens returned           │
+  ├────────────────────────────────────────┼────────┼───────────────────────────────────────────────────┤
+  │ Works with SPA frontend                │ DONE   │ Next.js frontend stores token in localStorage     │
+  ├────────────────────────────────────────┼────────┼───────────────────────────────────────────────────┤
+  │ Works with mobile (future)             │ DONE   │ Token-based, no cookie dependency                 │
+  └────────────────────────────────────────┴────────┴───────────────────────────────────────────────────┘
+  Verdict: PASS
+
+  ---
+  Section 6: Token Issuance Patterns (Sanctum)
+  ┌──────────────────────────────────┬─────────┬────────────────────────────────────────────────────────────┐
+  │           Requirement            │ Status  │                          Details                           │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Sanctum token issued after OAuth │ DONE    │ $user->createToken(...) in all callbacks                   │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Token includes device metadata   │ DONE    │ Browser, platform, device type, IP tracked                 │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Token returned to frontend       │ DONE    │ access_token + token_type: Bearer in response              │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Frontend stores token            │ DONE    │ localStorage with auth_token key                           │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Frontend sends Bearer header     │ DONE    │ Authorization: Bearer ${token} on API calls                │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Token expiration configured      │ MISSING │ sanctum.php has 'expiration' => null — tokens never expire │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Token revocation endpoint        │ MISSING │ No logout/revoke endpoint exists                           │
+  ├──────────────────────────────────┼─────────┼────────────────────────────────────────────────────────────┤
+  │ Token prefix configured          │ MISSING │ SANCTUM_TOKEN_PREFIX is empty string                       │
+  └──────────────────────────────────┴─────────┴────────────────────────────────────────────────────────────┘
+  Verdict: PARTIAL FAIL — Token expiration and revocation missing
+
+  ---
+  Section 7: Advanced Account Linking
+  Requirement: Separate oauth_identities table
+  Status: MISSING
+  Details: No provider identity table exists
+  ────────────────────────────────────────
+  Requirement: Provider ID stored
+  Status: MISSING
+  Details: Google provider ID ($googleUser->getId()) not stored
+  ────────────────────────────────────────
+  Requirement: Email used as linking key
+  Status: DONE
+  Details: User::where('email', $googleUser->getEmail())
+  ────────────────────────────────────────
+  Requirement: Email verification from provider checked
+  Status: MISSING
+  Details: No explicit email_verified check (relies on Google always verifying)
+  ────────────────────────────────────────
+  Requirement: Signup with existing email → auto-login
+  Status: DONE
+  Details: Signup callback checks existing user and signs them in
+  ────────────────────────────────────────
+  Requirement: User notified of auto-link
+  Status: MISSING
+  Details: No email/notification sent when auto-login happens
+  ────────────────────────────────────────
+  Requirement: Audit logging of identity linking
+  Status: MISSING
+  Details: No logging when Google identity links to existing account
+  ────────────────────────────────────────
+  Requirement: Multi-provider support preparation
+  Status: PARTIAL
+  Details: Architecture supports it, but no identity table for multi-provider
+  Verdict: PARTIAL FAIL — No identity table, no provider ID storage, no verification check
+
+  ---
+  Section 8: Production OAuth Security Hardening
+  ┌─────────────────────────────────┬───────────┬──────────────────────────────────────────────────────────────────────┐
+  │           Requirement           │  Status   │                               Details                                │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Redirect URI strictly           │ DONE      │ Hardcoded from FRONTEND_URL env, not from user input                 │
+  │ controlled                      │           │                                                                      │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ State parameter validated       │ MISSING   │ Generated but never validated                                        │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Rate limiting on OAuth          │ MISSING   │ No throttle middleware on any OAuth route                            │
+  │ endpoints                       │           │                                                                      │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ OAuth event logging             │ MISSING   │ No logging for OAuth start, success, or failure                      │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Token treated securely          │ PARTIAL   │ No expiration, no revocation, stored in localStorage                 │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ HTTPS enforced                  │ PARTIAL   │ SESSION_SECURE_COOKIE not set; production uses ngrok HTTPS           │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ CORS properly configured        │ DONE      │ Explicit origin whitelist, credentials enabled                       │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Minimal scope requested         │ DONE      │ Default Google scopes (email, profile)                               │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Open redirect protection        │ NOT       │ No dynamic redirect from user input, so minimal risk                 │
+  │                                 │ TESTED    │                                                                      │
+  ├─────────────────────────────────┼───────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Error handling in OAuth         │ PARTIAL   │ Catches exceptions but loses error details, no Google error param    │
+  │                                 │           │ check                                                                │
+  └─────────────────────────────────┴───────────┴──────────────────────────────────────────────────────────────────────┘
+  Verdict: FAIL — Multiple security gaps (rate limiting, logging, state validation)
+
+  ---
+  Section 9: OAuth Observability & Analytics
+  ┌───────────────────────────────────────────────────┬─────────┬──────────────────────────────────────────────────┐
+  │                    Requirement                    │ Status  │                     Details                      │
+  ├───────────────────────────────────────────────────┼─────────┼──────────────────────────────────────────────────┤
+  │ OAuth start events tracked                        │ MISSING │ No logging/analytics on redirect routes          │
+  ├───────────────────────────────────────────────────┼─────────┼──────────────────────────────────────────────────┤
+  │ OAuth callback success/failure tracked            │ MISSING │ No logging on callback results                   │
+  ├───────────────────────────────────────────────────┼─────────┼──────────────────────────────────────────────────┤
+  │ Provider health monitored                         │ MISSING │ No provider latency or error tracking            │
+  ├───────────────────────────────────────────────────┼─────────┼──────────────────────────────────────────────────┤
+  │ Funnel metrics (start → callback → activation)    │ MISSING │ No analytics instrumentation                     │
+  ├───────────────────────────────────────────────────┼─────────┼──────────────────────────────────────────────────┤
+  │ Error categorization (user vs system vs security) │ MISSING │ Generic error handling only                      │
+  ├───────────────────────────────────────────────────┼─────────┼──────────────────────────────────────────────────┤
+  │ Login tracking fields                             │ DONE    │ last_login_at, last_login_ip tracked             │
+  ├───────────────────────────────────────────────────┼─────────┼──────────────────────────────────────────────────┤
+  │ Device info tracked                               │ DONE    │ Browser, platform, device type in token metadata │
+  └───────────────────────────────────────────────────┴─────────┴──────────────────────────────────────────────────┘
+  Verdict: FAIL — No observability beyond basic login tracking
+
+  ---
+  Section 10: Scaling OAuth Systems
+  ┌────────────────────────────┬───────────────┬───────────────────────────────────────────────────────────────────────┐
+  │        Requirement         │    Status     │                                Details                                │
+  ├────────────────────────────┼───────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ Stateless backend          │ DONE          │ Token-based, no session state                                         │
+  ├────────────────────────────┼───────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ Frontend callback pattern  │ DONE          │ SPA-friendly, mobile-ready                                            │
+  ├────────────────────────────┼───────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ Async post-login           │ MISSING       │ Tenant creation happens synchronously in callback                     │
+  │ processing                 │               │                                                                       │
+  ├────────────────────────────┼───────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ Token table optimization   │ NOT NEEDED    │ Small scale, but expiration => null means token table grows forever   │
+  │                            │ YET           │                                                                       │
+  ├────────────────────────────┼───────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ Provider abstraction       │ PARTIAL       │ Socialite provides this, but no interface layer on top                │
+  ├────────────────────────────┼───────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ Fast callback path         │ PARTIAL       │ Callback does user lookup + tenant creation + token — could be        │
+  │                            │               │ lighter                                                               │
+  └────────────────────────────┴───────────────┴───────────────────────────────────────────────────────────────────────┘
+  Verdict: ACCEPTABLE for current scale — improvements needed before scaling
+
+  ---
+  Summary Scorecard
+  ┌───────────────────────────────┬───────┬────────────┐
+  │            Section            │ Score │   Status   │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 1. Socialite Responsibilities │ 5/5   │ PASS       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 2. Two-Route Rule             │ 6/6   │ PASS       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 3. Configuration Contract     │ 4/5   │ PASS       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 4. Callback + State + CSRF    │ 3/6   │ FAIL       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 5. Stateless OAuth            │ 5/5   │ PASS       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 6. Token Issuance             │ 5/8   │ PARTIAL    │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 7. Account Linking            │ 2/8   │ FAIL       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 8. Security Hardening         │ 3/10  │ FAIL       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 9. Observability              │ 2/7   │ FAIL       │
+  ├───────────────────────────────┼───────┼────────────┤
+  │ 10. Scaling                   │ 3/6   │ ACCEPTABLE │
+  └───────────────────────────────┴───────┴────────────┘
+  ---
+  Critical Items to Address (Priority Order)
+
+  1. State parameter validation — Currently generated but never verified in callback (CSRF risk)
+  2. Token expiration — sanctum.php expiration => null means tokens live forever
+  3. Rate limiting — No throttle middleware on any OAuth endpoint
+  4. Token revocation / logout endpoint — Users cannot invalidate tokens
+  5. OAuth event logging — No audit trail for auth events
+  6. Google error parameter handling — ?error=access_denied from Google not handled
+  7. OAuth identity table — No oauth_identities table for multi-provider future
+  8. Provider ID storage — Google provider_user_id not stored anywhere
+  9. Email verification check — Should explicitly check $googleUser->user['email_verified']
+  10. SESSION_SECURE_COOKIE — Must be true in production
+
+  The core OAuth flow (Socialite usage, split signin/signup, stateless design, Sanctum tokens, SPA architecture) is
+  architecturally sound. The gaps are primarily in security hardening, observability, and future-proofing (account
+  linking table).

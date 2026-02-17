@@ -1,0 +1,12 @@
+{
+	"name": "Oil Painting",
+	"slug": "oil-painting",
+	"description": "Classic art style filter",
+	"type": "simple",
+	"category": "Style",
+	"tags": ["oil", "painting", "classic", "art"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

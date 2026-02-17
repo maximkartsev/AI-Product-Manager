@@ -1,0 +1,12 @@
+{
+	"name": "Butterfly Dreams",
+	"slug": "butterfly-dreams",
+	"description": "Floating butterflies",
+	"type": "configurable",
+	"category": "Fun",
+	"tags": ["butterfly", "dreams", "nature", "whimsical"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

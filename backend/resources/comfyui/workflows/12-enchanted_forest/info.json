@@ -1,0 +1,12 @@
+{
+	"name": "Enchanted Forest",
+	"slug": "enchanted-forest",
+	"description": "Magical forest setting",
+	"type": "configurable",
+	"category": "Background",
+	"tags": ["forest", "enchanted", "magical", "nature"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

@@ -35,4 +35,45 @@ return [
         ],
     ],
 
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'), // Will be overridden dynamically per flow
+    ],
+
+    'apple' => [
+        'client_id' => env('APPLE_CLIENT_ID'),
+        'client_secret' => env('APPLE_CLIENT_SECRET'), // Empty — auto-generated from private key
+        'key_id' => env('APPLE_KEY_ID'),
+        'team_id' => env('APPLE_TEAM_ID'),
+        'private_key' => env('APPLE_PRIVATE_KEY'), // Absolute path to .p8 file
+        'redirect' => env('APPLE_REDIRECT_URI'), // Will be overridden dynamically per flow
+    ],
+
+    'tiktok' => [
+        'client_id' => env('TIKTOK_CLIENT_ID'),
+        'client_secret' => env('TIKTOK_CLIENT_SECRET'),
+        'redirect' => env('TIKTOK_REDIRECT_URI') // Will be overridden dynamically per flow
+    ],
+
+    'comfyui' => [
+        'default_provider' => env('COMFYUI_DEFAULT_PROVIDER', 'self_hosted'),
+        'lease_ttl_seconds' => env('COMFYUI_LEASE_TTL_SECONDS', 900),
+        'max_attempts' => env('COMFYUI_MAX_ATTEMPTS', 3),
+        'presigned_ttl_seconds' => env('COMFYUI_PRESIGNED_TTL_SECONDS', 900),
+        'upload_max_bytes' => env('COMFYUI_UPLOAD_MAX_BYTES', 1073741824),
+        'workflow_disk' => env('COMFYUI_WORKFLOW_DISK', 's3'),
+        'allowed_mime_types' => [
+            'video/mp4',
+            'video/quicktime',
+            'video/webm',
+            'video/x-matroska',
+        ],
+        'fleet_secret' => env('COMFYUI_FLEET_SECRET'),
+        'max_fleet_workers' => env('COMFYUI_MAX_FLEET_WORKERS', 50),
+        'stale_worker_hours' => env('COMFYUI_STALE_WORKER_HOURS', 2),
+        'validate_asg_instance' => env('COMFYUI_VALIDATE_ASG_INSTANCE', false),
+        'aws_region' => env('COMFYUI_AWS_REGION', 'us-east-1'),
+    ],
+
 ];

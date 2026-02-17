@@ -1,0 +1,59 @@
+{
+  "1": {
+    "inputs": {
+      "filename_prefix": "video/kling-omni-t2v",
+      "format": "auto",
+      "codec": "auto",
+      "video-preview": "",
+      "video": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": "715f173a606836610039444c7aa3d3667b9c3d599aac2471d33314e11fbeb62e.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "6": {
+    "inputs": {
+      "model_name": "kling-video-o1",
+      "prompt": "Save people from the source video. Save faces from the source video! SAVE all clothing and details from the source video! Strongly keep the same movements and characters of people movements and dancing if any! Colorize the source video in the style of the input image. Save people, background, and all elements from the source video, colorize the video in the same style as the image, and preserve camera movement and motion sequences. Pay special attention to the movement of your legs and arms - repeat their movements as much as possible",
+      "aspect_ratio": "9:16",
+      "duration": 3,
+      "keep_original_sound": true,
+      "resolution": "720p",
+      "reference_video": [
+        "7",
+        0
+      ],
+      "reference_images": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "KlingOmniProVideoToVideoNode",
+    "_meta": {
+      "title": "Kling Omni Video to Video (Pro)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "file": "__INPUT_PATH__",
+      "video-preview": ""
+    },
+    "class_type": "LoadVideo",
+    "_meta": {
+      "title": "Load Video"
+    }
+  }
+}

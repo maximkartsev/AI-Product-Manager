@@ -1,0 +1,12 @@
+{
+	"name": "City Nights",
+	"slug": "city-nights",
+	"description": "Urban skyline backdrop",
+	"type": "configurable",
+	"category": "Background",
+	"tags": ["city", "urban", "night", "skyline"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

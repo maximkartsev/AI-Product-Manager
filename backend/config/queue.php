@@ -13,6 +13,7 @@ return [
     |
     */
 
+    // Queue storage is central/shared. Tenant context is propagated by stancl/tenancy.
     'default' => env('QUEUE_CONNECTION', 'database'),
 
     /*
@@ -37,11 +38,24 @@ return [
 
         'database' => [
             'driver' => 'database',
-            'connection' => env('DB_QUEUE_CONNECTION'),
+            // Always store queued jobs in the central DB.
+            'connection' => env('DB_QUEUE_CONNECTION', 'central'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
             'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
             'after_commit' => false,
+        ],
+
+        // Explicit central queue connection (guaranteed to run centrally).
+        // Jobs dispatched to this connection will not inherit tenant state.
+        'central' => [
+            'driver' => 'database',
+            'connection' => 'central',
+            'table' => env('DB_QUEUE_TABLE', 'jobs'),
+            'queue' => env('DB_QUEUE', 'default'),
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            'after_commit' => false,
+            'central' => true,
         ],
 
         'beanstalkd' => [
@@ -103,7 +117,7 @@ return [
     */
 
     'batching' => [
-        'database' => env('DB_CONNECTION', 'sqlite'),
+        'database' => env('DB_QUEUE_CONNECTION', 'central'),
         'table' => 'job_batches',
     ],
 
@@ -122,7 +136,7 @@ return [
 
     'failed' => [
         'driver' => env('QUEUE_FAILED_DRIVER', 'database-uuids'),
-        'database' => env('DB_CONNECTION', 'sqlite'),
+        'database' => env('DB_QUEUE_CONNECTION', 'central'),
         'table' => 'failed_jobs',
     ],
 

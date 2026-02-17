@@ -1,0 +1,26 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    protected $connection = 'central';
+
+    public function up(): void
+    {
+        Schema::connection($this->connection)->table('effects', function (Blueprint $table) {
+            $table->unsignedBigInteger('workflow_id')->nullable()->index()->after('category_id');
+            $table->json('property_overrides')->nullable()->after('workflow_id');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::connection($this->connection)->table('effects', function (Blueprint $table) {
+            $table->dropIndex(['workflow_id']);
+            $table->dropColumn(['workflow_id', 'property_overrides']);
+        });
+    }
+};

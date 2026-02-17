@@ -1,0 +1,12 @@
+{
+	"name": "Prism Rainbow",
+	"slug": "prism-rainbow",
+	"description": "Rainbow light effects",
+	"type": "configurable",
+	"category": "Fun",
+	"tags": ["prism", "rainbow", "light", "colorful"],
+	"is_premium": true,
+	"is_new": false,
+	"sort_order": 20,
+	"popularity_score": 90
+}

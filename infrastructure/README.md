@@ -4,6 +4,9 @@ AWS CDK (TypeScript) infrastructure for the AI Product Manager platform — a mu
 
 ## Architecture Overview
 
+See the Day‑1 Operator Guide for a beginner-friendly runbook:
+`infrastructure/DAY1_OPERATOR.md`
+
 ```
 Internet
    │

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\AI\AgentCommandDefinitionProvider;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 class TenancyPoolsMigrate extends Command implements AgentCommandDefinitionProvider
 {
@@ -77,6 +78,23 @@ class TenancyPoolsMigrate extends Command implements AgentCommandDefinitionProvi
                 $poolConnection = (string) $poolConnection;
                 if ($poolConnection === '') {
                     continue;
+                }
+
+                // Ensure the physical database exists before migrating.
+                $dbName = (string) config("database.connections.{$poolConnection}.database", '');
+                $safeName = preg_replace('/[^A-Za-z0-9_]/', '', $dbName ?? '');
+                if ($safeName === '') {
+                    $this->warn("Skipping tenant pool '{$poolConnection}' (invalid DB name).");
+                    continue;
+                }
+
+                try {
+                    DB::connection('central')->statement(
+                        "CREATE DATABASE IF NOT EXISTS `{$safeName}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                    );
+                } catch (\Throwable $e) {
+                    $this->error("Failed to create tenant DB '{$safeName}': {$e->getMessage()}");
+                    return self::FAILURE;
                 }
 
                 $this->info("Migrating tenant pool DB: {$poolConnection} ...");

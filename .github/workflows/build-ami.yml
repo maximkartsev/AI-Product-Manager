@@ -1,0 +1,89 @@
+name: Build GPU AMI
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_slug:
+        description: 'Workflow slug (e.g. image-to-video)'
+        required: true
+        type: string
+      instance_type:
+        description: 'Instance type for AMI build'
+        required: false
+        type: string
+        default: 'g4dn.xlarge'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build-ami:
+    name: Build AMI - ${{ inputs.workflow_slug }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+
+      - name: Copy worker script to Packer context
+        run: cp worker/comfyui_worker.py infrastructure/packer/scripts/
+
+      - name: Packer init
+        working-directory: infrastructure/packer
+        run: packer init .
+
+      - name: Packer validate
+        working-directory: infrastructure/packer
+        run: |
+          packer validate \
+            -var "workflow_slug=${{ inputs.workflow_slug }}" \
+            -var "instance_type=${{ inputs.instance_type }}" \
+            -var "aws_region=${{ env.AWS_REGION }}" \
+            .
+
+      - name: Packer build
+        id: build
+        working-directory: infrastructure/packer
+        run: |
+          packer build \
+            -var "workflow_slug=${{ inputs.workflow_slug }}" \
+            -var "instance_type=${{ inputs.instance_type }}" \
+            -var "aws_region=${{ env.AWS_REGION }}" \
+            -machine-readable \
+            . | tee packer-output.txt
+
+          AMI_ID=$(grep 'artifact,0,id' packer-output.txt | tail -1 | cut -d: -f2)
+          echo "ami_id=$AMI_ID" >> $GITHUB_OUTPUT
+          echo "Built AMI: $AMI_ID"
+
+      - name: Update SSM Parameter with AMI ID
+        if: steps.build.outputs.ami_id
+        run: |
+          aws ssm put-parameter \
+            --name "/bp/ami/${{ inputs.workflow_slug }}" \
+            --value "${{ steps.build.outputs.ami_id }}" \
+            --type String \
+            --overwrite
+          echo "Updated SSM parameter /bp/ami/${{ inputs.workflow_slug }} = ${{ steps.build.outputs.ami_id }}"
+
+      - name: Summary
+        run: |
+          echo "## AMI Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow:** ${{ inputs.workflow_slug }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **AMI ID:** ${{ steps.build.outputs.ami_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **SSM Parameter:** /bp/ami/${{ inputs.workflow_slug }}" >> $GITHUB_STEP_SUMMARY

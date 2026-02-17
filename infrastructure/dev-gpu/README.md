@@ -1,0 +1,231 @@
+# Dev GPU Instance for ComfyUI
+
+Launch a single GPU instance with the ComfyUI web UI accessible from the internet for building and testing workflows. Completely separate from the production CDK infrastructure.
+
+## Prerequisites
+
+- **AWS CLI** configured with credentials (`aws configure`)
+- **Production AMI** built via Packer and registered in SSM at `/bp/ami/<workflow-slug>` (or pass `AMI_ID` directly)
+- **EC2 key pair** (optional — only needed for SSH)
+- **Session Manager** (optional) requires an instance profile with `AmazonSSMManagedInstanceCore`
+
+## Quick Start
+
+```bash
+cd infrastructure/dev-gpu
+./launch.sh
+# → prints ComfyUI URL, open it in your browser
+```
+
+When done:
+
+```bash
+./shutdown.sh
+```
+
+Re-run `./launch.sh` to resume a stopped dev instance.
+
+## Build / Register the AMI
+
+### GitHub Actions (recommended)
+
+1. Go to **Actions → Build GPU AMI**.
+2. Run workflow with:
+   - `workflow_slug`: e.g. `image-to-video`
+   - `instance_type`: e.g. `g4dn.xlarge`
+3. The workflow writes the AMI ID to SSM at `/bp/ami/<workflow_slug>`.
+
+### Local Packer
+
+```bash
+cd infrastructure/packer
+packer init .
+packer build \
+  -var "workflow_slug=image-to-video" \
+  -var "instance_type=g4dn.xlarge" \
+  -var "aws_region=us-east-1" \
+  .
+```
+
+Then write the AMI ID to SSM:
+
+```bash
+aws ssm put-parameter \
+  --name "/bp/ami/image-to-video" \
+  --value "ami-xxxxxxxx" \
+  --type String \
+  --overwrite
+```
+
+## Create an EC2 Key Pair (optional, SSH)
+
+```bash
+aws ec2 create-key-pair \
+  --key-name comfyui-dev \
+  --query 'KeyMaterial' \
+  --output text > ~/.ssh/comfyui-dev.pem
+
+chmod 600 ~/.ssh/comfyui-dev.pem
+```
+
+Then launch with:
+
+```bash
+KEY_NAME=comfyui-dev ./launch.sh
+```
+
+SSH:
+
+```bash
+ssh -i ~/.ssh/comfyui-dev.pem ubuntu@<public-ip>
+```
+
+## Enable Session Manager (optional)
+
+1. Create an IAM role for EC2 with `AmazonSSMManagedInstanceCore`.
+2. Create an instance profile and attach the role.
+3. Launch with `INSTANCE_PROFILE`:
+
+```bash
+INSTANCE_PROFILE=ComfyUiDevInstanceProfile ./launch.sh
+```
+
+## Configuration
+
+All settings are via environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `AWS_REGION` | `us-east-1` | AWS region |
+| `INSTANCE_TYPE` | `g4dn.xlarge` | EC2 instance type (must have GPU) |
+| `WORKFLOW_SLUG` | `image-to-video` | SSM AMI path: `/bp/ami/<workflow-slug>` |
+| `AMI_ID` | *(from SSM)* | Override AMI ID instead of SSM lookup |
+| `KEY_NAME` | *(none)* | EC2 key pair name for SSH access |
+| `INSTANCE_PROFILE` | *(none)* | IAM instance profile (Name or ARN) for SSM Session Manager |
+| `AUTO_SHUTDOWN_HOURS` | `4` | Hours before auto-stop |
+| `VOLUME_SIZE` | `100` | Root volume size in GB |
+
+Example with overrides:
+
+```bash
+INSTANCE_TYPE=g5.xlarge KEY_NAME=my-key AUTO_SHUTDOWN_HOURS=8 ./launch.sh
+```
+
+## How It Works
+
+1. **Reuses the production AMI** — no separate Packer build needed
+2. **User-data reconfigures on boot**: disables the worker daemon, changes ComfyUI to listen on `0.0.0.0`
+3. **Security group** restricts port 8188 (and SSH if key pair set) to your current public IP only
+4. **Auto-shutdown** stops the instance after the configured time limit (default 4h)
+
+## Loading Models
+
+SCP (if you set `KEY_NAME`):
+
+```bash
+scp -i ~/.ssh/my-key.pem my-model.safetensors ubuntu@<ip>:/opt/comfyui/models/checkpoints/
+```
+
+Details:
+- The `-i` flag points to your **private key** file (downloaded when you created the EC2 key pair).
+- `<ip>` is the **public IP** printed by `./launch.sh`.
+- `checkpoints/` is the ComfyUI folder for main checkpoint models.
+
+Before SCP (required by SSH):
+
+```bash
+chmod 600 ~/.ssh/my-key.pem
+```
+
+Other common model folders:
+
+```bash
+# LoRA
+scp -i ~/.ssh/my-key.pem my-lora.safetensors ubuntu@<ip>:/opt/comfyui/models/loras/
+
+# VAE
+scp -i ~/.ssh/my-key.pem my-vae.safetensors ubuntu@<ip>:/opt/comfyui/models/vae/
+
+# ControlNet
+scp -i ~/.ssh/my-key.pem my-control.safetensors ubuntu@<ip>:/opt/comfyui/models/controlnet/
+```
+
+Verify and reload:
+
+```bash
+ssh -i ~/.ssh/my-key.pem ubuntu@<ip>
+ls -lh /opt/comfyui/models/checkpoints/
+sudo systemctl restart comfyui
+```
+
+S3 sync (from the instance):
+
+```bash
+ssh ubuntu@<ip>
+aws s3 sync s3://my-bucket/models/ /opt/comfyui/models/
+sudo systemctl restart comfyui
+```
+
+## Cost Estimate
+
+| Instance | GPU | On-Demand $/hr |
+|---|---|---|
+| g4dn.xlarge | T4 16GB | ~$0.53 |
+| g5.xlarge | A10G 24GB | ~$1.01 |
+| g6.xlarge | L4 24GB | ~$0.98 |
+
+With default 4h auto-shutdown: **~$2.12** max per session (g4dn.xlarge).
+
+Stopped instances still incur **EBS gp3 storage** charges.
+
+Approximate gp3 storage cost (us-east-1):
+- $0.08 per GB-month
+- Example (default 100 GB): ~$8/month (~$0.26/day)
+- If you provision >3000 IOPS or >125 MB/s throughput, extra charges apply
+
+## Troubleshooting
+
+**ComfyUI URL not loading after launch**
+
+The instance needs 1-2 minutes after reaching "running" state for user-data to execute and ComfyUI to start. SSH in and check:
+
+```bash
+# Check user-data execution log
+cat /var/log/dev-gpu-setup.log
+
+# Check ComfyUI service status
+sudo systemctl status comfyui
+
+# Check ComfyUI logs
+sudo journalctl -u comfyui -f
+```
+
+**"Connection refused" or timeout**
+
+Your public IP may have changed since launch. Re-run `./launch.sh` — it will update the security group with your new IP (and warn about the existing instance).
+
+**Stop vs terminate**
+
+- `./shutdown.sh` stops by default (keeps the instance for later resume).
+- `./shutdown.sh --terminate` terminates the instance.
+- Use `./shutdown.sh --terminate --cleanup` to also delete the managed security group.
+
+**Worker service is running**
+
+User-data should disable it. Manually stop:
+
+```bash
+sudo systemctl disable --now comfyui-worker.service
+```
+
+**Cancel auto-shutdown**
+
+```bash
+sudo shutdown -c
+```
+
+**Check remaining time before shutdown**
+
+```bash
+sudo shutdown --show
+```

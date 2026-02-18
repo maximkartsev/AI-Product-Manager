@@ -2,7 +2,7 @@
 # Launch a dev ComfyUI GPU instance using the production AMI.
 # Usage: ./launch.sh
 # Configuration via environment variables (see README.md).
-set -euo
+set -eu
 # Some environments may run an older shell that doesn't support `pipefail`.
 set -o pipefail 2>/dev/null || true
 

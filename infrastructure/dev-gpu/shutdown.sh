@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stop or terminate a dev ComfyUI GPU instance and optionally clean up the security group.
 # Usage: ./shutdown.sh [--terminate] [--cleanup] [instance-id]
-set -euo
+set -eu
 set -o pipefail 2>/dev/null || true
 
 AWS_REGION_INPUT="${AWS_REGION:-}"

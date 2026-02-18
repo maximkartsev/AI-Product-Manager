@@ -30,6 +30,16 @@ Or run it explicitly with bash:
 bash ./launch.sh
 ```
 
+If you see errors like `$'\r': command not found`, your scripts were checked out with Windows (CRLF) line endings. Fix with:
+
+```bash
+# Option A (recommended)
+dos2unix launch.sh shutdown.sh user-data.sh
+
+# Option B (no extra tools)
+sed -i 's/\r$//' launch.sh shutdown.sh user-data.sh
+```
+
 When done:
 
 ```bash

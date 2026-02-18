@@ -17,6 +17,19 @@ cd infrastructure/dev-gpu
 # → prints ComfyUI URL, open it in your browser
 ```
 
+If you get `Permission denied` on `./launch.sh` (common on fresh checkouts), run:
+
+```bash
+chmod +x launch.sh shutdown.sh
+./launch.sh
+```
+
+Or run it explicitly with bash:
+
+```bash
+bash ./launch.sh
+```
+
 When done:
 
 ```bash

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Dev GPU user-data: reconfigure production AMI for interactive ComfyUI development.
 # This script runs as root on first boot via EC2 user-data.
-set -euo pipefail
+set -euo
+set -o pipefail 2>/dev/null || true
 
 LOG="/var/log/dev-gpu-setup.log"
 exec > >(tee -a "$LOG") 2>&1

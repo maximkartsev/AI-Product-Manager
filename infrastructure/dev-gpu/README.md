@@ -29,11 +29,23 @@ Re-run `./launch.sh` to resume a stopped dev instance.
 
 ### GitHub Actions (recommended)
 
+Prerequisite (one-time): configure GitHub Actions → AWS auth (OIDC) and set the secret:
+
+- Create an AWS IAM role that GitHub Actions can assume via OIDC.
+- Add the role ARN as a repo Actions secret named `AWS_DEPLOY_ROLE_ARN`.
+- Setup details are in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
+
 1. Go to **Actions → Build GPU AMI**.
 2. Run workflow with:
    - `workflow_slug`: e.g. `image-to-video`
    - `instance_type`: e.g. `g4dn.xlarge`
 3. The workflow writes the AMI ID to SSM at `/bp/ami/<workflow_slug>`.
+
+If the workflow fails at **Configure AWS credentials** with:
+
+- `Credentials could not be loaded ... Could not load credentials from any providers`
+
+Then `AWS_DEPLOY_ROLE_ARN` is missing/empty or the IAM role trust policy doesn’t allow this repo/branch. Re-check the OIDC setup in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
 
 ### Local Packer
 

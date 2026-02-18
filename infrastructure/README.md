@@ -83,6 +83,13 @@ aws acm request-certificate \
   --region us-east-1
 ```
 
+Notes:
+- `--domain-name` should be the **exact hostname you want users to visit** (and should match CDK context `domainName`), e.g. `app.yourdomain.com`.
+- You must **own/control DNS** for the domain so you can add the ACM DNS validation record.
+- Do **not** use the ALB DNS name (`*.elb.amazonaws.com`) — ACM will not issue certificates for that.
+- For an **ALB certificate**, request it in the **same region** as the ALB (your `CDK_DEFAULT_REGION`). (`us-east-1` is shown here because this repo defaults to `us-east-1`.)
+- After ACM is issued, create a DNS record (Route 53 or your DNS provider) pointing `app.example.com` to the ALB DNS name (this repo does not automatically create Route 53 records).
+
 Without a certificate, the ALB runs HTTP-only on port 80.
 
 ## Quick Start
@@ -158,6 +165,15 @@ aws secretsmanager put-secret-value \
 
 Stage is selected via CDK context: `npx cdk deploy --context stage=production`.
 
+#### Stages: staging vs production
+
+- **staging**: default stage in this repo (resource names like `bp-staging`, smaller/cheaper defaults).
+- **production**: appears when you deploy with `--context stage=production` (resource names like `bp-production`, larger/HA defaults). A separate AWS account is recommended.
+
+Important: GitHub Actions **Environments** (e.g. `staging-migrations`) are GitHub approval/secret scopes, not the AWS “stage”.
+
+CI note: `.github/workflows/deploy.yml` is currently configured for **staging** (ECS cluster/services and ECR repos use `-staging`). To deploy production from CI you’d typically create a separate workflow (or add an input) and use a separate AWS role + GitHub environment approvals.
+
 ### CDK Context (`cdk.json`)
 
 | Key | Description | Required |
@@ -167,6 +183,28 @@ Stage is selected via CDK context: `npx cdk deploy --context stage=production`.
 | `alertEmail` | Email for ops alert SNS subscription | No |
 | `budgetMonthlyUsd` | Monthly budget (USD) for AWS Budgets alerts | No |
 | `owner` | Cost allocation tag value for Owner | No |
+
+### AWS IAM & Credentials (Local vs GitHub Actions)
+
+You will usually use **two identities**:
+
+- **Local (you / CDK)**: AWS CLI credentials on your machine for `cdk diff/deploy`.
+- **CI (GitHub Actions)**: an IAM **role** assumed via OIDC (`AWS_DEPLOY_ROLE_ARN`). No IAM user keys stored in GitHub.
+
+#### Local AWS CLI for CDK
+
+Preferred: AWS IAM Identity Center (SSO) with an admin/infra permission set.
+
+Quick start (IAM user):
+1. AWS Console → **IAM → Users → Create user**
+2. On **Set permissions**, choose **Add user to group**, create a group (e.g. `bp-admin`) and attach **AdministratorAccess**.
+3. Create an access key for the user and run `aws configure` locally.
+
+CDK needs broad permissions across CloudFormation, IAM, EC2/VPC, ECS, ECR, ELBv2, RDS, ElastiCache, S3, CloudFront, Secrets Manager, SSM, CloudWatch, SNS, Auto Scaling, and Lambda.
+
+#### GitHub Actions OIDC role
+
+See [GitHub Actions to AWS (OIDC)](#github-actions-to-aws-oidc) for the exact trust policy, permissions, and GitHub secrets/environments.
 
 ### Workflow Configuration (`lib/config/workflows.ts`)
 
@@ -227,14 +265,18 @@ aws ecs run-task \
 
 ### Updating Application Code (CI/CD)
 
-Push to `main` triggers `.github/workflows/deploy.yml`:
+Manually run `.github/workflows/deploy.yml`:
+
+```
+Actions → "Deploy" → Run workflow
+```
 
 1. **test-backend** — PHP 8.3 + MariaDB, runs `php artisan test`
 2. **test-frontend** — Node 18 + pnpm, runs `pnpm build`
 3. **build-and-push** — Builds ARM64 Docker images, pushes to ECR (tags: `<sha7>` + `latest`)
 4. **deploy-services** — `aws ecs update-service --force-new-deployment` for both services
-5. **deploy-infrastructure** — CDK deploy (manual gate, `workflow_dispatch` only)
-6. **run-migrations** — One-off ECS task (manual gate, `workflow_dispatch` only)
+5. **deploy-infrastructure** — CDK deploy (requires GitHub environment approval: `staging-infra`). Optional if you deploy infrastructure locally.
+6. **run-migrations** — One-off ECS tasks for DB migrations (requires GitHub environment approval: `staging-migrations`)
 
 ### Infrastructure Changes
 
@@ -254,6 +296,13 @@ npx cdk deploy --all
 ### Database Migrations
 
 Migrations run as one-off ECS tasks (not during normal deploys):
+
+- **ECS service** keeps your app running (backend/frontend tasks stay up behind the ALB).
+- **ECS task** is a single, one-off run of a task definition. Here we use `aws ecs run-task` to start a temporary Fargate task and override the `php-fpm` command to run migrations. The task stops when the command finishes.
+- These migration tasks run only when you **manually** run the commands below, or when you run the **Deploy** workflow and approve the `run-migrations` job. They do **not** run during `deploy-services`.
+
+Safety:
+- `php artisan migrate` does **not** wipe the database by default, but migrations can still be destructive (e.g. dropping/altering columns). Treat production migrations as potentially risky and ensure you have backups/rollback plans.
 
 Notes:
 - `tenancy:pools-migrate` **creates missing tenant pool databases** before applying migrations (uses the central connection).
@@ -595,14 +644,14 @@ aws cloudwatch describe-alarms \
 
 ### `deploy.yml`
 
-**Trigger:** Push to `main` (auto) or `workflow_dispatch` (manual).
+**Trigger:** Manual dispatch only (`workflow_dispatch`).
 
 ```
 test-backend ──┐
                ├──► build-and-push ──┬──► deploy-services ──► run-migrations*
 test-frontend ─┘                     └──► deploy-infrastructure*
 
-* = manual gate (workflow_dispatch only), requires environment approval
+* = requires GitHub environment approval (see “Required GitHub Environments”)
 ```
 
 ### `build-ami.yml`
@@ -620,8 +669,110 @@ test-frontend ─┘                     └──► deploy-infrastructure*
 | Secret | Description |
 |--------|-------------|
 | `AWS_DEPLOY_ROLE_ARN` | IAM role ARN for OIDC federation (GitHub Actions → AWS) |
-| `PRIVATE_SUBNET_IDS` | JSON array of private subnet IDs (for migration tasks) |
-| `BACKEND_SG_ID` | Backend security group ID (for migration tasks) |
+| `PRIVATE_SUBNET_IDS` | JSON array of private subnet IDs (for migration tasks), e.g. `["subnet-123","subnet-456"]` |
+| `BACKEND_SG_ID` | Backend security group ID (for migration tasks), e.g. `sg-0123abcd` |
+
+### GitHub Actions to AWS (OIDC)
+
+The CI workflows (`.github/workflows/deploy.yml`, `.github/workflows/build-ami.yml`) authenticate to AWS by assuming an IAM role via GitHub OIDC (no long-lived AWS access keys).
+
+**One-time AWS setup**
+
+1. In AWS IAM, create an OIDC identity provider:
+   - **Provider URL**: `https://token.actions.githubusercontent.com`
+   - **Audience**: `sts.amazonaws.com`
+2. Create an IAM role for **Web identity** (GitHub OIDC) and configure its trust policy to allow this repo.
+
+Example trust policy (replace `<ACCOUNT_ID>` and tighten the `sub` condition as desired):
+
+`<ACCOUNT_ID>` is your AWS account ID (12 digits). You can find it in the AWS Console, or via:
+
+```bash
+aws sts get-caller-identity --query Account --output text
+```
+
+Make sure the `sub` claim uses the format `repo:<OWNER>/<REPO>:...` (note the `:`), and remove duplicate entries if IAM generated them.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:maximkartsev/AI-Product-Manager:*"
+        }
+      }
+    }
+  ]
+}
+```
+
+Where to put this policy:
+- AWS Console → **IAM → Roles → <your role> → Trust relationships → Edit trust policy**
+- This is the role’s **trust policy** (a.k.a. “assume role policy”) that controls **who can assume the role**.
+
+3. Attach **permissions policies** to the role (IAM → Roles → <your role> → Permissions) to control **what AWS actions** the workflows can perform after assuming the role.
+
+Where to attach permissions:
+- AWS Console → **IAM → Roles → <your role> → Permissions → Add permissions**
+- For `iam:PassRole`, select service **IAM** in the visual editor, or paste JSON in the JSON tab (recommended).
+
+Quick start (broad, staging only): attach **AdministratorAccess** to the role.
+
+Recommended (split by workflow / least privilege, tighten resources later):
+- For `.github/workflows/deploy.yml` (ECR + ECS + migrations):
+  - `AmazonEC2ContainerRegistryPowerUser`
+  - `AmazonECSFullAccess`
+  - Plus an `iam:PassRole` policy so `aws ecs run-task` can launch one-off migration tasks (see below)
+- For `.github/workflows/build-ami.yml` (Packer AMI build + SSM):
+  - `AmazonEC2FullAccess`
+  - `AmazonSSMFullAccess` (or restrict to `ssm:PutParameter` on `/bp/ami/*`)
+
+Example `iam:PassRole` inline policy (tighten `Resource` to your ECS task roles if you know them):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ecs-tasks.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+If you enable the `deploy-infrastructure` job (CDK deploy) in GitHub Actions, the role also needs broad permissions to manage CloudFormation/IAM/networking/etc. If you deploy infrastructure locally, you can leave that job unapproved/unused (or remove it from the workflow).
+
+Tip: tighten the trust policy `sub` claim when you’re ready:
+- Any branch/tag: `repo:<owner>/<repo>:*`
+- Main only: `repo:<owner>/<repo>:ref:refs/heads/main`
+
+**GitHub setup**
+
+1. Copy the IAM role ARN (IAM → Roles → your role → **ARN**).
+2. Add it as a GitHub repo secret named `AWS_DEPLOY_ROLE_ARN` (Repo → Settings → Secrets and variables → Actions).
+   - The secret value is the **role ARN**, e.g. `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-staging` (not the OIDC provider ARN).
+
+Notes:
+- The workflows already set `permissions: id-token: write` which is required for OIDC.
+- If you store `AWS_DEPLOY_ROLE_ARN` as an **Environment** secret, the job must specify `environment: <name>` or the secret will be unavailable and `configure-aws-credentials` may fail with `Could not load credentials from any providers`.
+- Separately, attach **permissions policies** to the role (IAM → Roles → <your role> → Permissions) to control **what AWS actions** the workflow can perform after assuming the role (e.g., EC2/SSM for AMI builds).
 
 ### Required GitHub Environments
 

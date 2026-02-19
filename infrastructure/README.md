@@ -384,6 +384,23 @@ For each workflow + stage, the active bundle is stored in SSM:
 GPU nodes sync the active bundle on boot. To promote a new bundle you:
 1) build AMI (Packer), 2) update the SSM bundle pointer, 3) roll the ASG.
 
+**Smart-skip boot sync (hybrid)**
+
+- If the AMI was baked with a bundle, Packer writes `/opt/comfyui/.baked_bundle_id`.
+- On boot, if `ACTIVE_BUNDLE` equals `BAKED_BUNDLE_ID`, the instance **skips** S3 sync.
+- If they differ, it runs `aws s3 sync` to pull the delta.
+
+**Important: AWS S3 vs local MinIO**
+
+- **Bundles live in AWS S3 only** (`bp-models-<account>-<stage>`). Local MinIO is **dev-only** and not reachable by AWS EC2/SSM/Actions unless you explicitly expose and configure it.
+- **Bucket discovery**:
+  - CDK outputs (DataStack), or
+  - `aws ssm get-parameter --name /bp/<stage>/models/bucket --query Parameter.Value --output text`
+- **Storage config split**:
+  - Media uploads use the default `s3` disk (`AWS_*`) → MinIO locally, S3 in staging/prod.
+  - ComfyUI models/logs use dedicated disks (`COMFYUI_MODELS_*`, `COMFYUI_LOGS_*`) so models stay in AWS S3 even when media is local.
+- **AWS S3 readers**: `build-ami.yml` (Packer), `apply-comfyui-bundle.yml` (SSM), GPU worker boot sync (user-data).
+
 #### One-time setup (per stage)
 
 - **Deploy infrastructure (creates bucket/roles/SSM pointers)**:
@@ -437,6 +454,7 @@ aws ssm get-parameter \
      - `workflow_slug`
      - `models_s3_bucket`: `bp-models-<account>-<stage>`
      - `models_s3_prefix`: `bundles/<workflow_slug>/<bundle_id>`
+     - `bundle_id`: (recommended) stored in the AMI as `/opt/comfyui/.baked_bundle_id` for smart-skip behavior
      - `packer_instance_profile` (usually required): an EC2 instance profile with S3 read to the bundle prefix (Packer’s `aws s3 sync` runs **inside** the build instance)
        - Quick start: create an EC2 role + instance profile and attach `AmazonS3ReadOnlyAccess` (or a prefix-restricted S3 read policy).
    - The workflow writes the AMI alias to `/bp/ami/<workflow_slug>` (data type `aws:ec2:image`).

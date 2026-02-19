@@ -81,6 +81,11 @@ build {
       "else",
       "  echo 'No S3 model bucket configured, skipping model sync'",
       "fi",
+      "if [ -n '${var.bundle_id}' ]; then",
+      "  echo 'Recording baked bundle id...'",
+      "  echo '${var.bundle_id}' | sudo tee /opt/comfyui/.baked_bundle_id > /dev/null",
+      "  sudo chmod 644 /opt/comfyui/.baked_bundle_id",
+      "fi",
     ]
   }
 

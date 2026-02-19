@@ -4,6 +4,7 @@ import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
 import type { WorkflowConfig } from '../config/workflows';
@@ -14,6 +15,7 @@ export interface WorkflowAsgProps {
   readonly workflow: WorkflowConfig;
   readonly apiBaseUrl: string;
   readonly stage: string;
+  readonly modelsBucket: s3.IBucket;
   /** SNS topic ARN for scale-to-zero Lambda trigger */
   readonly scaleToZeroTopicArn?: string;
 }
@@ -26,13 +28,16 @@ export class WorkflowAsg extends Construct {
   constructor(scope: Construct, id: string, props: WorkflowAsgProps) {
     super(scope, id);
 
-    const { vpc, securityGroup, workflow, apiBaseUrl, stage } = props;
+    const { vpc, securityGroup, workflow, apiBaseUrl, stage, modelsBucket } = props;
     const slug = workflow.slug;
 
     // Resolve AMI: prefer SSM parameter, fall back to hardcoded, or use Amazon Linux placeholder
     let machineImage: ec2.IMachineImage;
     if (workflow.amiSsmParameter) {
-      machineImage = ec2.MachineImage.fromSsmParameter(workflow.amiSsmParameter);
+      // Use EC2 native SSM alias syntax so new launches pick up latest AMI without redeploy.
+      machineImage = ec2.MachineImage.genericLinux({
+        [cdk.Aws.REGION]: `resolve:ssm:${workflow.amiSsmParameter}`,
+      });
     } else if (workflow.amiId) {
       machineImage = ec2.MachineImage.genericLinux({ [cdk.Aws.REGION]: workflow.amiId });
     } else {
@@ -54,6 +59,16 @@ export class WorkflowAsg extends Construct {
       actions: ['ssm:GetParameter'],
       resources: [
         `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleet-secret`,
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/assets/${slug}/active_bundle`,
+      ],
+    }));
+
+    // S3 read for ComfyUI asset bundles
+    workerRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:GetObject', 's3:ListBucket'],
+      resources: [
+        modelsBucket.bucketArn,
+        `${modelsBucket.bucketArn}/bundles/${slug}/*`,
       ],
     }));
 
@@ -72,14 +87,35 @@ export class WorkflowAsg extends Construct {
       resources: [`arn:aws:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:log-group:/gpu-workers/${slug}:*`],
     }));
 
+    // Active bundle pointer for this workflow
+    new ssm.StringParameter(this, 'ActiveBundleParam', {
+      parameterName: `/bp/${stage}/assets/${slug}/active_bundle`,
+      stringValue: 'none',
+      description: `Active ComfyUI asset bundle for ${slug} (${stage})`,
+    });
+
     // User data script
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       '#!/bin/bash',
       'set -euo pipefail',
+      'ASSET_LOG="/var/log/comfyui-asset-sync.log"',
+      'touch "$ASSET_LOG"',
+      'exec > >(tee -a "$ASSET_LOG") 2>&1',
       '',
       '# Fetch fleet secret from SSM',
       `FLEET_SECRET=$(aws ssm get-parameter --name "/bp/${stage}/fleet-secret" --with-decryption --query "Parameter.Value" --output text --region ${cdk.Aws.REGION})`,
+      '',
+      '# Resolve active asset bundle for this workflow (optional)',
+      `ACTIVE_BUNDLE=$(aws ssm get-parameter --name "/bp/${stage}/assets/${slug}/active_bundle" --query "Parameter.Value" --output text --region ${cdk.Aws.REGION} 2>/dev/null || echo "none")`,
+      `MODELS_BUCKET="${modelsBucket.bucketName}"`,
+      'if [ -n "$ACTIVE_BUNDLE" ] && [ "$ACTIVE_BUNDLE" != "none" ]; then',
+      '  echo "Syncing ComfyUI assets: bundle=$ACTIVE_BUNDLE"',
+      '  aws s3 sync "s3://$MODELS_BUCKET/bundles/' + slug + '/$ACTIVE_BUNDLE/models/" /opt/comfyui/models/ --delete || true',
+      '  aws s3 sync "s3://$MODELS_BUCKET/bundles/' + slug + '/$ACTIVE_BUNDLE/custom_nodes/" /opt/comfyui/custom_nodes/ --delete || true',
+      'else',
+      '  echo "No active bundle set; skipping asset sync."',
+      'fi',
       '',
       '# Get instance ID from metadata (IMDSv2)',
       'TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")',

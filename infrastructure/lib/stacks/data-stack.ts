@@ -21,8 +21,11 @@ export interface DataStackProps extends cdk.StackProps {
 export class DataStack extends cdk.Stack {
   public readonly dbSecret: secretsmanager.ISecret;
   public readonly redisSecret: secretsmanager.ISecret;
+  public readonly assetOpsSecret: secretsmanager.ISecret;
   public readonly redisEndpoint: string;
   public readonly mediaBucket: s3.IBucket;
+  public readonly modelsBucket: s3.IBucket;
+  public readonly logsBucket: s3.IBucket;
   public readonly dbInstanceId: string;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
@@ -121,7 +124,7 @@ export class DataStack extends cdk.Stack {
     });
 
     // ========================================
-    // S3 Media Bucket
+    // S3 Media Bucket (user uploads / outputs)
     // ========================================
 
     this.mediaBucket = new s3.Bucket(this, 'MediaBucket', {
@@ -150,6 +153,33 @@ export class DataStack extends cdk.Stack {
     });
 
     // ========================================
+    // S3 ComfyUI Models Bucket (model/LoRA/VAE assets)
+    // ========================================
+
+    this.modelsBucket = new s3.Bucket(this, 'ModelsBucket', {
+      bucketName: `bp-models-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      versioned: true,
+      lifecycleRules: [
+        {
+          abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
+        },
+      ],
+      removalPolicy: stage === 'production'
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: stage !== 'production',
+    });
+
+    // Store models bucket name in SSM for tooling/ops
+    new ssm.StringParameter(this, 'ModelsBucketParam', {
+      parameterName: `/bp/${stage}/models/bucket`,
+      stringValue: this.modelsBucket.bucketName,
+    });
+
+    // ========================================
     // S3 Logs Bucket
     // ========================================
 
@@ -169,6 +199,7 @@ export class DataStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
+    this.logsBucket = logsBucket;
 
     // ========================================
     // CloudFront Distribution (media delivery)
@@ -217,6 +248,16 @@ export class DataStack extends cdk.Stack {
       description: 'OAuth client secrets (Google, Apple, TikTok). Set as JSON after deploy.',
     });
 
+    // Asset ops secret (for GitHub Actions -> backend audit logging)
+    this.assetOpsSecret = new secretsmanager.Secret(this, 'AssetOpsSecret', {
+      secretName: `/bp/${stage}/asset-ops/secret`,
+      description: 'Shared secret for asset ops automation (e.g., GitHub Actions).',
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 32,
+      },
+    });
+
     // ========================================
     // Outputs
     // ========================================
@@ -224,6 +265,7 @@ export class DataStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'RdsEndpoint', { value: dbInstance.instanceEndpoint.hostname });
     new cdk.CfnOutput(this, 'RedisEndpoint', { value: redis.attrRedisEndpointAddress });
     new cdk.CfnOutput(this, 'MediaBucketName', { value: this.mediaBucket.bucketName });
+    new cdk.CfnOutput(this, 'ModelsBucketName', { value: this.modelsBucket.bucketName });
     new cdk.CfnOutput(this, 'CloudFrontDomain', { value: distribution.distributionDomainName });
     new cdk.CfnOutput(this, 'LogsBucketName', { value: logsBucket.bucketName });
 

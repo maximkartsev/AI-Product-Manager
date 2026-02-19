@@ -329,6 +329,136 @@ aws ecs run-task \
 
 ## GPU Workers
 
+### ComfyUI Asset Bundles (models / LoRAs / VAEs)
+
+We manage ComfyUI assets as **versioned bundles** in S3. Each bundle is a self-contained prefix that can be synced to `/opt/comfyui` on GPU nodes (dev or autoscaled).
+
+**S3 layout**
+
+- Models bucket: `bp-models-<account>-<stage>`
+- Upload staging: `uploads/<workflow_slug>/<uuid>/<uuid>.<ext>`
+- Bundles: `bundles/<workflow_slug>/<bundle_id>/`
+  - `models/` → ComfyUI `models/*` (checkpoints, loras, vae, etc.)
+  - `custom_nodes/` → ComfyUI `custom_nodes/*`
+  - `manifest.json` → bundle manifest
+
+**Kind → target path mapping**
+
+- `checkpoint` → `models/checkpoints/`
+- `lora` → `models/loras/`
+- `vae` → `models/vae/`
+- `embedding` → `models/embeddings/`
+- `controlnet` → `models/controlnet/`
+- `custom_node` → `custom_nodes/`
+- `other` → `models/other/`
+
+**Manifest schema (stored at `.../manifest.json`)**
+
+```json
+{
+  "bundle_id": "uuid",
+  "workflow_slug": "image-to-video",
+  "created_at": "2026-02-18T12:34:56Z",
+  "notes": "Optional notes",
+  "assets": [
+    {
+      "kind": "checkpoint | lora | vae | embedding | controlnet | custom_node | other",
+      "original_filename": "my-model.safetensors",
+      "size_bytes": 123456789,
+      "sha256": "optional sha256",
+      "s3_key": "bundles/image-to-video/<bundle_id>/models/checkpoints/my-model.safetensors",
+      "target_path": "models/checkpoints/my-model.safetensors"
+    }
+  ]
+}
+```
+
+**Active bundle pointer**
+
+For each workflow + stage, the active bundle is stored in SSM:
+
+```
+/bp/<stage>/assets/<workflow_slug>/active_bundle
+```
+
+GPU nodes sync the active bundle on boot. To promote a new bundle you:
+1) build AMI (Packer), 2) update the SSM bundle pointer, 3) roll the ASG.
+
+#### One-time setup (per stage)
+
+- **Deploy infrastructure (creates bucket/roles/SSM pointers)**:
+
+```bash
+# Example (staging)
+cd infrastructure
+npx cdk deploy bp-staging-data bp-staging-compute bp-staging-gpu
+```
+
+- **Deploy updated backend/frontend code** (so the new admin endpoints + `/admin/assets` UI exist):
+  - See [Updating Application Code (CI/CD)](#updating-application-code-cicd) and run the `Deploy` workflow.
+
+- **Run backend migrations** (creates central DB tables for assets/bundles/audit logs):
+  - Via GitHub Actions: run `Deploy` and approve the `run-migrations` job, or
+  - Via CLI (staging example): see [Database Migrations](#database-migrations).
+
+- **Set required secrets** (if not already done):
+  - Fleet secret: `/bp/<stage>/fleet-secret` (SSM)
+  - Laravel `APP_KEY`: `/bp/<stage>/laravel/app-key` (Secrets Manager)
+
+- **Optional: enable GitHub “apply bundle” audit logging**:
+  - Read the asset-ops secret:
+
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id "/bp/<stage>/asset-ops/secret" \
+  --query SecretString --output text
+```
+
+  - Store it as GitHub secret `ASSET_OPS_SECRET`
+  - Set GitHub secret `ASSET_OPS_API_URL` to your backend API base, e.g. `https://app.example.com/api`
+
+#### Runbook: create → activate → promote
+
+1. **Upload asset files**: open **Admin → Assets** (`/admin/assets`) and upload a model/LoRA/VAE/custom node file.
+2. **Create a bundle**: select the workflow, select asset files, add notes, click **Create Bundle**.
+   - This copies files into `bundles/<workflow_slug>/<bundle_id>/...` and writes `manifest.json`.
+3. **Activate bundle**:
+   - Click **Activate Staging** or **Activate Prod**.
+   - This writes the active pointer in SSM:
+
+```bash
+aws ssm get-parameter \
+  --name "/bp/<stage>/assets/<workflow_slug>/active_bundle" \
+  --query "Parameter.Value" --output text
+```
+
+4. **Bake an AMI from the bundle (recommended for stage/prod)**:
+   - Run GitHub Actions → **Build GPU AMI** (`build-ami.yml`) with:
+     - `workflow_slug`
+     - `models_s3_bucket`: `bp-models-<account>-<stage>`
+     - `models_s3_prefix`: `bundles/<workflow_slug>/<bundle_id>`
+     - `packer_instance_profile` (usually required): an EC2 instance profile with S3 read to the bundle prefix (Packer’s `aws s3 sync` runs **inside** the build instance)
+       - Quick start: create an EC2 role + instance profile and attach `AmazonS3ReadOnlyAccess` (or a prefix-restricted S3 read policy).
+   - The workflow writes the AMI alias to `/bp/ami/<workflow_slug>` (data type `aws:ec2:image`).
+5. **Roll the ASG** so new instances pick up the new AMI + active bundle:
+   - AWS Console → Auto Scaling Groups → start **Instance refresh**, or
+   - CLI (example):
+
+```bash
+aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name "asg-<stage>-<workflow_slug>" \
+  --preferences '{"MinHealthyPercentage":90,"InstanceWarmup":300}'
+```
+
+   - Scale-to-zero → scale up (for stage), or
+   - Replace instances via your standard rollout procedure.
+
+#### Troubleshooting
+
+- **Boot sync logs**: `/var/log/comfyui-asset-sync.log` on the GPU instance (and `journalctl -u comfyui.service` / `-u comfyui-worker.service`).
+- **No active bundle**: the default SSM value is `none`, which skips sync.
+- **Wrong AMI in ASG**: verify `/bp/ami/<workflow_slug>` exists and is `aws:ec2:image`.
+
 ### Building AMIs (Packer)
 
 AMIs are built via GitHub Actions (`.github/workflows/build-ami.yml`, manual dispatch):
@@ -363,6 +493,22 @@ Packer provisioning steps:
 2. `install-comfyui.sh` — ComfyUI server at `/opt/comfyui`
 3. `install-python-worker.sh` — Worker script at `/opt/worker`
 4. Model sync from S3 (optional, if `models_s3_bucket` var is set)
+
+### Apply Bundle to Dev Instance (manual)
+
+Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **running dev GPU instance**:
+
+**Inputs:**
+- `instance_id` — EC2 instance ID
+- `workflow_slug` — e.g. `image-to-video`
+- `bundle_id` — bundle UUID
+- `models_bucket` — `bp-models-<account>-<stage>`
+- `logs_bucket` — optional, `bp-logs-<account>-<stage>`
+
+**Requirements:**
+- The dev instance must have **SSM** enabled and an instance profile with **S3 read** to the models bucket.
+- The workflow will upload SSM command output to the logs bucket (if provided).
+- If `ASSET_OPS_API_URL` + `ASSET_OPS_SECRET` are set, the workflow also records an audit log via the backend.
 
 ### Adding a New Workflow
 
@@ -469,7 +615,9 @@ Defaults and constraints (from backend config):
   - Output: AMI ID written to SSM at `/bp/ami/<workflow-slug>`.
 
 - **Optional model sync** (Packer):
-  - Set `models_s3_bucket` and `models_s3_prefix` to sync models into `/opt/comfyui/models/` during AMI build.
+  - Set `models_s3_bucket` and `models_s3_prefix` (bundle root like `bundles/<workflow_slug>/<bundle_id>`) to sync during AMI build:
+    - `.../models/` → `/opt/comfyui/models/`
+    - `.../custom_nodes/` → `/opt/comfyui/custom_nodes/` (optional)
 
 ## Secrets Reference
 
@@ -479,8 +627,11 @@ Defaults and constraints (from backend config):
 | Redis AUTH token | Secrets Manager | `/bp/<stage>/redis/auth-token` | Yes (CDK) | — |
 | Laravel APP_KEY | Secrets Manager | `/bp/<stage>/laravel/app-key` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/laravel/app-key --secret-string "base64:..."` |
 | Fleet secret | SSM Parameter Store | `/bp/<stage>/fleet-secret` | No (`CHANGE_ME_AFTER_DEPLOY`) | `aws ssm put-parameter --name /bp/<stage>/fleet-secret --value "..." --type String --overwrite` |
+| Asset ops secret | Secrets Manager | `/bp/<stage>/asset-ops/secret` | Yes (CDK) | Use the secret value as `ASSET_OPS_SECRET` in GitHub Actions |
+| Models bucket | SSM Parameter Store | `/bp/<stage>/models/bucket` | Yes (CDK) | — |
 | OAuth secrets | Secrets Manager | `/bp/<stage>/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/oauth/secrets --secret-string '{"google_client_secret":"..."}'` |
-| GPU AMI IDs | SSM Parameter Store | `/bp/ami/<workflow-slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/<slug> --value ami-xxx --type String --overwrite` |
+| GPU AMI IDs | SSM Parameter Store | `/bp/ami/<workflow-slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
+| Active asset bundle | SSM Parameter Store | `/bp/<stage>/assets/<workflow_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/assets/<slug>/active_bundle --value "<bundle_id>" --type String --overwrite` |
 | Redis endpoint | SSM Parameter Store | `/bp/<stage>/redis/endpoint` | Yes (CDK) | — |
 
 ## Monitoring & Alerts
@@ -661,8 +812,28 @@ test-frontend ─┘                     └──► deploy-infrastructure*
 **Inputs:**
 - `workflow_slug` (required) — e.g. `image-to-video`
 - `instance_type` (optional, default: `g4dn.xlarge`) — build instance
+- `models_s3_bucket` (optional) — models bucket (e.g. `bp-models-<account>-<stage>`)
+- `models_s3_prefix` (optional) — bundle prefix (e.g. `bundles/image-to-video/<bundle_id>`)
+- `bundle_id` (optional) — used for AMI tagging/audit
+- `packer_instance_profile` (recommended / usually required) — instance profile name/ARN with S3 read access (used by `aws s3 sync` inside the build instance)
 
 **Output:** AMI ID stored in SSM at `/bp/ami/<workflow_slug>`.
+
+### `apply-comfyui-bundle.yml`
+
+**Trigger:** Manual dispatch only (`workflow_dispatch`).
+
+**Purpose:** Sync a chosen bundle to a **running dev GPU instance** via SSM and restart ComfyUI (and the worker).
+
+**Inputs:**
+- `instance_id` (required)
+- `workflow_slug` (required)
+- `bundle_id` (required)
+- `models_bucket` (required) — `bp-models-<account>-<stage>`
+- `logs_bucket` (optional) — `bp-logs-<account>-<stage>`
+
+**Optional audit logging:**
+- Set GitHub secrets `ASSET_OPS_API_URL` and `ASSET_OPS_SECRET` to record a `dev_bundle_applied` event via `POST /api/ops/comfyui-assets/sync-logs`.
 
 ### Required GitHub Secrets
 
@@ -671,6 +842,8 @@ test-frontend ─┘                     └──► deploy-infrastructure*
 | `AWS_DEPLOY_ROLE_ARN` | IAM role ARN for OIDC federation (GitHub Actions → AWS) |
 | `PRIVATE_SUBNET_IDS` | JSON array of private subnet IDs (for migration tasks), e.g. `["subnet-123","subnet-456"]` |
 | `BACKEND_SG_ID` | Backend security group ID (for migration tasks), e.g. `sg-0123abcd` |
+| `ASSET_OPS_API_URL` | (Optional) Backend API base URL for asset ops logging (used by apply bundle workflow) |
+| `ASSET_OPS_SECRET` | (Optional) Shared secret for asset ops logging (Secrets Manager `/bp/<stage>/asset-ops/secret`) |
 
 ### GitHub Actions to AWS (OIDC)
 
@@ -736,6 +909,9 @@ Recommended (split by workflow / least privilege, tighten resources later):
 - For `.github/workflows/build-ami.yml` (Packer AMI build + SSM):
   - `AmazonEC2FullAccess`
   - `AmazonSSMFullAccess` (or restrict to `ssm:PutParameter` on `/bp/ami/*`)
+- For `.github/workflows/apply-comfyui-bundle.yml` (SSM + optional logs upload):
+  - Allow `ssm:SendCommand` and `ssm:GetCommandInvocation` to the target instance(s)
+  - If `logs_bucket` is used, allow `s3:PutObject` to `bp-logs-<account>-<stage>/asset-sync/*`
 
 Example `iam:PassRole` inline policy (tighten `Resource` to your ECS task roles if you know them):
 

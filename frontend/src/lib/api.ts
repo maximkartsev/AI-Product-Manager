@@ -1225,6 +1225,232 @@ export function initWorkflowAssetUpload(payload: WorkflowUploadInitRequest): Pro
   return apiPost<WorkflowUploadInitData>("/admin/workflows/uploads", payload);
 }
 
+// ---- Admin ComfyUI Assets
+
+export type ComfyUiAssetFile = {
+  id: number;
+  workflow_id: number;
+  kind: string;
+  original_filename: string;
+  s3_key: string;
+  content_type?: string | null;
+  size_bytes?: number | null;
+  sha256?: string | null;
+  uploaded_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  workflow?: {
+    id: number;
+    slug: string;
+    name: string;
+  };
+};
+
+export type ComfyUiAssetBundle = {
+  id: number;
+  workflow_id: number;
+  bundle_id: string;
+  s3_prefix: string;
+  notes?: string | null;
+  manifest?: Record<string, unknown> | null;
+  active_staging_at?: string | null;
+  active_production_at?: string | null;
+  created_by_user_id?: number | null;
+  created_by_email?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  workflow?: {
+    id: number;
+    slug: string;
+    name: string;
+  };
+};
+
+export type ComfyUiAssetAuditLog = {
+  id: number;
+  bundle_id?: number | null;
+  asset_file_id?: number | null;
+  event: string;
+  notes?: string | null;
+  metadata?: Record<string, unknown> | null;
+  artifact_s3_key?: string | null;
+  artifact_download_url?: string | null;
+  artifact_expires_in?: number | null;
+  actor_user_id?: number | null;
+  actor_email?: string | null;
+  created_at?: string | null;
+};
+
+export type ComfyUiAssetFilesIndexData = {
+  items: ComfyUiAssetFile[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
+  filters?: FilterValue[];
+};
+
+export type ComfyUiAssetBundlesIndexData = {
+  items: ComfyUiAssetBundle[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
+  filters?: FilterValue[];
+};
+
+export type ComfyUiAssetAuditLogsIndexData = {
+  items: ComfyUiAssetAuditLog[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
+  filters?: FilterValue[];
+};
+
+export type ComfyUiAssetUploadInitRequest = {
+  workflow_id: number;
+  kind: string;
+  mime_type: string;
+  size_bytes: number;
+  original_filename: string;
+  sha256?: string | null;
+};
+
+export type ComfyUiAssetUploadInitData = {
+  path: string;
+  upload_url: string;
+  upload_headers: Record<string, string | string[]>;
+  expires_in: number;
+};
+
+export type ComfyUiAssetFileCreateRequest = {
+  workflow_id: number;
+  kind: string;
+  original_filename: string;
+  s3_key: string;
+  content_type?: string | null;
+  size_bytes?: number | null;
+  sha256?: string | null;
+};
+
+export type ComfyUiAssetBundleCreateRequest = {
+  workflow_id: number;
+  asset_file_ids: number[];
+  notes?: string | null;
+};
+
+export type ComfyUiAssetBundleActivateRequest = {
+  stage: "staging" | "production";
+  notes?: string | null;
+};
+
+export function initComfyUiAssetUpload(payload: ComfyUiAssetUploadInitRequest): Promise<ComfyUiAssetUploadInitData> {
+  return apiPost<ComfyUiAssetUploadInitData>("/admin/comfyui-assets/uploads", payload);
+}
+
+export function createComfyUiAssetFile(payload: ComfyUiAssetFileCreateRequest): Promise<ComfyUiAssetFile> {
+  return apiPost<ComfyUiAssetFile>("/admin/comfyui-assets/files", payload);
+}
+
+export async function getComfyUiAssetFiles(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<ComfyUiAssetFilesIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+  if (params.search) query.set("search", params.search);
+  if (params.order) query.set("order", params.order);
+  appendFilterParams(query, params.filters);
+  return apiRequest<ComfyUiAssetFilesIndexData>(`/admin/comfyui-assets/files?${query.toString()}`, { method: "GET" });
+}
+
+export async function getComfyUiAssetBundles(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<ComfyUiAssetBundlesIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+  if (params.search) query.set("search", params.search);
+  if (params.order) query.set("order", params.order);
+  appendFilterParams(query, params.filters);
+  return apiRequest<ComfyUiAssetBundlesIndexData>(`/admin/comfyui-assets/bundles?${query.toString()}`, { method: "GET" });
+}
+
+export function createComfyUiAssetBundle(payload: ComfyUiAssetBundleCreateRequest): Promise<ComfyUiAssetBundle> {
+  return apiPost<ComfyUiAssetBundle>("/admin/comfyui-assets/bundles", payload);
+}
+
+export function updateComfyUiAssetBundle(id: number, payload: { notes?: string | null }): Promise<ComfyUiAssetBundle> {
+  return apiRequest<ComfyUiAssetBundle>(`/admin/comfyui-assets/bundles/${id}`, { method: "PATCH", body: payload });
+}
+
+export function activateComfyUiAssetBundle(id: number, payload: ComfyUiAssetBundleActivateRequest): Promise<ComfyUiAssetBundle> {
+  return apiPost<ComfyUiAssetBundle>(`/admin/comfyui-assets/bundles/${id}/activate`, payload);
+}
+
+export function getComfyUiAssetBundleManifest(id: number): Promise<{
+  bundle_id: string;
+  manifest_key: string;
+  download_url: string;
+  expires_in: number;
+}> {
+  return apiGet(`/admin/comfyui-assets/bundles/${id}/manifest`);
+}
+
+export async function getComfyUiAssetAuditLogs(params: {
+  page?: number;
+  perPage?: number;
+  event?: string | string[];
+  bundle_id?: number;
+  from_date?: string;
+  to_date?: string;
+  order?: string;
+} = {}): Promise<ComfyUiAssetAuditLogsIndexData> {
+  const query: Query = {
+    page: params.page ?? 1,
+    perPage: params.perPage ?? 20,
+    event: params.event ? (Array.isArray(params.event) ? params.event.join(",") : params.event) : undefined,
+    bundle_id: params.bundle_id ?? undefined,
+    from_date: params.from_date ?? undefined,
+    to_date: params.to_date ?? undefined,
+    order: params.order ?? undefined,
+  };
+  return apiGet<ComfyUiAssetAuditLogsIndexData>("/admin/comfyui-assets/audit-logs", query);
+}
+
+export async function exportComfyUiAssetAuditLogs(params: {
+  event?: string | string[];
+  bundle_id?: number;
+  from_date?: string;
+  to_date?: string;
+} = {}) {
+  const query: Query = {
+    event: params.event ? (Array.isArray(params.event) ? params.event.join(",") : params.event) : undefined,
+    bundle_id: params.bundle_id ?? undefined,
+    from_date: params.from_date ?? undefined,
+    to_date: params.to_date ?? undefined,
+    format: "json",
+  };
+  return apiGet<{ items: ComfyUiAssetAuditLog[]; totalItems: number }>("/admin/comfyui-assets/audit-logs/export", query);
+}
+
 // ---- Admin Workers
 
 export async function getAdminWorkers(params: {

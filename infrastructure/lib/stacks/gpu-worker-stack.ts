@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import type { BpEnvironmentConfig } from '../config/environment';
 import type { WorkflowConfig } from '../config/workflows';
@@ -12,13 +13,14 @@ export interface GpuWorkerStackProps extends cdk.StackProps {
   readonly sgGpuWorkers: ec2.ISecurityGroup;
   readonly workflows: WorkflowConfig[];
   readonly apiBaseUrl: string;
+  readonly modelsBucket: s3.IBucket;
 }
 
 export class GpuWorkerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: GpuWorkerStackProps) {
     super(scope, id, props);
 
-    const { config, vpc, sgGpuWorkers, workflows, apiBaseUrl } = props;
+    const { config, vpc, sgGpuWorkers, workflows, apiBaseUrl, modelsBucket } = props;
     const stage = config.stage;
 
     // Create per-workflow ASGs
@@ -35,6 +37,7 @@ export class GpuWorkerStack extends cdk.Stack {
         workflow,
         apiBaseUrl,
         stage,
+        modelsBucket,
       });
 
       workflowAsgs.push({

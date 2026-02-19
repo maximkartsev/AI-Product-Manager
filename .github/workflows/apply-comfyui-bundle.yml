@@ -1,0 +1,105 @@
+name: Apply ComfyUI Bundle to Dev Instance
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_id:
+        description: 'EC2 instance ID (dev GPU node)'
+        required: true
+        type: string
+      workflow_slug:
+        description: 'Workflow slug (e.g. image-to-video)'
+        required: true
+        type: string
+      bundle_id:
+        description: 'Asset bundle ID to sync'
+        required: true
+        type: string
+      models_bucket:
+        description: 'S3 bucket with asset bundles (bp-models-<account>-<stage>)'
+        required: true
+        type: string
+      logs_bucket:
+        description: 'Optional: S3 bucket for logs (bp-logs-<account>-<stage>)'
+        required: false
+        type: string
+      notes:
+        description: 'Optional notes for audit log'
+        required: false
+        type: string
+      aws_region:
+        description: 'AWS region'
+        required: false
+        default: 'us-east-1'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  apply-bundle:
+    name: Apply Bundle via SSM
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.aws_region }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Send SSM command
+        id: send
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ inputs.instance_id }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Apply ComfyUI asset bundle" \
+            --parameters commands="aws s3 sync s3://${{ inputs.models_bucket }}/bundles/${{ inputs.workflow_slug }}/${{ inputs.bundle_id }}/models/ /opt/comfyui/models/ --delete && aws s3 sync s3://${{ inputs.models_bucket }}/bundles/${{ inputs.workflow_slug }}/${{ inputs.bundle_id }}/custom_nodes/ /opt/comfyui/custom_nodes/ --delete && sudo systemctl restart comfyui.service && (sudo systemctl restart comfyui-worker.service || true)" \
+            --query "Command.CommandId" --output text)
+          echo "command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
+          echo "SSM command ID: $COMMAND_ID"
+
+      - name: Wait for command completion
+        run: |
+          aws ssm wait command-executed \
+            --command-id "${{ steps.send.outputs.command_id }}" \
+            --instance-id "${{ inputs.instance_id }}"
+
+      - name: Fetch command output
+        run: |
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.send.outputs.command_id }}" \
+            --instance-id "${{ inputs.instance_id }}" \
+            --output json > command-output.json
+          cat command-output.json
+
+      - name: Upload command output (optional)
+        if: inputs.logs_bucket != ''
+        run: |
+          LOG_KEY="asset-sync/${{ inputs.workflow_slug }}/${{ inputs.bundle_id }}/$(date -u +%Y%m%dT%H%M%SZ)-${{ inputs.instance_id }}.json"
+          aws s3 cp command-output.json "s3://${{ inputs.logs_bucket }}/$LOG_KEY"
+          echo "log_key=$LOG_KEY" >> $GITHUB_OUTPUT
+        id: upload
+
+      - name: Record audit log (optional)
+        if: ${{ secrets.ASSET_OPS_API_URL != '' && secrets.ASSET_OPS_SECRET != '' }}
+        env:
+          ASSET_OPS_API_URL: ${{ secrets.ASSET_OPS_API_URL }}
+          ASSET_OPS_SECRET: ${{ secrets.ASSET_OPS_SECRET }}
+        run: |
+          LOG_KEY="${{ steps.upload.outputs.log_key }}"
+          payload=$(jq -n \
+            --arg bundle_id "${{ inputs.bundle_id }}" \
+            --arg event "dev_bundle_applied" \
+            --arg notes "${{ inputs.notes }}" \
+            --arg artifact_s3_key "$LOG_KEY" \
+            --arg workflow_slug "${{ inputs.workflow_slug }}" \
+            --arg instance_id "${{ inputs.instance_id }}" \
+            '{bundle_id:$bundle_id,event:$event,notes:$notes,artifact_s3_key:$artifact_s3_key,metadata:{workflow_slug:$workflow_slug,instance_id:$instance_id}}')
+          curl -sS -X POST "$ASSET_OPS_API_URL/ops/comfyui-assets/sync-logs" \
+            -H "Content-Type: application/json" \
+            -H "X-Asset-Ops-Secret: $ASSET_OPS_SECRET" \
+            -d "$payload"

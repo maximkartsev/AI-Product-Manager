@@ -5,6 +5,8 @@ Launch a single GPU instance with the ComfyUI web UI accessible from the interne
 ## Prerequisites
 
 - **AWS CLI** configured with credentials (`aws configure`)
+  - Your AWS identity must be able to use **EC2** (launch/stop instances, create security groups) and read **SSM Parameter Store** (to resolve the AMI from `/bp/ami/<workflow-slug>`).
+- **S3 read access** to the models bucket (required only if you plan to apply bundles via the GitHub Action)
 - **Production AMI** built via Packer and registered in SSM at `/bp/ami/<workflow-slug>` (or pass `AMI_ID` directly)
 - **EC2 key pair** (optional — only needed for SSH)
 - **Session Manager** (optional) requires an instance profile with `AmazonSSMManagedInstanceCore`
@@ -29,6 +31,17 @@ Or run it explicitly with bash:
 ```bash
 bash ./launch.sh
 ```
+
+## Apply Bundle to Running Dev Instance (GitHub Action)
+
+If you’re iterating on models/LoRAs/VAEs, you can sync a bundle onto the **running** dev instance without recreating it:
+
+1. Ensure the instance has an **SSM-enabled** instance profile (e.g. `AmazonSSMManagedInstanceCore`).
+2. Ensure the instance role has **S3 read** to the models bucket (`bp-models-<account>-<stage>`).
+3. Run the workflow `.github/workflows/apply-comfyui-bundle.yml` with:
+   - `instance_id`, `workflow_slug`, `bundle_id`, `models_bucket`
+
+The workflow will `aws s3 sync` the bundle to `/opt/comfyui` and restart `comfyui.service`.
 
 If you see errors like `$'\r': command not found`, your scripts were checked out with Windows (CRLF) line endings. Fix with:
 
@@ -233,6 +246,63 @@ sudo systemctl status comfyui
 
 # Check ComfyUI logs
 sudo journalctl -u comfyui -f
+```
+
+**ERROR: Could not resolve AMI**
+
+`./launch.sh` resolves the AMI ID from SSM at `/bp/ami/<workflow-slug>` (default slug: `image-to-video`).
+
+- If the parameter doesn’t exist, either create it (see “Build / Register the AMI”) or pass `AMI_ID=ami-...` when launching.
+- If you see `AccessDeniedException` for `ssm:GetParameter`, your AWS identity lacks SSM read permissions. You can fix it by attaching `AmazonSSMReadOnlyAccess`, or by adding this minimal inline policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadGpuAmiFromSsm",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter"],
+      "Resource": "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/bp/ami/*"
+    }
+  ]
+}
+```
+
+**UnauthorizedOperation / AccessDenied for EC2**
+
+If you see errors like `not authorized to perform: ec2:DescribeVpcs` (or `RunInstances`, `CreateSecurityGroup`, etc.), your AWS identity lacks EC2 permissions required by `launch.sh` / `shutdown.sh`.
+
+Quick fix (broad): attach the AWS managed policy **`AmazonEC2FullAccess`**.
+
+Minimal inline policy (covers what the dev-gpu scripts use):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DevGpuEc2",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeInstances",
+        "ec2:DescribeSecurityGroups",
+        "ec2:RunInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:CreateTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
 ```
 
 **"Connection refused" or timeout**

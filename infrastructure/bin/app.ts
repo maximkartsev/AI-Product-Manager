@@ -78,8 +78,11 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
   sgFrontend: network.sgFrontend,
   dbSecret: data.dbSecret,
   redisSecret: data.redisSecret,
+  assetOpsSecret: data.assetOpsSecret,
   redisEndpoint: data.redisEndpoint,
   mediaBucket: data.mediaBucket,
+  modelsBucket: data.modelsBucket,
+  logsBucket: data.logsBucket,
   description: 'ECS Fargate cluster, ALB, backend + frontend services',
 });
 compute.addDependency(data);
@@ -92,6 +95,7 @@ const gpu = new GpuWorkerStack(app, `${prefix}-gpu`, {
   sgGpuWorkers: network.sgGpuWorkers,
   workflows: WORKFLOWS,
   apiBaseUrl: compute.apiBaseUrl,
+  modelsBucket: data.modelsBucket,
   description: 'Per-workflow GPU ASGs with Spot instances and scale-to-zero',
 });
 gpu.addDependency(compute);

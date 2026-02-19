@@ -20,8 +20,11 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly sgFrontend: ec2.ISecurityGroup;
   readonly dbSecret: secretsmanager.ISecret;
   readonly redisSecret: secretsmanager.ISecret;
+  readonly assetOpsSecret: secretsmanager.ISecret;
   readonly redisEndpoint: string;
   readonly mediaBucket: s3.IBucket;
+  readonly modelsBucket: s3.IBucket;
+  readonly logsBucket: s3.IBucket;
 }
 
 export class ComputeStack extends cdk.Stack {
@@ -35,7 +38,7 @@ export class ComputeStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
 
-    const { config, vpc, sgAlb, sgBackend, sgFrontend, dbSecret, redisSecret, redisEndpoint, mediaBucket } = props;
+    const { config, vpc, sgAlb, sgBackend, sgFrontend, dbSecret, redisSecret, assetOpsSecret, redisEndpoint, mediaBucket, modelsBucket, logsBucket } = props;
     const stage = config.stage;
     const backendRepo = ecr.Repository.fromRepositoryName(this, 'BackendRepo', `bp-backend-${stage}`);
     const frontendRepo = ecr.Repository.fromRepositoryName(this, 'FrontendRepo', `bp-frontend-${stage}`);
@@ -153,8 +156,10 @@ export class ComputeStack extends cdk.Stack {
       },
     });
 
-    // Grant task role access to S3 media bucket (presigned URLs)
+    // Grant task role access to S3 buckets
     mediaBucket.grantReadWrite(backendTaskDef.taskRole);
+    modelsBucket.grantReadWrite(backendTaskDef.taskRole);
+    logsBucket.grantRead(backendTaskDef.taskRole);
 
     // Grant CloudWatch PutMetricData for workers:publish-metrics
     backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
@@ -163,6 +168,14 @@ export class ComputeStack extends cdk.Stack {
       conditions: {
         StringEquals: { 'cloudwatch:namespace': 'ComfyUI/Workers' },
       },
+    }));
+
+    // Allow backend to update active asset bundle pointer in SSM
+    backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['ssm:PutParameter', 'ssm:GetParameter'],
+      resources: [
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/assets/*/active_bundle`,
+      ],
     }));
 
     const backendLogGroup = new logs.LogGroup(this, 'BackendLogs', {
@@ -207,7 +220,12 @@ export class ComputeStack extends cdk.Stack {
       QUEUE_CONNECTION: 'database',
       FILESYSTEM_DISK: 's3',
       AWS_DEFAULT_REGION: cdk.Aws.REGION,
+      COMFYUI_AWS_REGION: cdk.Aws.REGION,
       AWS_BUCKET: mediaBucket.bucketName,
+      COMFYUI_MODELS_BUCKET: modelsBucket.bucketName,
+      COMFYUI_MODELS_DISK: 'comfyui_models',
+      COMFYUI_LOGS_BUCKET: logsBucket.bucketName,
+      COMFYUI_LOGS_DISK: 'comfyui_logs',
     };
 
     const phpSecrets: Record<string, ecs.Secret> = {
@@ -222,6 +240,7 @@ export class ComputeStack extends cdk.Stack {
       TENANT_POOL_2_DB_USERNAME: ecs.Secret.fromSecretsManager(dbSecret, 'username'),
       TENANT_POOL_2_DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
       COMFYUI_FLEET_SECRET: ecs.Secret.fromSsmParameter(fleetSecretParam),
+      COMFYUI_ASSET_OPS_SECRET: ecs.Secret.fromSecretsManager(assetOpsSecret),
     };
 
     // Container 2: PHP-FPM (Laravel app)

@@ -38,5 +38,17 @@ variable "models_s3_bucket" {
 variable "models_s3_prefix" {
   type        = string
   default     = ""
-  description = "S3 prefix for model files (e.g. 'models/image-to-video/')"
+  description = "S3 prefix for a ComfyUI asset bundle root (e.g. 'bundles/image-to-video/<bundle_id>')"
+}
+
+variable "bundle_id" {
+  type        = string
+  default     = ""
+  description = "Optional bundle ID for tagging/audit"
+}
+
+variable "packer_instance_profile" {
+  type        = string
+  default     = ""
+  description = "Optional IAM instance profile for Packer build (S3 read access)"
 }

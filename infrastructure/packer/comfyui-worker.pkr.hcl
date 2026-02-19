@@ -13,6 +13,9 @@ source "amazon-ebs" "comfyui" {
   region        = var.aws_region
   ssh_username  = var.ssh_username
 
+  # Optional instance profile for S3 model sync
+  iam_instance_profile = var.packer_instance_profile != "" ? var.packer_instance_profile : null
+
   source_ami_filter {
     filters = {
       name                = var.source_ami_filter_name
@@ -36,6 +39,7 @@ source "amazon-ebs" "comfyui" {
     WorkflowSlug = var.workflow_slug
     BuildTime    = "{{timestamp}}"
     ManagedBy    = "packer"
+    BundleId     = var.bundle_id
   }
 
   ami_description = "ComfyUI GPU worker AMI for workflow: ${var.workflow_slug}"
@@ -69,7 +73,10 @@ build {
     inline = [
       "if [ -n '${var.models_s3_bucket}' ] && [ -n '${var.models_s3_prefix}' ]; then",
       "  echo 'Syncing models from S3...'",
-      "  aws s3 sync s3://${var.models_s3_bucket}/${var.models_s3_prefix} /opt/comfyui/models/ --no-progress",
+      "  PREFIX='${var.models_s3_prefix}'",
+      "  PREFIX=${PREFIX%/}",
+      "  aws s3 sync s3://${var.models_s3_bucket}/${PREFIX}/models/ /opt/comfyui/models/ --no-progress",
+      "  aws s3 sync s3://${var.models_s3_bucket}/${PREFIX}/custom_nodes/ /opt/comfyui/custom_nodes/ --no-progress || true",
       "  echo 'Model sync complete'",
       "else",
       "  echo 'No S3 model bucket configured, skipping model sync'",

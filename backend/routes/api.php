@@ -8,7 +8,9 @@ use App\Http\Middleware\InitializeTenancyByDomainOrUser;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureWorkerToken;
 use App\Http\Middleware\EnsureFleetSecret;
+use App\Http\Middleware\EnsureAssetOpsSecret;
 use App\Http\Controllers\ComfyUiWorkerController;
+use App\Http\Controllers\ComfyUiAssetOpsController;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
 use App\Http\Controllers\AiJobController;
 use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
@@ -33,6 +35,7 @@ use \App\Http\Controllers\Admin\WorkflowsController as AdminWorkflowsController;
 use \App\Http\Controllers\Admin\WorkersController as AdminWorkersController;
 use \App\Http\Controllers\Admin\AuditLogsController as AdminAuditLogsController;
 use \App\Http\Controllers\Admin\WorkloadController as AdminWorkloadController;
+use \App\Http\Controllers\Admin\ComfyUiAssetsController as AdminComfyUiAssetsController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -91,6 +94,13 @@ Route::middleware([EnsureWorkerToken::class])->prefix('worker')->group(function 
     Route::post('deregister', [ComfyUiWorkerController::class, 'deregister']);
 });
 
+// Asset ops endpoints (central, secret-protected)
+Route::middleware([EnsureAssetOpsSecret::class])
+    ->prefix('ops/comfyui-assets')
+    ->group(function () {
+        Route::post('/sync-logs', [ComfyUiAssetOpsController::class, 'storeSyncLog']);
+    });
+
 /**
  * Tenant routes (tenant resolved by domain/subdomain).
  */
@@ -144,6 +154,18 @@ Route::middleware([
             Route::get('/workflows/{id}', [AdminWorkflowsController::class, 'show']);
             Route::patch('/workflows/{id}', [AdminWorkflowsController::class, 'update']);
             Route::delete('/workflows/{id}', [AdminWorkflowsController::class, 'destroy']);
+
+            // ComfyUI Assets
+            Route::get('/comfyui-assets/files', [AdminComfyUiAssetsController::class, 'filesIndex']);
+            Route::post('/comfyui-assets/uploads', [AdminComfyUiAssetsController::class, 'createUpload']);
+            Route::post('/comfyui-assets/files', [AdminComfyUiAssetsController::class, 'filesStore']);
+            Route::get('/comfyui-assets/bundles', [AdminComfyUiAssetsController::class, 'bundlesIndex']);
+            Route::post('/comfyui-assets/bundles', [AdminComfyUiAssetsController::class, 'bundlesStore']);
+            Route::patch('/comfyui-assets/bundles/{id}', [AdminComfyUiAssetsController::class, 'bundlesUpdate']);
+            Route::post('/comfyui-assets/bundles/{id}/activate', [AdminComfyUiAssetsController::class, 'bundlesActivate']);
+            Route::get('/comfyui-assets/bundles/{id}/manifest', [AdminComfyUiAssetsController::class, 'bundleManifest']);
+            Route::get('/comfyui-assets/audit-logs', [AdminComfyUiAssetsController::class, 'auditLogsIndex']);
+            Route::get('/comfyui-assets/audit-logs/export', [AdminComfyUiAssetsController::class, 'auditLogsExport']);
 
             // Workers
             Route::get('/workers', [AdminWorkersController::class, 'index']);

@@ -51,4 +51,14 @@ class Workflow extends CentralModel
     {
         return $this->belongsToMany(ComfyUiWorker::class, 'worker_workflows', 'workflow_id', 'worker_id');
     }
+
+    public function assetFiles()
+    {
+        return $this->hasMany(ComfyUiAssetFile::class);
+    }
+
+    public function assetBundles()
+    {
+        return $this->hasMany(ComfyUiAssetBundle::class);
+    }
 }

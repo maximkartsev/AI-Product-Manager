@@ -317,7 +317,7 @@ export default function AdminWorkflowsPage() {
             const currentSlug = formState.slug || "";
             const autoSlug = slugify(value);
             onChange(newName);
-            if (currentSlug === "" || currentSlug === autoSlug) {
+            if (!editingItem && (currentSlug === "" || currentSlug === autoSlug)) {
               setFormState((prev) => ({ ...prev, slug: slugify(newName) }));
             }
           }}
@@ -325,7 +325,30 @@ export default function AdminWorkflowsPage() {
         />
       ),
     },
-    { key: "slug", label: "Slug", type: "text", required: true, placeholder: "workflow-slug" },
+    {
+      key: "slug",
+      label: "Slug",
+      type: "text",
+      required: true,
+      placeholder: "workflow-slug",
+      render: ({ value, onChange }) => (
+        <div className="flex flex-col gap-1">
+          <Input
+            id="slug"
+            type="text"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="workflow-slug"
+            disabled={Boolean(editingItem)}
+          />
+          {editingItem ? (
+            <span className="text-xs text-muted-foreground">
+              Slug cannot be changed after creation.
+            </span>
+          ) : null}
+        </div>
+      ),
+    },
     { key: "description", label: "Description", type: "text", placeholder: "Workflow description", fullWidth: true },
     {
       key: "is_active",

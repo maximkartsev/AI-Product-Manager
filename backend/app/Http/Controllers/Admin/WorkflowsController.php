@@ -86,6 +86,11 @@ class WorkflowsController extends BaseController
         }
 
         $input = $request->all();
+        if (array_key_exists('slug', $input) && $input['slug'] !== $item->slug) {
+            return $this->sendError('Validation Error', [
+                'slug' => ['Slug cannot be changed after creation.'],
+            ], 422);
+        }
         $rules = Workflow::getRules($id);
 
         foreach ($rules as $k => $v) {

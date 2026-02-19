@@ -160,6 +160,8 @@ Route::middleware([
             Route::post('/comfyui-assets/uploads', [AdminComfyUiAssetsController::class, 'createUpload']);
             Route::post('/comfyui-assets/files', [AdminComfyUiAssetsController::class, 'filesStore']);
             Route::get('/comfyui-assets/bundles', [AdminComfyUiAssetsController::class, 'bundlesIndex']);
+            Route::get('/comfyui-assets/active-bundles', [AdminComfyUiAssetsController::class, 'activeBundlesIndex']);
+            Route::get('/comfyui-assets/cleanup-candidates', [AdminComfyUiAssetsController::class, 'cleanupCandidates']);
             Route::post('/comfyui-assets/bundles', [AdminComfyUiAssetsController::class, 'bundlesStore']);
             Route::patch('/comfyui-assets/bundles/{id}', [AdminComfyUiAssetsController::class, 'bundlesUpdate']);
             Route::post('/comfyui-assets/bundles/{id}/activate', [AdminComfyUiAssetsController::class, 'bundlesActivate']);

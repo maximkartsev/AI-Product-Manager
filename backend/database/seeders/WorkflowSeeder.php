@@ -125,7 +125,10 @@ class WorkflowSeeder extends Seeder
 
         // Clean up orphaned workflows (no effects linked) that may exist
         // from an earlier version of the data migration.
-        $orphans = Workflow::withTrashed()->whereDoesntHave('effects')
+        $orphans = Workflow::withTrashed()
+            ->whereDoesntHave('effects')
+            ->whereDoesntHave('assetBundles')
+            ->whereDoesntHave('assetFiles')
             ->where('slug', '!=', 'kling-video-to-video')
             ->get();
 

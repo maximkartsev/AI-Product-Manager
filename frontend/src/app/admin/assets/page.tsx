@@ -13,6 +13,8 @@ import {
   createComfyUiAssetFile,
   getComfyUiAssetFiles,
   getComfyUiAssetBundles,
+  getComfyUiActiveBundles,
+  getComfyUiCleanupCandidates,
   createComfyUiAssetBundle,
   activateComfyUiAssetBundle,
   getComfyUiAssetBundleManifest,
@@ -21,6 +23,8 @@ import {
   type AdminWorkflow,
   type ComfyUiAssetFile,
   type ComfyUiAssetBundle,
+  type ComfyUiWorkflowActiveBundle,
+  type ComfyUiAssetCleanupCandidate,
   type ComfyUiAssetAuditLog,
 } from "@/lib/api";
 
@@ -38,6 +42,8 @@ export default function AdminAssetsPage() {
   const [workflows, setWorkflows] = useState<AdminWorkflow[]>([]);
   const [assetFiles, setAssetFiles] = useState<ComfyUiAssetFile[]>([]);
   const [bundles, setBundles] = useState<ComfyUiAssetBundle[]>([]);
+  const [activeBundles, setActiveBundles] = useState<ComfyUiWorkflowActiveBundle[]>([]);
+  const [cleanupCandidates, setCleanupCandidates] = useState<ComfyUiAssetCleanupCandidate[]>([]);
   const [auditLogs, setAuditLogs] = useState<ComfyUiAssetAuditLog[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -48,6 +54,7 @@ export default function AdminAssetsPage() {
   const [bundleWorkflowId, setBundleWorkflowId] = useState<string>("");
   const [bundleNotes, setBundleNotes] = useState<string>("");
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<number>>(new Set());
+  const [bundleTargetWorkflows, setBundleTargetWorkflows] = useState<Record<number, string>>({});
 
   useEffect(() => {
     const load = async () => {
@@ -60,7 +67,7 @@ export default function AdminAssetsPage() {
           setUploadWorkflowId((prev) => prev || String(wfItems[0].id));
           setBundleWorkflowId((prev) => prev || String(wfItems[0].id));
         }
-        await Promise.all([loadAssetFiles(), loadBundles(), loadAuditLogs()]);
+        await Promise.all([loadAssetFiles(), loadBundles(), loadActiveBundles(), loadCleanupCandidates(), loadAuditLogs()]);
       } catch (error) {
         toast.error("Failed to load assets data.");
       } finally {
@@ -78,6 +85,16 @@ export default function AdminAssetsPage() {
   const loadBundles = async () => {
     const bundleData = await getComfyUiAssetBundles({ perPage: 200 });
     setBundles(bundleData.items ?? []);
+  };
+
+  const loadActiveBundles = async () => {
+    const activeData = await getComfyUiActiveBundles({ perPage: 200 });
+    setActiveBundles(activeData.items ?? []);
+  };
+
+  const loadCleanupCandidates = async () => {
+    const cleanupData = await getComfyUiCleanupCandidates();
+    setCleanupCandidates(cleanupData.items ?? []);
   };
 
   const loadAuditLogs = async () => {
@@ -190,7 +207,7 @@ export default function AdminAssetsPage() {
       toast.success("Bundle created.");
       setBundleNotes("");
       setSelectedAssetIds(new Set());
-      await loadBundles();
+      await Promise.all([loadBundles(), loadCleanupCandidates()]);
     } catch (error) {
       toast.error("Failed to create bundle.");
     } finally {
@@ -199,13 +216,21 @@ export default function AdminAssetsPage() {
   };
 
   const handleActivateBundle = async (bundle: ComfyUiAssetBundle, stage: "staging" | "production") => {
+    const targetWorkflowId = bundleTargetWorkflows[bundle.id] ?? String(bundle.workflow?.id ?? bundle.workflow_id ?? "");
+    if (!targetWorkflowId) {
+      toast.error("Select a target workflow.");
+      return;
+    }
     const notes = window.prompt(`Notes for activating bundle ${bundle.bundle_id} (${stage})?`) ?? undefined;
     setLoading(true);
     try {
-      await activateComfyUiAssetBundle(bundle.id, { stage, notes: notes || undefined });
+      await activateComfyUiAssetBundle(bundle.id, {
+        stage,
+        notes: notes || undefined,
+        target_workflow_id: Number(targetWorkflowId),
+      });
       toast.success(`Bundle activated for ${stage}.`);
-      await loadBundles();
-      await loadAuditLogs();
+      await Promise.all([loadBundles(), loadActiveBundles(), loadCleanupCandidates(), loadAuditLogs()]);
     } catch (error) {
       toast.error("Failed to activate bundle.");
     } finally {
@@ -390,6 +415,7 @@ export default function AdminAssetsPage() {
                   <th className="p-2 text-left">Workflow</th>
                   <th className="p-2 text-left">Bundle ID</th>
                   <th className="p-2 text-left">Notes</th>
+                  <th className="p-2 text-left">Activate For</th>
                   <th className="p-2 text-left">Active (Staging)</th>
                   <th className="p-2 text-left">Active (Prod)</th>
                   <th className="p-2 text-left">Actions</th>
@@ -409,6 +435,28 @@ export default function AdminAssetsPage() {
                       <td className="p-2 font-mono text-xs">{bundle.bundle_id}</td>
                       <td className="p-2">{bundle.notes || "—"}</td>
                       <td className="p-2">
+                        <Select
+                          value={
+                            bundleTargetWorkflows[bundle.id]
+                              ?? String(bundle.workflow?.id ?? bundle.workflow_id ?? "")
+                          }
+                          onValueChange={(value) =>
+                            setBundleTargetWorkflows((prev) => ({ ...prev, [bundle.id]: value }))
+                          }
+                        >
+                          <SelectTrigger className="min-w-[220px]">
+                            <SelectValue placeholder="Select workflow" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {workflowOptions.map((wf) => (
+                              <SelectItem key={wf.value} value={wf.value}>
+                                {wf.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      <td className="p-2">
                         {bundle.active_staging_at ? new Date(bundle.active_staging_at).toLocaleString() : "—"}
                       </td>
                       <td className="p-2">
@@ -424,6 +472,94 @@ export default function AdminAssetsPage() {
                         <Button size="sm" variant="outline" onClick={() => handleDownloadManifest(bundle)}>
                           Manifest
                         </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Active Bundles</CardTitle>
+          <CardDescription>Current bundle mapped to each workflow + stage.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="p-2 text-left">Workflow</th>
+                  <th className="p-2 text-left">Stage</th>
+                  <th className="p-2 text-left">Bundle ID</th>
+                  <th className="p-2 text-left">S3 Prefix</th>
+                  <th className="p-2 text-left">Activated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeBundles.length === 0 ? (
+                  <tr>
+                    <td className="p-3 text-muted-foreground" colSpan={5}>
+                      No active bundle mappings yet.
+                    </td>
+                  </tr>
+                ) : (
+                  activeBundles.map((active) => (
+                    <tr key={active.id} className="border-t border-border">
+                      <td className="p-2">{active.workflow?.slug ?? active.workflow_id}</td>
+                      <td className="p-2">{active.stage}</td>
+                      <td className="p-2 font-mono text-xs">{active.bundle?.bundle_id ?? active.bundle_id}</td>
+                      <td className="p-2 font-mono text-xs">{active.bundle_s3_prefix}</td>
+                      <td className="p-2">
+                        {active.activated_at ? new Date(active.activated_at).toLocaleString() : "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cleanup Candidates</CardTitle>
+          <CardDescription>Bundles not active anywhere (consider deleting from S3).</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="p-2 text-left">Workflow</th>
+                  <th className="p-2 text-left">Bundle ID</th>
+                  <th className="p-2 text-left">S3 Prefix</th>
+                  <th className="p-2 text-left">Reason</th>
+                  <th className="p-2 text-left">Delete Command</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cleanupCandidates.length === 0 ? (
+                  <tr>
+                    <td className="p-3 text-muted-foreground" colSpan={5}>
+                      No cleanup candidates found.
+                    </td>
+                  </tr>
+                ) : (
+                  cleanupCandidates.map((candidate) => (
+                    <tr key={candidate.id} className="border-t border-border">
+                      <td className="p-2">
+                        {candidate.workflow ? `${candidate.workflow.name} (${candidate.workflow.slug})` : "—"}
+                      </td>
+                      <td className="p-2 font-mono text-xs">{candidate.bundle_id}</td>
+                      <td className="p-2 font-mono text-xs">{candidate.s3_prefix}</td>
+                      <td className="p-2">{candidate.reason}</td>
+                      <td className="p-2 font-mono text-xs">
+                        aws s3 rm s3://&lt;MODELS_BUCKET&gt;/{candidate.s3_prefix}/ --recursive
                       </td>
                     </tr>
                   ))

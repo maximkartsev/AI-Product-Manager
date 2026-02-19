@@ -381,13 +381,15 @@ For each workflow + stage, the active bundle is stored in SSM:
 /bp/<stage>/assets/<workflow_slug>/active_bundle
 ```
 
+The SSM **value** is the bundle S3 prefix (e.g. `bundles/<owner_slug>/<bundle_id>`).
+
 GPU nodes sync the active bundle on boot. To promote a new bundle you:
 1) build AMI (Packer), 2) update the SSM bundle pointer, 3) roll the ASG.
 
 **Smart-skip boot sync (hybrid)**
 
 - If the AMI was baked with a bundle, Packer writes `/opt/comfyui/.baked_bundle_id`.
-- On boot, if `ACTIVE_BUNDLE` equals `BAKED_BUNDLE_ID`, the instance **skips** S3 sync.
+- On boot, if the bundle ID derived from `ACTIVE_PREFIX` equals `BAKED_BUNDLE_ID`, the instance **skips** S3 sync.
 - If they differ, it runs `aws s3 sync` to pull the delta.
 
 **Important: AWS S3 vs local MinIO**
@@ -441,7 +443,7 @@ aws secretsmanager get-secret-value \
    - This copies files into `bundles/<workflow_slug>/<bundle_id>/...` and writes `manifest.json`.
 3. **Activate bundle**:
    - Click **Activate Staging** or **Activate Prod**.
-   - This writes the active pointer in SSM:
+   - This writes the active pointer in SSM (value = bundle prefix):
 
 ```bash
 aws ssm get-parameter \
@@ -649,7 +651,7 @@ Defaults and constraints (from backend config):
 | Models bucket | SSM Parameter Store | `/bp/<stage>/models/bucket` | Yes (CDK) | — |
 | OAuth secrets | Secrets Manager | `/bp/<stage>/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/oauth/secrets --secret-string '{"google_client_secret":"..."}'` |
 | GPU AMI IDs | SSM Parameter Store | `/bp/ami/<workflow-slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
-| Active asset bundle | SSM Parameter Store | `/bp/<stage>/assets/<workflow_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/assets/<slug>/active_bundle --value "<bundle_id>" --type String --overwrite` |
+| Active asset bundle | SSM Parameter Store | `/bp/<stage>/assets/<workflow_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/assets/<slug>/active_bundle --value "bundles/<owner_slug>/<bundle_id>" --type String --overwrite` |
 | Redis endpoint | SSM Parameter Store | `/bp/<stage>/redis/endpoint` | Yes (CDK) | — |
 
 ## Monitoring & Alerts
@@ -846,7 +848,7 @@ test-frontend ─┘                     └──► deploy-infrastructure*
 **Inputs:**
 - `instance_id` (required)
 - `workflow_slug` (required)
-- `bundle_id` (required)
+- `bundle_prefix` (required) — `bundles/<owner_slug>/<bundle_id>`
 - `models_bucket` (required) — `bp-models-<account>-<stage>`
 - `logs_bucket` (optional) — `bp-logs-<account>-<stage>`
 

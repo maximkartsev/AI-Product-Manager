@@ -7,6 +7,7 @@ use App\Models\ComfyUiAssetBundle;
 use App\Models\ComfyUiAssetBundleFile;
 use App\Models\ComfyUiAssetFile;
 use App\Models\ComfyUiAssetAuditLog;
+use App\Models\ComfyUiWorkflowActiveBundle;
 use App\Models\Workflow;
 use App\Services\ComfyUiAssetAuditService;
 use App\Services\PresignedUrlService;
@@ -187,6 +188,88 @@ class ComfyUiAssetsController extends BaseController
         ], 'ComfyUI asset bundles retrieved successfully');
     }
 
+    public function activeBundlesIndex(Request $request): JsonResponse
+    {
+        $perPage = min((int) $request->get('perPage', 50), 200);
+        $page = max((int) $request->get('page', 1), 1);
+        $orderStr = $request->get('order', 'activated_at:desc');
+
+        $query = ComfyUiWorkflowActiveBundle::query()
+            ->with([
+                'workflow:id,slug,name',
+                'bundle:id,bundle_id,s3_prefix,workflow_id',
+            ]);
+
+        if ($request->has('workflow_id')) {
+            $query->where('workflow_id', (int) $request->get('workflow_id'));
+        }
+        if ($request->has('stage')) {
+            $query->where('stage', (string) $request->get('stage'));
+        }
+        if ($request->has('bundle_id')) {
+            $query->where('bundle_id', (int) $request->get('bundle_id'));
+        }
+
+        $parts = explode(':', $orderStr, 2);
+        $orderField = $parts[0] ?? 'activated_at';
+        $orderDir = strtolower($parts[1] ?? 'desc');
+        $allowedFields = ['id', 'activated_at', 'stage', 'workflow_id', 'bundle_id', 'created_at'];
+        if (!in_array($orderField, $allowedFields, true)) {
+            $orderField = 'activated_at';
+        }
+        $query->orderBy($orderField, $orderDir === 'asc' ? 'asc' : 'desc');
+
+        $total = $query->count();
+        $items = $query->skip(($page - 1) * $perPage)->take($perPage)->get();
+
+        return $this->sendResponse([
+            'items' => $items,
+            'totalItems' => $total,
+            'totalPages' => ceil($total / $perPage),
+            'page' => $page,
+            'perPage' => $perPage,
+            'order' => $orderStr,
+        ], 'Active asset bundles retrieved successfully');
+    }
+
+    public function cleanupCandidates(Request $request): JsonResponse
+    {
+        $activeBundleIds = ComfyUiWorkflowActiveBundle::query()->pluck('bundle_id')->unique();
+
+        $query = ComfyUiAssetBundle::query()
+            ->with(['workflow' => fn ($q) => $q->withTrashed()->select('id', 'slug', 'name', 'deleted_at')]);
+
+        if ($activeBundleIds->isNotEmpty()) {
+            $query->whereNotIn('id', $activeBundleIds);
+        }
+
+        $bundles = $query->orderBy('id', 'desc')->get();
+        $items = $bundles->map(function (ComfyUiAssetBundle $bundle) {
+            $workflow = $bundle->workflow;
+            $reason = ($workflow && method_exists($workflow, 'trashed') && $workflow->trashed())
+                ? 'workflow_deleted'
+                : 'never_activated';
+
+            return [
+                'id' => $bundle->id,
+                'bundle_id' => $bundle->bundle_id,
+                's3_prefix' => $bundle->s3_prefix,
+                'reason' => $reason,
+                'workflow' => $workflow ? [
+                    'id' => $workflow->id,
+                    'slug' => $workflow->slug,
+                    'name' => $workflow->name,
+                    'deleted_at' => $workflow->deleted_at,
+                ] : null,
+            ];
+        });
+
+        return $this->sendResponse([
+            'items' => $items,
+            'totalItems' => $items->count(),
+        ], 'Cleanup candidates retrieved successfully');
+    }
+
     public function bundlesStore(Request $request, ComfyUiAssetAuditService $audit): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -324,6 +407,7 @@ class ComfyUiAssetsController extends BaseController
         $validator = Validator::make($request->all(), [
             'stage' => 'string|required|in:staging,production',
             'notes' => 'string|nullable|max:2000',
+            'target_workflow_id' => 'integer|nullable|exists:workflows,id',
         ]);
         if ($validator->fails()) {
             return $this->sendError('Validation error.', $validator->errors(), 422);
@@ -331,24 +415,41 @@ class ComfyUiAssetsController extends BaseController
 
         $stage = $request->input('stage');
         $now = Carbon::now();
-
-        // Clear active flag on other bundles for this workflow
-        if ($stage === 'staging') {
-            ComfyUiAssetBundle::query()
-                ->where('workflow_id', $bundle->workflow_id)
-                ->update(['active_staging_at' => null]);
-            $bundle->active_staging_at = $now;
-        } else {
-            ComfyUiAssetBundle::query()
-                ->where('workflow_id', $bundle->workflow_id)
-                ->update(['active_production_at' => null]);
-            $bundle->active_production_at = $now;
+        $targetWorkflowId = $request->input('target_workflow_id');
+        $targetWorkflow = $bundle->workflow;
+        if ($targetWorkflowId && (int) $targetWorkflowId !== $bundle->workflow_id) {
+            $targetWorkflow = Workflow::query()->find((int) $targetWorkflowId);
+            if (!$targetWorkflow) {
+                return $this->sendError('Target workflow not found.', [], 404);
+            }
         }
 
+        // Record activation timestamp on the bundle itself (informational only)
+        if ($stage === 'staging') {
+            $bundle->active_staging_at = $now;
+        } else {
+            $bundle->active_production_at = $now;
+        }
         $bundle->save();
 
         // Update SSM active bundle pointer
-        $this->putActiveBundleParameter($stage, $bundle->workflow->slug, $bundle->bundle_id);
+        $this->putActiveBundleParameter($stage, $targetWorkflow->slug, $bundle->s3_prefix);
+
+        // Upsert active bundle mapping for workflow + stage
+        ComfyUiWorkflowActiveBundle::query()->updateOrCreate(
+            [
+                'workflow_id' => $targetWorkflow->id,
+                'stage' => $stage,
+            ],
+            [
+                'bundle_id' => $bundle->id,
+                'bundle_s3_prefix' => $bundle->s3_prefix,
+                'activated_at' => $now,
+                'activated_by_user_id' => $request->user()?->id,
+                'activated_by_email' => $request->user()?->email,
+                'notes' => $request->input('notes'),
+            ]
+        );
 
         $user = $request->user();
         $audit->log(
@@ -356,7 +457,7 @@ class ComfyUiAssetsController extends BaseController
             $bundle->id,
             null,
             $request->input('notes'),
-            ['workflow_slug' => $bundle->workflow->slug, 'stage' => $stage],
+            ['workflow_slug' => $targetWorkflow->slug, 'stage' => $stage],
             $user?->id,
             $user?->email
         );
@@ -512,7 +613,7 @@ class ComfyUiAssetsController extends BaseController
         return [$field, $dir === 'asc' ? 'asc' : 'desc'];
     }
 
-    private function putActiveBundleParameter(string $stage, string $workflowSlug, string $bundleId): void
+    private function putActiveBundleParameter(string $stage, string $workflowSlug, string $bundlePrefix): void
     {
         $region = (string) config('services.comfyui.aws_region', 'us-east-1');
         $client = new SsmClient([
@@ -522,7 +623,7 @@ class ComfyUiAssetsController extends BaseController
 
         $client->putParameter([
             'Name' => "/bp/{$stage}/assets/{$workflowSlug}/active_bundle",
-            'Value' => $bundleId,
+            'Value' => $bundlePrefix,
             'Type' => 'String',
             'Overwrite' => true,
         ]);

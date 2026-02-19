@@ -50,6 +50,7 @@ Thumbs.db
 *.iml
 .claude/
 .cursor/
+.worktrees/
 .mcp.json
 aios/
 aios

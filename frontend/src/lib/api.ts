@@ -764,11 +764,17 @@ export type AdminWorkflow = {
   output_extension?: string | null;
   output_mime_type?: string | null;
   is_active?: boolean;
+  fleets?: ComfyUiGpuFleet[];
   created_at?: string | null;
   updated_at?: string | null;
 };
 
 export type AdminWorkflowPayload = Partial<AdminWorkflow>;
+
+export type AdminWorkflowFleetAssignments = {
+  staging_fleet_id?: number | null;
+  production_fleet_id?: number | null;
+};
 
 export type AdminWorkflowsIndexData = {
   items: AdminWorkflow[];
@@ -1201,6 +1207,10 @@ export function updateAdminWorkflow(id: number, payload: AdminWorkflowPayload): 
   return apiRequest<AdminWorkflow>(`/admin/workflows/${id}`, { method: "PATCH", body: payload });
 }
 
+export function assignWorkflowFleets(id: number, payload: AdminWorkflowFleetAssignments): Promise<AdminWorkflow> {
+  return apiRequest<AdminWorkflow>(`/admin/workflows/${id}/fleet-assignments`, { method: "PUT", body: payload });
+}
+
 export function deleteAdminWorkflow(id: number): Promise<void> {
   return apiRequest<void>(`/admin/workflows/${id}`, { method: "DELETE" });
 }
@@ -1229,66 +1239,59 @@ export function initWorkflowAssetUpload(payload: WorkflowUploadInitRequest): Pro
 
 export type ComfyUiAssetFile = {
   id: number;
-  workflow_id: number;
   kind: string;
   original_filename: string;
   s3_key: string;
   content_type?: string | null;
   size_bytes?: number | null;
-  sha256?: string | null;
+  sha256: string;
+  notes?: string | null;
   uploaded_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-  workflow?: {
-    id: number;
-    slug: string;
-    name: string;
-  };
 };
 
 export type ComfyUiAssetBundle = {
   id: number;
-  workflow_id: number;
   bundle_id: string;
+  name?: string | null;
   s3_prefix: string;
   notes?: string | null;
   manifest?: Record<string, unknown> | null;
-  active_staging_at?: string | null;
-  active_production_at?: string | null;
   created_by_user_id?: number | null;
   created_by_email?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-  workflow?: {
-    id: number;
-    slug: string;
-    name: string;
-  };
 };
 
-export type ComfyUiWorkflowActiveBundle = {
+export type ComfyUiGpuFleet = {
   id: number;
-  workflow_id: number;
-  stage: "staging" | "production" | string;
-  bundle_id: number;
-  bundle_s3_prefix: string;
-  activated_at?: string | null;
-  activated_by_user_id?: number | null;
-  activated_by_email?: string | null;
-  notes?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-  workflow?: {
-    id: number;
-    slug: string;
-    name: string;
-  };
-  bundle?: {
+  stage: string;
+  slug: string;
+  name: string;
+  instance_types?: string[] | null;
+  max_size: number;
+  warmup_seconds?: number | null;
+  backlog_target?: number | null;
+  scale_to_zero_minutes?: number | null;
+  ami_ssm_parameter?: string | null;
+  active_bundle_id?: number | null;
+  active_bundle_s3_prefix?: string | null;
+  active_bundle?: {
     id: number;
     bundle_id: string;
+    name?: string | null;
     s3_prefix: string;
-    workflow_id: number;
+  } | null;
+  workflows?: AdminWorkflow[];
+  pivot?: {
+    stage?: string | null;
+    assigned_at?: string | null;
+    assigned_by_user_id?: number | null;
+    assigned_by_email?: string | null;
   };
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type ComfyUiAssetAuditLog = {
@@ -1328,26 +1331,32 @@ export type ComfyUiAssetBundlesIndexData = {
   filters?: FilterValue[];
 };
 
-export type ComfyUiActiveBundlesIndexData = {
-  items: ComfyUiWorkflowActiveBundle[];
+export type ComfyUiFleetsIndexData = {
+  items: ComfyUiGpuFleet[];
   totalItems: number;
   totalPages: number;
   page: number;
   perPage: number;
   order?: string | null;
+  search?: string | null;
+  filters?: FilterValue[];
 };
 
 export type ComfyUiAssetCleanupCandidate = {
   id: number;
   bundle_id: string;
   s3_prefix: string;
-  reason: "workflow_deleted" | "never_activated" | string;
-  workflow?: {
-    id: number;
-    slug: string;
-    name: string;
-    deleted_at?: string | null;
-  } | null;
+  reason: "not_active_in_any_fleet" | string;
+};
+
+export type ComfyUiAssetFileCleanupCandidate = {
+  id: number;
+  kind: string;
+  original_filename: string;
+  s3_key: string;
+  sha256: string;
+  size_bytes?: number | null;
+  reason: "unreferenced" | string;
 };
 
 export type ComfyUiAssetAuditLogsIndexData = {
@@ -1362,12 +1371,12 @@ export type ComfyUiAssetAuditLogsIndexData = {
 };
 
 export type ComfyUiAssetUploadInitRequest = {
-  workflow_id: number;
   kind: string;
   mime_type: string;
   size_bytes: number;
   original_filename: string;
-  sha256?: string | null;
+  sha256: string;
+  notes?: string | null;
 };
 
 export type ComfyUiAssetUploadInitData = {
@@ -1375,28 +1384,55 @@ export type ComfyUiAssetUploadInitData = {
   upload_url: string;
   upload_headers: Record<string, string | string[]>;
   expires_in: number;
+  already_exists?: boolean;
 };
 
 export type ComfyUiAssetFileCreateRequest = {
-  workflow_id: number;
   kind: string;
   original_filename: string;
-  s3_key: string;
   content_type?: string | null;
   size_bytes?: number | null;
-  sha256?: string | null;
+  sha256: string;
+  notes?: string | null;
+};
+
+export type ComfyUiAssetFileUpdateRequest = {
+  original_filename?: string | null;
+  notes?: string | null;
 };
 
 export type ComfyUiAssetBundleCreateRequest = {
-  workflow_id: number;
+  name: string;
   asset_file_ids: number[];
+  asset_overrides?: Array<{
+    asset_file_id: number;
+    target_path?: string | null;
+    action?: "copy" | "extract_zip" | "extract_tar_gz";
+  }>;
   notes?: string | null;
 };
 
-export type ComfyUiAssetBundleActivateRequest = {
+export type ComfyUiFleetCreateRequest = {
   stage: "staging" | "production";
+  slug: string;
+  name: string;
+  instance_types?: string[] | null;
+  max_size: number;
+  warmup_seconds?: number | null;
+  backlog_target?: number | null;
+  scale_to_zero_minutes?: number | null;
+  ami_ssm_parameter?: string | null;
+};
+
+export type ComfyUiFleetUpdateRequest = Partial<Omit<ComfyUiFleetCreateRequest, "stage" | "slug">>;
+
+export type ComfyUiFleetAssignWorkflowsRequest = {
+  workflow_ids: number[];
+};
+
+export type ComfyUiFleetActivateBundleRequest = {
+  bundle_id: number;
   notes?: string | null;
-  target_workflow_id?: number | null;
 };
 
 export function initComfyUiAssetUpload(payload: ComfyUiAssetUploadInitRequest): Promise<ComfyUiAssetUploadInitData> {
@@ -1405,6 +1441,10 @@ export function initComfyUiAssetUpload(payload: ComfyUiAssetUploadInitRequest): 
 
 export function createComfyUiAssetFile(payload: ComfyUiAssetFileCreateRequest): Promise<ComfyUiAssetFile> {
   return apiPost<ComfyUiAssetFile>("/admin/comfyui-assets/files", payload);
+}
+
+export function updateComfyUiAssetFile(id: number, payload: ComfyUiAssetFileUpdateRequest): Promise<ComfyUiAssetFile> {
+  return apiRequest<ComfyUiAssetFile>(`/admin/comfyui-assets/files/${id}`, { method: "PATCH", body: payload });
 }
 
 export async function getComfyUiAssetFiles(params: {
@@ -1441,39 +1481,28 @@ export async function getComfyUiAssetBundles(params: {
   return apiRequest<ComfyUiAssetBundlesIndexData>(`/admin/comfyui-assets/bundles?${query.toString()}`, { method: "GET" });
 }
 
-export async function getComfyUiActiveBundles(params: {
-  page?: number;
-  perPage?: number;
-  order?: string;
-  workflow_id?: number;
-  stage?: string;
-  bundle_id?: number;
-} = {}): Promise<ComfyUiActiveBundlesIndexData> {
-  const query: Query = {
-    page: params.page ?? 1,
-    perPage: params.perPage ?? 50,
-    order: params.order ?? undefined,
-    workflow_id: params.workflow_id ?? undefined,
-    stage: params.stage ?? undefined,
-    bundle_id: params.bundle_id ?? undefined,
-  };
-  return apiGet<ComfyUiActiveBundlesIndexData>("/admin/comfyui-assets/active-bundles", query);
-}
-
 export async function getComfyUiCleanupCandidates(): Promise<{ items: ComfyUiAssetCleanupCandidate[]; totalItems: number }> {
   return apiGet("/admin/comfyui-assets/cleanup-candidates");
+}
+
+export async function getComfyUiAssetFileCleanupCandidates(): Promise<{ items: ComfyUiAssetFileCleanupCandidate[]; totalItems: number }> {
+  return apiGet("/admin/comfyui-assets/cleanup-assets");
+}
+
+export function deleteComfyUiAssetBundle(id: number): Promise<void> {
+  return apiRequest<void>(`/admin/comfyui-assets/bundles/${id}`, { method: "DELETE" });
+}
+
+export function deleteComfyUiAssetFile(id: number): Promise<void> {
+  return apiRequest<void>(`/admin/comfyui-assets/files/${id}`, { method: "DELETE" });
 }
 
 export function createComfyUiAssetBundle(payload: ComfyUiAssetBundleCreateRequest): Promise<ComfyUiAssetBundle> {
   return apiPost<ComfyUiAssetBundle>("/admin/comfyui-assets/bundles", payload);
 }
 
-export function updateComfyUiAssetBundle(id: number, payload: { notes?: string | null }): Promise<ComfyUiAssetBundle> {
+export function updateComfyUiAssetBundle(id: number, payload: { name?: string | null; notes?: string | null }): Promise<ComfyUiAssetBundle> {
   return apiRequest<ComfyUiAssetBundle>(`/admin/comfyui-assets/bundles/${id}`, { method: "PATCH", body: payload });
-}
-
-export function activateComfyUiAssetBundle(id: number, payload: ComfyUiAssetBundleActivateRequest): Promise<ComfyUiAssetBundle> {
-  return apiPost<ComfyUiAssetBundle>(`/admin/comfyui-assets/bundles/${id}/activate`, payload);
 }
 
 export function getComfyUiAssetBundleManifest(id: number): Promise<{
@@ -1483,6 +1512,39 @@ export function getComfyUiAssetBundleManifest(id: number): Promise<{
   expires_in: number;
 }> {
   return apiGet(`/admin/comfyui-assets/bundles/${id}/manifest`);
+}
+
+export async function getComfyUiFleets(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  order?: string;
+  filters?: FilterValue[];
+} = {}): Promise<ComfyUiFleetsIndexData> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    perPage: String(params.perPage ?? 20),
+  });
+  if (params.search) query.set("search", params.search);
+  if (params.order) query.set("order", params.order);
+  appendFilterParams(query, params.filters);
+  return apiRequest<ComfyUiFleetsIndexData>(`/admin/comfyui-fleets?${query.toString()}`, { method: "GET" });
+}
+
+export function createComfyUiFleet(payload: ComfyUiFleetCreateRequest): Promise<ComfyUiGpuFleet> {
+  return apiPost<ComfyUiGpuFleet>("/admin/comfyui-fleets", payload);
+}
+
+export function updateComfyUiFleet(id: number, payload: ComfyUiFleetUpdateRequest): Promise<ComfyUiGpuFleet> {
+  return apiRequest<ComfyUiGpuFleet>(`/admin/comfyui-fleets/${id}`, { method: "PATCH", body: payload });
+}
+
+export function assignComfyUiFleetWorkflows(id: number, payload: ComfyUiFleetAssignWorkflowsRequest): Promise<ComfyUiGpuFleet> {
+  return apiRequest<ComfyUiGpuFleet>(`/admin/comfyui-fleets/${id}/workflows`, { method: "PUT", body: payload });
+}
+
+export function activateComfyUiFleetBundle(id: number, payload: ComfyUiFleetActivateBundleRequest): Promise<ComfyUiGpuFleet> {
+  return apiPost<ComfyUiGpuFleet>(`/admin/comfyui-fleets/${id}/activate-bundle`, payload);
 }
 
 export async function getComfyUiAssetAuditLogs(params: {

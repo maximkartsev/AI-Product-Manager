@@ -10,6 +10,7 @@ class ComfyUiAssetBundleFile extends CentralModel
         'bundle_id',
         'asset_file_id',
         'target_path',
+        'action',
         'position',
     ];
 

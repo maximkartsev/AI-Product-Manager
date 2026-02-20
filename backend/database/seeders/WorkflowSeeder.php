@@ -127,8 +127,7 @@ class WorkflowSeeder extends Seeder
         // from an earlier version of the data migration.
         $orphans = Workflow::withTrashed()
             ->whereDoesntHave('effects')
-            ->whereDoesntHave('assetBundles')
-            ->whereDoesntHave('assetFiles')
+            ->whereDoesntHave('fleets')
             ->where('slug', '!=', 'kling-video-to-video')
             ->get();
 

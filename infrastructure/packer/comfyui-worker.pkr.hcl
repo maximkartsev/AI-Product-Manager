@@ -8,7 +8,7 @@ packer {
 }
 
 source "amazon-ebs" "comfyui" {
-  ami_name      = "bp-comfyui-${var.workflow_slug}-{{timestamp}}"
+  ami_name      = "bp-comfyui-${var.fleet_slug}-{{timestamp}}"
   instance_type = var.instance_type
   region        = var.aws_region
   ssh_username  = var.ssh_username
@@ -35,14 +35,14 @@ source "amazon-ebs" "comfyui" {
   }
 
   tags = {
-    Name         = "bp-comfyui-${var.workflow_slug}"
-    WorkflowSlug = var.workflow_slug
-    BuildTime    = "{{timestamp}}"
-    ManagedBy    = "packer"
-    BundleId     = var.bundle_id
+    Name      = "bp-comfyui-${var.fleet_slug}"
+    FleetSlug = var.fleet_slug
+    BuildTime = "{{timestamp}}"
+    ManagedBy = "packer"
+    BundleId  = var.bundle_id
   }
 
-  ami_description = "ComfyUI GPU worker AMI for workflow: ${var.workflow_slug}"
+  ami_description = "ComfyUI GPU worker AMI for fleet: ${var.fleet_slug}"
 }
 
 build {
@@ -60,24 +60,37 @@ build {
 
   # Install Python worker
   provisioner "file" {
-    source      = "scripts/comfyui_worker.py"
+    source      = "../../worker/comfyui_worker.py"
     destination = "/tmp/comfyui_worker.py"
+  }
+
+  # Bundle installer script
+  provisioner "file" {
+    source      = "scripts/apply-bundle.sh"
+    destination = "/tmp/apply-bundle.sh"
   }
 
   provisioner "shell" {
     script = "scripts/install-python-worker.sh"
   }
 
-  # Sync workflow-specific models from S3 (if bucket configured)
+  provisioner "shell" {
+    inline = [
+      "sudo mkdir -p /opt/comfyui/bin",
+      "sudo mv /tmp/apply-bundle.sh /opt/comfyui/bin/apply-bundle.sh",
+      "sudo chmod 755 /opt/comfyui/bin/apply-bundle.sh",
+    ]
+  }
+
+  # Apply bundle manifest from S3 (if provided)
   provisioner "shell" {
     inline = [
       "if [ -n '${var.models_s3_bucket}' ] && [ -n '${var.models_s3_prefix}' ]; then",
-      "  echo 'Syncing models from S3...'",
+      "  echo 'Applying bundle from S3 manifest...'",
       "  PREFIX='${var.models_s3_prefix}'",
       "  PREFIX=${PREFIX%/}",
-      "  aws s3 sync s3://${var.models_s3_bucket}/${PREFIX}/models/ /opt/comfyui/models/ --no-progress",
-      "  aws s3 sync s3://${var.models_s3_bucket}/${PREFIX}/custom_nodes/ /opt/comfyui/custom_nodes/ --no-progress || true",
-      "  echo 'Model sync complete'",
+      "  MODELS_BUCKET='${var.models_s3_bucket}' BUNDLE_PREFIX=\"$PREFIX\" /opt/comfyui/bin/apply-bundle.sh",
+      "  echo 'Bundle apply complete'",
       "else",
       "  echo 'No S3 model bucket configured, skipping model sync'",
       "fi",

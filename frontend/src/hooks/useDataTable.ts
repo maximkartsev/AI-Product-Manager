@@ -412,15 +412,42 @@ export function useDataTable<T extends Record<string, any>>(
       return React.createElement("span", { className: "text-muted-foreground" }, "-");
     }
     if (type === "image") {
-      return React.createElement("img", {
-        src: url,
-        alt: "",
-        className: `${PREVIEW_SIZE_CLASSES[previewSize].container} rounded object-cover`,
-        onError: (e: React.SyntheticEvent<HTMLImageElement>) => {
-          (e.target as HTMLImageElement).style.display = "none";
-          (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden");
+      return React.createElement(
+        "div",
+        {
+          className: `relative ${PREVIEW_SIZE_CLASSES[previewSize].container} rounded overflow-hidden bg-muted`,
         },
-      });
+        React.createElement("img", {
+          src: url,
+          alt: "",
+          className: "h-full w-full object-cover",
+          onError: (e: React.SyntheticEvent<HTMLImageElement>) => {
+            const img = e.target as HTMLImageElement;
+            img.classList.add("hidden");
+            const fallback = img.parentElement?.querySelector('[data-media-fallback="true"]');
+            if (fallback) fallback.classList.remove("hidden");
+          },
+        }),
+        React.createElement(
+          "div",
+          {
+            className: "hidden absolute inset-0 flex flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground",
+            "data-media-fallback": "true",
+          },
+          React.createElement("span", null, "Preview unavailable"),
+          React.createElement(
+            "a",
+            {
+              href: url,
+              target: "_blank",
+              rel: "noreferrer",
+              className: "text-[10px] underline hover:text-foreground",
+              onClick: (event: React.MouseEvent) => event.stopPropagation(),
+            },
+            "Open",
+          ),
+        ),
+      );
     }
     return React.createElement(
       "button",

@@ -52,13 +52,10 @@ class Workflow extends CentralModel
         return $this->belongsToMany(ComfyUiWorker::class, 'worker_workflows', 'workflow_id', 'worker_id');
     }
 
-    public function assetFiles()
+    public function fleets()
     {
-        return $this->hasMany(ComfyUiAssetFile::class);
-    }
-
-    public function assetBundles()
-    {
-        return $this->hasMany(ComfyUiAssetBundle::class);
+        return $this->belongsToMany(ComfyUiGpuFleet::class, 'comfyui_workflow_fleets', 'workflow_id', 'fleet_id')
+            ->withPivot(['stage', 'assigned_at', 'assigned_by_user_id', 'assigned_by_email'])
+            ->withTimestamps();
     }
 }

@@ -9,7 +9,7 @@ import * as budgets from 'aws-cdk-lib/aws-budgets';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
 import type { BpEnvironmentConfig } from '../config/environment';
-import type { WorkflowConfig } from '../config/workflows';
+import type { FleetConfig } from '../config/fleets';
 
 export interface MonitoringStackProps extends cdk.StackProps {
   readonly config: BpEnvironmentConfig;
@@ -20,14 +20,14 @@ export interface MonitoringStackProps extends cdk.StackProps {
   readonly frontendServiceName: string;
   readonly dbInstanceId: string;
   readonly natGatewayIds?: string[];
-  readonly workflows: WorkflowConfig[];
+  readonly fleets: FleetConfig[];
 }
 
 export class MonitoringStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: MonitoringStackProps) {
     super(scope, id, props);
 
-    const { config, ecsCluster, albFullName, albTargetGroupBackend, backendServiceName, frontendServiceName, dbInstanceId, natGatewayIds, workflows } = props;
+    const { config, ecsCluster, albFullName, albTargetGroupBackend, backendServiceName, frontendServiceName, dbInstanceId, natGatewayIds, fleets } = props;
     const stage = config.stage;
     const logRetention = stage === 'production' ? logs.RetentionDays.ONE_MONTH : logs.RetentionDays.ONE_WEEK;
 
@@ -51,9 +51,9 @@ export class MonitoringStack extends cdk.Stack {
     // GPU Worker Log Groups
     // ========================================
 
-    for (const wf of workflows) {
-      new logs.LogGroup(this, `GpuLog-${wf.slug}`, {
-        logGroupName: `/gpu-workers/${wf.slug}`,
+    for (const fleet of fleets) {
+      new logs.LogGroup(this, `GpuLog-${fleet.slug}`, {
+        logGroupName: `/gpu-workers/${fleet.slug}`,
         retention: logRetention,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       });
@@ -136,13 +136,13 @@ export class MonitoringStack extends cdk.Stack {
     });
     p2RdsCpu.addAlarmAction(alarmAction);
 
-    // --- P3: Per-workflow GPU alarms ---
+    // --- P3: Per-fleet GPU alarms ---
 
-    for (const wf of workflows) {
-      const dimensions = { WorkflowSlug: wf.slug };
+    for (const fleet of fleets) {
+      const dimensions = { FleetSlug: fleet.slug };
 
-      new cloudwatch.Alarm(this, `P3-Queue-${wf.slug}`, {
-        alarmName: `${stage}-p3-${wf.slug}-queue-deep`,
+      new cloudwatch.Alarm(this, `P3-Queue-${fleet.slug}`, {
+        alarmName: `${stage}-p3-${fleet.slug}-queue-deep`,
         metric: new cloudwatch.Metric({
           namespace: 'ComfyUI/Workers',
           metricName: 'QueueDepth',
@@ -155,8 +155,8 @@ export class MonitoringStack extends cdk.Stack {
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       }).addAlarmAction(alarmAction);
 
-      new cloudwatch.Alarm(this, `P2-Error-${wf.slug}`, {
-        alarmName: `${stage}-p2-${wf.slug}-error-rate`,
+      new cloudwatch.Alarm(this, `P2-Error-${fleet.slug}`, {
+        alarmName: `${stage}-p2-${fleet.slug}-error-rate`,
         metric: new cloudwatch.Metric({
           namespace: 'ComfyUI/Workers',
           metricName: 'ErrorRate',
@@ -300,13 +300,13 @@ export class MonitoringStack extends cdk.Stack {
       );
     }
 
-    // Row 4: GPU Workers (per workflow)
-    for (const wf of workflows) {
-      const dimensions = { WorkflowSlug: wf.slug };
+    // Row 4: GPU Workers (per fleet)
+    for (const fleet of fleets) {
+      const dimensions = { FleetSlug: fleet.slug };
 
       dashboard.addWidgets(
         new cloudwatch.GraphWidget({
-          title: `${wf.displayName}: Queue & Workers`,
+          title: `${fleet.displayName}: Queue & Workers`,
           left: [
             new cloudwatch.Metric({
               namespace: 'ComfyUI/Workers',
@@ -335,7 +335,7 @@ export class MonitoringStack extends cdk.Stack {
           width: 12,
         }),
         new cloudwatch.GraphWidget({
-          title: `${wf.displayName}: Performance & Errors`,
+          title: `${fleet.displayName}: Performance & Errors`,
           left: [
             new cloudwatch.Metric({
               namespace: 'ComfyUI/Workers',

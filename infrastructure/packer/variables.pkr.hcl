@@ -1,6 +1,6 @@
-variable "workflow_slug" {
+variable "fleet_slug" {
   type        = string
-  description = "Workflow slug (e.g. 'image-to-video'). Used for AMI naming and model selection."
+  description = "Fleet slug (e.g. 'gpu-default'). Used for AMI naming and SSM alias."
 }
 
 variable "aws_region" {
@@ -32,13 +32,13 @@ variable "ssh_username" {
 variable "models_s3_bucket" {
   type        = string
   default     = ""
-  description = "S3 bucket containing workflow-specific model files"
+  description = "S3 bucket containing ComfyUI asset bundles and assets"
 }
 
 variable "models_s3_prefix" {
   type        = string
   default     = ""
-  description = "S3 prefix for a ComfyUI asset bundle root (e.g. 'bundles/image-to-video/<bundle_id>')"
+  description = "S3 prefix for a ComfyUI bundle manifest (e.g. 'bundles/<bundle_id>')"
 }
 
 variable "bundle_id" {

@@ -24,7 +24,7 @@ Internet
    └── /* ─────────────────────► Frontend ECS (Fargate ARM64)
                                    └─ nextjs (port 3000)
                                                              Private Subnets
-           GPU ASG (Spot, per-workflow) ──► ComfyUI workers
+          GPU ASG (Spot, per-fleet) ──► ComfyUI workers
                                                              Isolated Subnets
            RDS MariaDB 10.11 ──► bp, tenant_pool_1, tenant_pool_2
            ElastiCache Redis 7.1
@@ -37,7 +37,7 @@ Internet
 | **NetworkStack** | `bp-<stage>-network` | VPC (10.0.0.0/16, 2 AZs), subnets (public/private/isolated), NAT Gateway, 6 security groups, S3 gateway endpoint |
 | **DataStack** | `bp-<stage>-data` | RDS MariaDB 10.11, ElastiCache Redis 7.1, S3 media bucket, S3 logs bucket, CloudFront CDN, secrets (APP_KEY, fleet, OAuth) |
 | **ComputeStack** | `bp-<stage>-compute` | ECS Fargate cluster, ALB (HTTP/HTTPS), backend service (4 containers), frontend service, auto-scaling |
-| **GpuWorkerStack** | `bp-<stage>-gpu` | Per-workflow EC2 ASGs (100% Spot), step scaling 0→1, backlog tracking 1→N, scale-to-zero Lambda |
+| **GpuWorkerStack** | `bp-<stage>-gpu` | Per-fleet EC2 ASGs (100% Spot), step scaling 0→1, backlog tracking 1→N, scale-to-zero Lambda |
 | **MonitoringStack** | `bp-<stage>-monitoring` | CloudWatch dashboard, P1/P2/P3 alarms, SNS alert topic, GPU worker log groups |
 | **CiCdStack** | `bp-<stage>-cicd` | ECR repositories (backend + frontend) with lifecycle policies (keep last 10 images) |
 
@@ -206,26 +206,29 @@ CDK needs broad permissions across CloudFormation, IAM, EC2/VPC, ECS, ECR, ELBv2
 
 See [GitHub Actions to AWS (OIDC)](#github-actions-to-aws-oidc) for the exact trust policy, permissions, and GitHub secrets/environments.
 
-### Workflow Configuration (`lib/config/workflows.ts`)
+### Fleet Configuration (`lib/config/fleets.ts`)
 
-Each workflow gets a dedicated GPU ASG. To add a new workflow:
+Each **fleet** gets a dedicated GPU ASG + AMI alias. Workflows are assigned to fleets **in the app** (Admin → Assets), not in infrastructure config.
 
 ```typescript
-// lib/config/workflows.ts
-export const WORKFLOWS: WorkflowConfig[] = [
+// lib/config/fleets.ts
+export const FLEETS: FleetConfig[] = [
   {
-    slug: 'image-to-video',           // Must match backend workflows.slug column
-    displayName: 'Image to Video',     // CloudWatch dashboard label
-    amiSsmParameter: '/bp/ami/image-to-video',  // SSM path (updated by Packer CI)
+    slug: 'gpu-default',                // Fleet identifier (SSM/ASG naming)
+    displayName: 'Default GPU Fleet',   // CloudWatch dashboard label
+    // amiSsmParameter: '/bp/ami/fleets/staging/gpu-default', // optional override
     instanceTypes: ['g4dn.xlarge', 'g5.xlarge'], // Spot priority order
-    maxSize: 10,                       // ASG max instances
-    warmupSeconds: 300,                // Instance warmup for scaling
-    backlogTarget: 2,                  // Target jobs per instance
-    scaleToZeroMinutes: 15,            // Minutes at 0 queue before scale-in
+    maxSize: 10,                        // ASG max instances
+    warmupSeconds: 300,                 // Instance warmup for scaling
+    backlogTarget: 2,                   // Target jobs per instance
+    scaleToZeroMinutes: 15,             // Minutes at 0 queue before scale-in
   },
-  // Add new workflows here, then run: npx cdk deploy bp-<stage>-gpu
+  // Add new fleets here, then run: npx cdk deploy bp-<stage>-gpu
 ];
 ```
+
+If `amiSsmParameter` is not provided, the Fleet ASG defaults to:
+`/bp/ami/fleets/<stage>/<fleet-slug>`.
 
 ## Deployment
 
@@ -329,18 +332,15 @@ aws ecs run-task \
 
 ## GPU Workers
 
-### ComfyUI Asset Bundles (models / LoRAs / VAEs)
+### ComfyUI Assets & Bundles (no S3 duplication)
 
-We manage ComfyUI assets as **versioned bundles** in S3. Each bundle is a self-contained prefix that can be synced to `/opt/comfyui` on GPU nodes (dev or autoscaled).
+We store assets as **content-addressed singletons** in S3, and bundles as **manifest-only** records (no copied assets). Bundles are applied by `/opt/comfyui/bin/apply-bundle.sh` during AMI bake, instance boot, or manual SSM apply.
 
 **S3 layout**
 
 - Models bucket: `bp-models-<account>-<stage>`
-- Upload staging: `uploads/<workflow_slug>/<uuid>/<uuid>.<ext>`
-- Bundles: `bundles/<workflow_slug>/<bundle_id>/`
-  - `models/` → ComfyUI `models/*` (checkpoints, loras, vae, etc.)
-  - `custom_nodes/` → ComfyUI `custom_nodes/*`
-  - `manifest.json` → bundle manifest
+- Assets: `assets/<kind>/<sha256>`
+- Bundles: `bundles/<bundle_id>/manifest.json`
 
 **Kind → target path mapping**
 
@@ -352,56 +352,59 @@ We manage ComfyUI assets as **versioned bundles** in S3. Each bundle is a self-c
 - `custom_node` → `custom_nodes/`
 - `other` → `models/other/`
 
-**Manifest schema (stored at `.../manifest.json`)**
+**Manifest schema (stored at `bundles/<bundle_id>/manifest.json`)**
 
 ```json
 {
+  "manifest_version": 1,
   "bundle_id": "uuid",
-  "workflow_slug": "image-to-video",
+  "name": "Base SDXL + nodes",
   "created_at": "2026-02-18T12:34:56Z",
   "notes": "Optional notes",
   "assets": [
     {
-      "kind": "checkpoint | lora | vae | embedding | controlnet | custom_node | other",
-      "original_filename": "my-model.safetensors",
-      "size_bytes": 123456789,
-      "sha256": "optional sha256",
-      "s3_key": "bundles/image-to-video/<bundle_id>/models/checkpoints/my-model.safetensors",
-      "target_path": "models/checkpoints/my-model.safetensors"
+      "asset_id": 123,
+      "kind": "checkpoint",
+      "sha256": "abc123...",
+      "asset_s3_key": "assets/checkpoint/abc123...",
+      "original_filename": "sdxl.safetensors",
+      "target_path": "models/checkpoints/sdxl.safetensors",
+      "action": "copy"
     }
   ]
 }
 ```
 
+Full schema: `docs/comfyui-assets-bundles-fleets.md`.
+
 **Active bundle pointer**
 
-For each workflow + stage, the active bundle is stored in SSM:
+For each fleet + stage, the active bundle is stored in SSM:
 
 ```
-/bp/<stage>/assets/<workflow_slug>/active_bundle
+/bp/<stage>/fleets/<fleet_slug>/active_bundle
 ```
 
-The SSM **value** is the bundle S3 prefix (e.g. `bundles/<owner_slug>/<bundle_id>`).
+The SSM **value** is the bundle prefix (e.g. `bundles/<bundle_id>`).
 
-GPU nodes sync the active bundle on boot. To promote a new bundle you:
-1) build AMI (Packer), 2) update the SSM bundle pointer, 3) roll the ASG.
-
-**Smart-skip boot sync (hybrid)**
+**Boot behavior + smart-skip**
 
 - If the AMI was baked with a bundle, Packer writes `/opt/comfyui/.baked_bundle_id`.
-- On boot, if the bundle ID derived from `ACTIVE_PREFIX` equals `BAKED_BUNDLE_ID`, the instance **skips** S3 sync.
-- If they differ, it runs `aws s3 sync` to pull the delta.
+- On boot, user-data reads the active bundle prefix and compares it to the baked bundle ID.
+- If they match, the instance **skips** asset install.
+- If they differ, it runs `/opt/comfyui/bin/apply-bundle.sh` to download the manifest and apply assets.
+- The installer records `/opt/comfyui/.active_bundle_id` and `/opt/comfyui/.installed_bundle_paths`.
 
 **Important: AWS S3 vs local MinIO**
 
-- **Bundles live in AWS S3 only** (`bp-models-<account>-<stage>`). Local MinIO is **dev-only** and not reachable by AWS EC2/SSM/Actions unless you explicitly expose and configure it.
+- **Assets and bundles live in AWS S3 only** (`bp-models-<account>-<stage>`). Local MinIO is **dev-only** and not reachable by AWS EC2/SSM/Actions unless you explicitly expose and configure it.
 - **Bucket discovery**:
   - CDK outputs (DataStack), or
   - `aws ssm get-parameter --name /bp/<stage>/models/bucket --query Parameter.Value --output text`
 - **Storage config split**:
   - Media uploads use the default `s3` disk (`AWS_*`) → MinIO locally, S3 in staging/prod.
   - ComfyUI models/logs use dedicated disks (`COMFYUI_MODELS_*`, `COMFYUI_LOGS_*`) so models stay in AWS S3 even when media is local.
-- **AWS S3 readers**: `build-ami.yml` (Packer), `apply-comfyui-bundle.yml` (SSM), GPU worker boot sync (user-data).
+- **AWS S3 readers**: `build-ami.yml` (Packer), `apply-comfyui-bundle.yml` (SSM), GPU worker boot (user-data).
 
 #### One-time setup (per stage)
 
@@ -439,45 +442,46 @@ aws secretsmanager get-secret-value \
 #### Runbook: create → activate → promote
 
 1. **Upload asset files**: open **Admin → Assets** (`/admin/assets`) and upload a model/LoRA/VAE/custom node file.
-2. **Create a bundle**: select the workflow, select asset files, add notes, click **Create Bundle**.
-   - This copies files into `bundles/<workflow_slug>/<bundle_id>/...` and writes `manifest.json`.
-3. **Activate bundle**:
-   - Click **Activate Staging** or **Activate Prod**.
-   - This writes the active pointer in SSM (value = bundle prefix):
-
-```bash
-aws ssm get-parameter \
-  --name "/bp/<stage>/assets/<workflow_slug>/active_bundle" \
-  --query "Parameter.Value" --output text
-```
-
-4. **Bake an AMI from the bundle (recommended for stage/prod)**:
+2. **Create a bundle**: select asset files, enter a bundle name, add notes, click **Create Bundle**.
+   - This writes `bundles/<bundle_id>/manifest.json` referencing `assets/<kind>/<sha256>`.
+3. **Create a fleet + assign workflows**:
+   - Create the fleet in **Admin → Assets → Create Fleet**.
+   - Assign workflows in **Fleet Workflow Assignment**.
+4. **Activate a bundle for the fleet**:
+   - In **Fleets**, pick a bundle and click **Activate**.
+   - This updates `/bp/<stage>/fleets/<fleet_slug>/active_bundle`.
+5. **Bake an AMI from the bundle (recommended for stage/prod)**:
    - Run GitHub Actions → **Build GPU AMI** (`build-ami.yml`) with:
-     - `workflow_slug`
+     - `fleet_slug`
+     - `stage`
      - `models_s3_bucket`: `bp-models-<account>-<stage>`
-     - `models_s3_prefix`: `bundles/<workflow_slug>/<bundle_id>`
+     - `models_s3_prefix`: `bundles/<bundle_id>`
      - `bundle_id`: (recommended) stored in the AMI as `/opt/comfyui/.baked_bundle_id` for smart-skip behavior
-     - `packer_instance_profile` (usually required): an EC2 instance profile with S3 read to the bundle prefix (Packer’s `aws s3 sync` runs **inside** the build instance)
-       - Quick start: create an EC2 role + instance profile and attach `AmazonS3ReadOnlyAccess` (or a prefix-restricted S3 read policy).
-   - The workflow writes the AMI alias to `/bp/ami/<workflow_slug>` (data type `aws:ec2:image`).
-5. **Roll the ASG** so new instances pick up the new AMI + active bundle:
+     - `packer_instance_profile` (usually required): an EC2 instance profile with S3 read to the models bucket.
+   - The workflow writes the AMI alias to `/bp/ami/fleets/<stage>/<fleet_slug>`.
+6. **Roll the ASG** so new instances pick up the new AMI + active bundle:
    - AWS Console → Auto Scaling Groups → start **Instance refresh**, or
    - CLI (example):
 
 ```bash
 aws autoscaling start-instance-refresh \
-  --auto-scaling-group-name "asg-<stage>-<workflow_slug>" \
+  --auto-scaling-group-name "asg-<stage>-<fleet_slug>" \
   --preferences '{"MinHealthyPercentage":90,"InstanceWarmup":300}'
 ```
 
    - Scale-to-zero → scale up (for stage), or
    - Replace instances via your standard rollout procedure.
 
+#### Cleanup unused bundles/assets
+
+- **Bundles**: Admin → Assets → **Cleanup Candidates** lists bundles not active in any fleet, with `aws s3 rm` commands and a **Delete** button that removes the S3 prefix + DB record server-side.
+- **Assets**: Admin → Assets → **Asset Cleanup Candidates** lists assets not referenced by any bundle, with a **Delete** button that removes the S3 object + DB record server-side.
+
 #### Troubleshooting
 
 - **Boot sync logs**: `/var/log/comfyui-asset-sync.log` on the GPU instance (and `journalctl -u comfyui.service` / `-u comfyui-worker.service`).
 - **No active bundle**: the default SSM value is `none`, which skips sync.
-- **Wrong AMI in ASG**: verify `/bp/ami/<workflow_slug>` exists and is `aws:ec2:image`.
+- **Wrong AMI in ASG**: verify `/bp/ami/fleets/<stage>/<fleet_slug>` exists and is `aws:ec2:image`.
 
 ### Building AMIs (Packer)
 
@@ -485,15 +489,15 @@ AMIs are built via GitHub Actions (`.github/workflows/build-ami.yml`, manual dis
 
 ```
 Actions → "Build GPU AMI" → Run workflow
-  workflow_slug: image-to-video
+  fleet_slug: gpu-default
+  stage: staging
   instance_type: g4dn.xlarge  (default)
 ```
 
 The pipeline:
 1. Checks out code
-2. Copies `worker/comfyui_worker.py` into Packer context
-3. Runs `packer build` with NVIDIA drivers, ComfyUI, Python worker
-4. Stores the new AMI ID in SSM Parameter Store (`/bp/ami/<workflow-slug>`)
+2. Runs `packer build` with NVIDIA drivers, ComfyUI, Python worker
+3. Stores the new AMI ID in SSM Parameter Store (`/bp/ami/fleets/<stage>/<fleet_slug>`)
 
 To build locally:
 
@@ -502,9 +506,12 @@ cd infrastructure/packer
 
 packer init .
 packer build \
-  -var "workflow_slug=image-to-video" \
+  -var "fleet_slug=gpu-default" \
   -var "instance_type=g4dn.xlarge" \
   -var "aws_region=us-east-1" \
+  -var "models_s3_bucket=bp-models-<account>-<stage>" \
+  -var "models_s3_prefix=bundles/<bundle_id>" \
+  -var "bundle_id=<bundle_id>" \
   .
 ```
 
@@ -512,7 +519,7 @@ Packer provisioning steps:
 1. `install-nvidia-drivers.sh` — NVIDIA GPU drivers + CUDA
 2. `install-comfyui.sh` — ComfyUI server at `/opt/comfyui`
 3. `install-python-worker.sh` — Worker script at `/opt/worker`
-4. Model sync from S3 (optional, if `models_s3_bucket` var is set)
+4. Bundle apply from S3 (optional, if `models_s3_bucket` + `models_s3_prefix` are set)
 
 ### Apply Bundle to Dev Instance (manual)
 
@@ -520,8 +527,8 @@ Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **runni
 
 **Inputs:**
 - `instance_id` — EC2 instance ID
-- `workflow_slug` — e.g. `image-to-video`
-- `bundle_id` — bundle UUID
+- `fleet_slug` — e.g. `gpu-default`
+- `bundle_prefix` — `bundles/<bundle_id>`
 - `models_bucket` — `bp-models-<account>-<stage>`
 - `logs_bucket` — optional, `bp-logs-<account>-<stage>`
 
@@ -530,22 +537,24 @@ Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **runni
 - The workflow will upload SSM command output to the logs bucket (if provided).
 - If `ASSET_OPS_API_URL` + `ASSET_OPS_SECRET` are set, the workflow also records an audit log via the backend.
 
-### Adding a New Workflow
+### Adding a New Fleet
 
-1. Add entry to `lib/config/workflows.ts` (see Configuration section above)
-2. Build a Packer AMI for the new workflow slug
+1. Add entry to `lib/config/fleets.ts` (see Configuration section above)
+2. Build a Packer AMI for the new fleet slug
 3. Deploy: `npx cdk deploy bp-staging-gpu bp-staging-monitoring`
-4. The new workflow gets its own ASG, CloudWatch alarms, and dashboard row
+4. Create the fleet in **Admin → Assets**, assign workflows, and activate a bundle
 
 ### Monitoring Workers
 
-Custom CloudWatch metrics (namespace: `ComfyUI/Workers`, dimension: `WorkflowSlug`):
-- `QueueDepth` — pending jobs for this workflow
+Custom CloudWatch metrics (namespace: `ComfyUI/Workers`, dimension: `FleetSlug`):
+- `QueueDepth` — pending jobs for this fleet
 - `BacklogPerInstance` — jobs per active worker
 - `ActiveWorkers` — running instances
 - `JobProcessingP50` — median job duration
 - `ErrorRate` — % of failed jobs
 - `SpotInterruptionCount` — Spot reclamations
+
+Optional: enable per-workflow metrics via `emit_workflow_metrics` (see `backend/config/services.php`).
 
 ### Scale-to-Zero Behavior
 
@@ -631,13 +640,11 @@ Defaults and constraints (from backend config):
 
 - **GPU AMI builds**:
   - Trigger GitHub Actions `build-ami.yml` (manual dispatch).
-  - Input: `workflow_slug`, optional `instance_type`.
-  - Output: AMI ID written to SSM at `/bp/ami/<workflow-slug>`.
+  - Input: `fleet_slug`, `stage`, optional `instance_type`.
+  - Output: AMI ID written to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
 
-- **Optional model sync** (Packer):
-  - Set `models_s3_bucket` and `models_s3_prefix` (bundle root like `bundles/<workflow_slug>/<bundle_id>`) to sync during AMI build:
-    - `.../models/` → `/opt/comfyui/models/`
-    - `.../custom_nodes/` → `/opt/comfyui/custom_nodes/` (optional)
+- **Optional bundle apply** (Packer):
+  - Set `models_s3_bucket` and `models_s3_prefix` (bundle root like `bundles/<bundle_id>`) to apply during AMI build via `apply-bundle.sh`.
 
 ## Secrets Reference
 
@@ -650,8 +657,8 @@ Defaults and constraints (from backend config):
 | Asset ops secret | Secrets Manager | `/bp/<stage>/asset-ops/secret` | Yes (CDK) | Use the secret value as `ASSET_OPS_SECRET` in GitHub Actions |
 | Models bucket | SSM Parameter Store | `/bp/<stage>/models/bucket` | Yes (CDK) | — |
 | OAuth secrets | Secrets Manager | `/bp/<stage>/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/oauth/secrets --secret-string '{"google_client_secret":"..."}'` |
-| GPU AMI IDs | SSM Parameter Store | `/bp/ami/<workflow-slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
-| Active asset bundle | SSM Parameter Store | `/bp/<stage>/assets/<workflow_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/assets/<slug>/active_bundle --value "bundles/<owner_slug>/<bundle_id>" --type String --overwrite` |
+| GPU AMI IDs | SSM Parameter Store | `/bp/ami/fleets/<stage>/<fleet_slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/fleets/<stage>/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
+| Active asset bundle | SSM Parameter Store | `/bp/<stage>/fleets/<fleet_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/fleets/<slug>/active_bundle --value "bundles/<bundle_id>" --type String --overwrite` |
 | Redis endpoint | SSM Parameter Store | `/bp/<stage>/redis/endpoint` | Yes (CDK) | — |
 
 ## Monitoring & Alerts
@@ -665,13 +672,13 @@ Name: `bp-<stage>` (e.g. `bp-staging`)
 | 1 — App Health | ALB Requests & 5xx Errors, ALB Latency (p50/p95/p99) |
 | 2 — Data Layer | RDS CPU & Connections, RDS Free Storage |
 | 3 — NAT Gateway | NAT Bytes In/Out, Port Allocation Errors |
-| 4+ — GPU Workers | Per-workflow: Queue Depth & Workers, Performance & Errors |
+| 4+ — GPU Workers | Per-fleet: Queue Depth & Workers, Performance & Errors |
 
 ### Log Groups & Retention
 
 - Backend: `/ecs/bp-backend-<stage>`
 - Frontend: `/ecs/bp-frontend-<stage>`
-- GPU workers: `/gpu-workers/<workflow-slug>`
+- GPU workers: `/gpu-workers/<fleet-slug>`
 
 Retention:
 - **Production**: 30 days
@@ -686,8 +693,8 @@ Retention:
 | **P1** | RDS Storage Low | < 2 GB free | 5 min |
 | **P2** | ALB 5xx Warning | ≥ 10 errors | 5 min |
 | **P2** | RDS CPU Warning | ≥ 80% | 5 min |
-| **P2** | Per-workflow Error Rate | ≥ 20% | 5 min |
-| **P3** | Per-workflow Queue Deep | ≥ 10 jobs | 30 min |
+| **P2** | Per-fleet Error Rate | ≥ 20% | 5 min |
+| **P3** | Per-fleet Queue Deep | ≥ 10 jobs | 30 min |
 
 ### SNS Topic
 
@@ -727,11 +734,11 @@ aws ecs update-service --cluster bp-staging --service bp-staging-backend --desir
 aws ecs update-service --cluster bp-staging --service bp-staging-frontend --desired-count 0
 ```
 
-2. Scale GPU ASGs to zero (repeat for each workflow slug):
+2. Scale GPU ASGs to zero (repeat for each fleet slug):
 
 ```bash
 aws autoscaling update-auto-scaling-group \
-  --auto-scaling-group-name asg-staging-image-to-video \
+  --auto-scaling-group-name asg-<stage>-<fleet_slug> \
   --min-size 0 --max-size 0 --desired-capacity 0
 ```
 
@@ -744,7 +751,7 @@ aws ecs describe-services \
   --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount}'
 
 aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names asg-staging-image-to-video \
+  --auto-scaling-group-names asg-<stage>-<fleet_slug> \
   --query 'AutoScalingGroups[].{name:AutoScalingGroupName,desired:DesiredCapacity,instances:Instances[].InstanceId}'
 ```
 
@@ -768,7 +775,7 @@ Notes:
 |---------|-----------|-----|
 | ECS tasks stuck in PENDING | No capacity, or image pull failures | Check ECR image exists, check SG allows outbound to ECR/S3 |
 | Backend returns 502 | PHP-FPM container not ready or crashed | Check `/ecs/bp-backend-<stage>` logs, verify DB connectivity |
-| GPU workers not starting | AMI not found or SSM parameter missing | Verify SSM parameter `/bp/ami/<slug>` has a valid AMI ID |
+| GPU workers not starting | AMI not found or SSM parameter missing | Verify SSM parameter `/bp/ami/fleets/<stage>/<fleet_slug>` has a valid AMI ID |
 | Scale-to-zero not working | Lambda not triggered | Check alarm state, verify SNS subscription, check Lambda logs |
 | ALB returns 404 | No healthy targets | Check target group health, verify ECS service desired count > 0 |
 | CDK deploy fails on secrets | Secret already exists | Import with `cdk import` or delete manually from Secrets Manager |
@@ -789,7 +796,7 @@ aws ecs execute-command \
 aws logs tail /ecs/bp-backend-staging --follow
 
 # Tail GPU worker logs
-aws logs tail /gpu-workers/image-to-video --follow
+aws logs tail /gpu-workers/<fleet_slug> --follow
 
 # Check ECS service status
 aws ecs describe-services \
@@ -799,7 +806,7 @@ aws ecs describe-services \
 
 # Check GPU ASG status
 aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names asg-staging-image-to-video \
+  --auto-scaling-group-names asg-<stage>-<fleet_slug> \
   --query 'AutoScalingGroups[].{name:AutoScalingGroupName,desired:DesiredCapacity,min:MinSize,max:MaxSize,instances:Instances[].InstanceId}'
 
 # Force new deployment (pick up latest image)
@@ -830,14 +837,15 @@ test-frontend ─┘                     └──► deploy-infrastructure*
 **Trigger:** Manual dispatch only (`workflow_dispatch`).
 
 **Inputs:**
-- `workflow_slug` (required) — e.g. `image-to-video`
+- `fleet_slug` (required) — e.g. `gpu-default`
+- `stage` (optional, default: `staging`)
 - `instance_type` (optional, default: `g4dn.xlarge`) — build instance
 - `models_s3_bucket` (optional) — models bucket (e.g. `bp-models-<account>-<stage>`)
-- `models_s3_prefix` (optional) — bundle prefix (e.g. `bundles/image-to-video/<bundle_id>`)
+- `models_s3_prefix` (optional) — bundle prefix (e.g. `bundles/<bundle_id>`)
 - `bundle_id` (optional) — used for AMI tagging/audit
-- `packer_instance_profile` (recommended / usually required) — instance profile name/ARN with S3 read access (used by `aws s3 sync` inside the build instance)
+- `packer_instance_profile` (recommended / usually required) — instance profile name/ARN with S3 read access (used by `apply-bundle.sh` inside the build instance)
 
-**Output:** AMI ID stored in SSM at `/bp/ami/<workflow_slug>`.
+**Output:** AMI ID stored in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
 
 ### `apply-comfyui-bundle.yml`
 
@@ -847,8 +855,8 @@ test-frontend ─┘                     └──► deploy-infrastructure*
 
 **Inputs:**
 - `instance_id` (required)
-- `workflow_slug` (required)
-- `bundle_prefix` (required) — `bundles/<owner_slug>/<bundle_id>`
+- `fleet_slug` (required)
+- `bundle_prefix` (required) — `bundles/<bundle_id>`
 - `models_bucket` (required) — `bp-models-<account>-<stage>`
 - `logs_bucket` (optional) — `bp-logs-<account>-<stage>`
 
@@ -986,16 +994,16 @@ infrastructure/
 ├── lib/
 │   ├── config/
 │   │   ├── environment.ts                  # Stage configs (staging/production presets)
-│   │   └── workflows.ts                    # GPU workflow definitions (slug, AMI, instance types)
+│   │   └── fleets.ts                       # GPU fleet definitions (slug, AMI, instance types)
 │   ├── stacks/
 │   │   ├── network-stack.ts                # VPC, subnets, security groups, S3 endpoint
 │   │   ├── data-stack.ts                   # RDS, Redis, S3, CloudFront, secrets
 │   │   ├── compute-stack.ts                # ECS cluster, ALB, backend/frontend services
-│   │   ├── gpu-worker-stack.ts             # Per-workflow GPU ASGs, scale-to-zero
+│   │   ├── gpu-worker-stack.ts             # Per-fleet GPU ASGs, scale-to-zero
 │   │   ├── monitoring-stack.ts             # Dashboard, alarms (P1/P2/P3), SNS
 │   │   └── cicd-stack.ts                   # ECR repositories
 │   └── constructs/
-│       ├── workflow-asg.ts                 # Reusable: ASG + launch template + scaling policies
+│       ├── fleet-asg.ts                    # Reusable: ASG + launch template + scaling policies
 │       ├── scale-to-zero-lambda.ts         # Shared Lambda: SNS → set ASG desired=0
 │       └── rds-init.ts                     # Legacy custom resource (tenant DBs now created via migrations)
 ├── docker/
@@ -1006,11 +1014,12 @@ infrastructure/
 │           └── default.conf                # Nginx → PHP-FPM fastcgi config
 ├── packer/
 │   ├── comfyui-worker.pkr.hcl             # AMI template (Ubuntu 22.04, NVIDIA, ComfyUI)
-│   ├── variables.pkr.hcl                  # Packer variables (slug, region, instance type)
+│   ├── variables.pkr.hcl                  # Packer variables (fleet slug, region, instance type)
 │   └── scripts/
 │       ├── install-nvidia-drivers.sh       # NVIDIA drivers + CUDA
 │       ├── install-comfyui.sh              # ComfyUI server setup
-│       └── install-python-worker.sh        # Python worker script
+│       ├── install-python-worker.sh        # Python worker script
+│       └── apply-bundle.sh                 # Manifest-driven bundle installer
 ├── cdk.json                                # CDK config + context values
 ├── tsconfig.json                           # TypeScript config
 └── package.json                            # CDK dependencies

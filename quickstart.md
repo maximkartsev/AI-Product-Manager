@@ -2,15 +2,42 @@ ngrok http --url=uitest.ngrok.app 3003
 ngrok http --url=back-123.ngrok.app 80
 ngrok http --url=minio.ngrok.pizza 9000
 
+Local dev storage (MinIO + AWS S3)
+
+1) App media (effects thumbnails/previews, workflow uploads) -> MinIO:
+   - Set in `backend/.env`:
+     FILESYSTEM_DISK=s3
+     AWS_ACCESS_KEY_ID=laradock
+     AWS_SECRET_ACCESS_KEY=laradock
+     AWS_DEFAULT_REGION=us-east-1
+     AWS_BUCKET=bp-media
+     AWS_USE_PATH_STYLE_ENDPOINT=true
+     AWS_ENDPOINT=https://minio.ngrok.pizza
+     AWS_URL=https://minio.ngrok.pizza/bp-media
+  - `make init` now auto-creates the bucket from `AWS_BUCKET` (fallback `bp-media`).
+  - If you skip `make init`, create the bucket in MinIO console (http://localhost:9001).
+
+2) ComfyUI models/logs -> AWS S3 (required if AWS_* points to MinIO):
+   - Set in `backend/.env`:
+     COMFYUI_MODELS_BUCKET=<aws_models_bucket>
+     COMFYUI_LOGS_BUCKET=<aws_logs_bucket>
+     COMFYUI_MODELS_ACCESS_KEY_ID=<aws_key>
+     COMFYUI_MODELS_SECRET_ACCESS_KEY=<aws_secret>
+     COMFYUI_MODELS_REGION=us-east-1
+     COMFYUI_LOGS_ACCESS_KEY_ID=<aws_key>
+     COMFYUI_LOGS_SECRET_ACCESS_KEY=<aws_secret>
+     COMFYUI_LOGS_REGION=us-east-1
+
 cd ~/projects/AI-Product-Manager/laradock
 docker compose -p bp exec workspace bash -c "cd /var/www && composer require socialiteproviders/tiktok"
 docker compose -p bp exec workspace bash -c "cd /var/www && php artisan migrate:fresh"
 docker compose -p bp exec workspace bash -c "cd /var/www && php artisan test"
 
-“migrate → seed” flow for this repo (pooled tenancy)
+Fresh!!! “migrate → seed” flow for this repo (pooled tenancy)
 
 	cd C:\Projects\AI-Product-Management\AI-Product-Manager\laradock
 
+	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan migrate:fresh"
 	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan tenancy:pools-migrate"
 	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan db:seed"
 

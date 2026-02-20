@@ -7,8 +7,8 @@ on:
         description: 'EC2 instance ID (dev GPU node)'
         required: true
         type: string
-      workflow_slug:
-        description: 'Workflow slug (e.g. image-to-video)'
+      fleet_slug:
+        description: 'Fleet slug (e.g. gpu-default)'
         required: true
         type: string
       bundle_prefix:
@@ -59,7 +59,7 @@ jobs:
             --instance-ids "${{ inputs.instance_id }}" \
             --document-name "AWS-RunShellScript" \
             --comment "Apply ComfyUI asset bundle" \
-            --parameters commands="aws s3 sync s3://${{ inputs.models_bucket }}/$BUNDLE_PREFIX/models/ /opt/comfyui/models/ --delete && aws s3 sync s3://${{ inputs.models_bucket }}/$BUNDLE_PREFIX/custom_nodes/ /opt/comfyui/custom_nodes/ --delete && sudo systemctl restart comfyui.service && (sudo systemctl restart comfyui-worker.service || true)" \
+            --parameters commands="MODELS_BUCKET=${{ inputs.models_bucket }} BUNDLE_PREFIX=$BUNDLE_PREFIX /opt/comfyui/bin/apply-bundle.sh && sudo systemctl restart comfyui.service && (sudo systemctl restart comfyui-worker.service || true)" \
             --query "Command.CommandId" --output text)
           echo "command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
           echo "SSM command ID: $COMMAND_ID"
@@ -84,7 +84,7 @@ jobs:
           BUNDLE_PREFIX="${{ inputs.bundle_prefix }}"
           BUNDLE_PREFIX="${BUNDLE_PREFIX%/}"
           BUNDLE_ID=$(basename "$BUNDLE_PREFIX")
-          LOG_KEY="asset-sync/${{ inputs.workflow_slug }}/${BUNDLE_ID}/$(date -u +%Y%m%dT%H%M%SZ)-${{ inputs.instance_id }}.json"
+          LOG_KEY="asset-sync/${{ inputs.fleet_slug }}/${BUNDLE_ID}/$(date -u +%Y%m%dT%H%M%SZ)-${{ inputs.instance_id }}.json"
           aws s3 cp command-output.json "s3://${{ inputs.logs_bucket }}/$LOG_KEY"
           echo "log_key=$LOG_KEY" >> $GITHUB_OUTPUT
         id: upload
@@ -104,10 +104,10 @@ jobs:
             --arg event "dev_bundle_applied" \
             --arg notes "${{ inputs.notes }}" \
             --arg artifact_s3_key "$LOG_KEY" \
-            --arg workflow_slug "${{ inputs.workflow_slug }}" \
+            --arg fleet_slug "${{ inputs.fleet_slug }}" \
             --arg instance_id "${{ inputs.instance_id }}" \
             --arg bundle_prefix "$BUNDLE_PREFIX" \
-            '{bundle_id:$bundle_id,event:$event,notes:$notes,artifact_s3_key:$artifact_s3_key,metadata:{workflow_slug:$workflow_slug,instance_id:$instance_id,bundle_prefix:$bundle_prefix}}')
+            '{bundle_id:$bundle_id,event:$event,notes:$notes,artifact_s3_key:$artifact_s3_key,metadata:{fleet_slug:$fleet_slug,instance_id:$instance_id,bundle_prefix:$bundle_prefix}}')
           curl -sS -X POST "$ASSET_OPS_API_URL/ops/comfyui-assets/sync-logs" \
             -H "Content-Type: application/json" \
             -H "X-Asset-Ops-Secret: $ASSET_OPS_SECRET" \

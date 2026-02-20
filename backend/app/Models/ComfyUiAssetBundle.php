@@ -7,29 +7,19 @@ class ComfyUiAssetBundle extends CentralModel
     protected $table = 'comfyui_asset_bundles';
 
     protected $fillable = [
-        'workflow_id',
         'bundle_id',
+        'name',
         's3_prefix',
         'notes',
         'manifest',
-        'active_staging_at',
-        'active_production_at',
         'created_by_user_id',
         'created_by_email',
     ];
 
     protected $casts = [
-        'workflow_id' => 'integer',
         'manifest' => 'array',
-        'active_staging_at' => 'datetime',
-        'active_production_at' => 'datetime',
         'created_by_user_id' => 'integer',
     ];
-
-    public function workflow()
-    {
-        return $this->belongsTo(Workflow::class);
-    }
 
     public function files()
     {

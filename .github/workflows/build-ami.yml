@@ -3,10 +3,15 @@ name: Build GPU AMI
 on:
   workflow_dispatch:
     inputs:
-      workflow_slug:
-        description: 'Workflow slug (e.g. image-to-video)'
+      fleet_slug:
+        description: 'Fleet slug (e.g. gpu-default)'
         required: true
         type: string
+      stage:
+        description: 'Stage (staging or production)'
+        required: false
+        type: string
+        default: 'staging'
       instance_type:
         description: 'Instance type for AMI build'
         required: false
@@ -17,7 +22,7 @@ on:
         required: false
         type: string
       models_s3_prefix:
-        description: 'Optional: S3 prefix for bundle (e.g. bundles/image-to-video/<bundle-id>)'
+        description: 'Optional: S3 prefix for bundle (e.g. bundles/<bundle-id>)'
         required: false
         type: string
       bundle_id:
@@ -38,7 +43,7 @@ env:
 
 jobs:
   build-ami:
-    name: Build AMI - ${{ inputs.workflow_slug }}
+    name: Build AMI - ${{ inputs.fleet_slug }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,9 +59,6 @@ jobs:
         with:
           version: latest
 
-      - name: Copy worker script to Packer context
-        run: cp worker/comfyui_worker.py infrastructure/packer/scripts/
-
       - name: Packer init
         working-directory: infrastructure/packer
         run: packer init .
@@ -65,7 +67,7 @@ jobs:
         working-directory: infrastructure/packer
         run: |
           packer validate \
-            -var "workflow_slug=${{ inputs.workflow_slug }}" \
+            -var "fleet_slug=${{ inputs.fleet_slug }}" \
             -var "instance_type=${{ inputs.instance_type }}" \
             -var "aws_region=${{ env.AWS_REGION }}" \
             -var "models_s3_bucket=${{ inputs.models_s3_bucket }}" \
@@ -79,7 +81,7 @@ jobs:
         working-directory: infrastructure/packer
         run: |
           packer build \
-            -var "workflow_slug=${{ inputs.workflow_slug }}" \
+            -var "fleet_slug=${{ inputs.fleet_slug }}" \
             -var "instance_type=${{ inputs.instance_type }}" \
             -var "aws_region=${{ env.AWS_REGION }}" \
             -var "models_s3_bucket=${{ inputs.models_s3_bucket }}" \
@@ -97,18 +99,19 @@ jobs:
         if: steps.build.outputs.ami_id
         run: |
           aws ssm put-parameter \
-            --name "/bp/ami/${{ inputs.workflow_slug }}" \
+            --name "/bp/ami/fleets/${{ inputs.stage }}/${{ inputs.fleet_slug }}" \
             --value "${{ steps.build.outputs.ami_id }}" \
             --data-type "aws:ec2:image" \
             --type String \
             --overwrite
-          echo "Updated SSM parameter /bp/ami/${{ inputs.workflow_slug }} = ${{ steps.build.outputs.ami_id }}"
+          echo "Updated SSM parameter /bp/ami/fleets/${{ inputs.stage }}/${{ inputs.fleet_slug }} = ${{ steps.build.outputs.ami_id }}"
 
       - name: Summary
         run: |
           echo "## AMI Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Workflow:** ${{ inputs.workflow_slug }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Fleet:** ${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Stage:** ${{ inputs.stage }}" >> $GITHUB_STEP_SUMMARY
           echo "- **AMI ID:** ${{ steps.build.outputs.ami_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **SSM Parameter:** /bp/ami/${{ inputs.workflow_slug }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **SSM Parameter:** /bp/ami/fleets/${{ inputs.stage }}/${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY

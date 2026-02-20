@@ -11,7 +11,7 @@ import { GpuWorkerStack } from '../lib/stacks/gpu-worker-stack';
 import { MonitoringStack } from '../lib/stacks/monitoring-stack';
 import { CiCdStack } from '../lib/stacks/cicd-stack';
 import { STAGING_CONFIG, PRODUCTION_CONFIG, type BpEnvironmentConfig } from '../lib/config/environment';
-import { WORKFLOWS } from '../lib/config/workflows';
+import { FLEETS } from '../lib/config/fleets';
 
 const app = new cdk.App();
 
@@ -93,10 +93,10 @@ const gpu = new GpuWorkerStack(app, `${prefix}-gpu`, {
   config,
   vpc: network.vpc,
   sgGpuWorkers: network.sgGpuWorkers,
-  workflows: WORKFLOWS,
+  fleets: FLEETS,
   apiBaseUrl: compute.apiBaseUrl,
   modelsBucket: data.modelsBucket,
-  description: 'Per-workflow GPU ASGs with Spot instances and scale-to-zero',
+  description: 'Per-fleet GPU ASGs with Spot instances and scale-to-zero',
 });
 gpu.addDependency(compute);
 cdk.Tags.of(gpu).add('Service', 'gpu');
@@ -111,7 +111,7 @@ const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
   frontendServiceName: compute.frontendServiceName,
   dbInstanceId: data.dbInstanceId,
   natGatewayIds: network.natGatewayIds,
-  workflows: WORKFLOWS,
+  fleets: FLEETS,
   description: 'CloudWatch dashboard, alarms, SNS alerts',
 });
 monitoring.addDependency(gpu);

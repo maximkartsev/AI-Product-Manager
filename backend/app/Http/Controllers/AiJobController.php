@@ -243,6 +243,12 @@ class AiJobController extends BaseController
                 if ($expiresAt && now()->gte(\Carbon\Carbon::parse($expiresAt))) {
                     throw new \RuntimeException("File has expired for {$key}.");
                 }
+                if ($expiresAt) {
+                    $metadata = $file->metadata ?? [];
+                    unset($metadata['expires_at']);
+                    $file->metadata = $metadata;
+                    $file->save();
+                }
                 if (!$this->matchesFileType($file->mime_type, $type)) {
                     throw new \RuntimeException("File type mismatch for {$key}.");
                 }

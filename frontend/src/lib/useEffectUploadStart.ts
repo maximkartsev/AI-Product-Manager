@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ApiError, getAccessToken } from "@/lib/api";
-import { savePendingUpload } from "@/lib/uploadPreviewStore";
+import type { PendingAssetsMap } from "@/lib/effectUploadTypes";
+import { savePendingAssets, savePendingUpload } from "@/lib/uploadPreviewStore";
 
 type UploadState = { status: "idle" } | { status: "error"; message: string };
 
@@ -15,7 +16,11 @@ type UseEffectUploadStartArgs = {
 
 type UseEffectUploadStartReturn = {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
-  startUpload: (slugOverride?: string | null, context?: UploadContext | null) => {
+  startUpload: (
+    slugOverride?: string | null,
+    context?: UploadContext | null,
+    pendingAssets?: PendingAssetsMap | null,
+  ) => {
     ok: boolean;
     reason?: "unauthenticated" | "missing_slug";
   };
@@ -35,6 +40,7 @@ export default function useEffectUploadStart({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoUploadRef = useRef(false);
   const pendingContextRef = useRef<UploadContext | null>(null);
+  const pendingAssetsRef = useRef<PendingAssetsMap | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [pendingSlug, setPendingSlug] = useState<string | null>(slug ?? null);
   const [uploadState, setUploadState] = useState<UploadState>({ status: "idle" });
@@ -60,12 +66,17 @@ export default function useEffectUploadStart({
     setUploadState({ status: "idle" });
   }
 
-  function startUpload(slugOverride?: string | null, context?: UploadContext | null) {
+  function startUpload(
+    slugOverride?: string | null,
+    context?: UploadContext | null,
+    pendingAssets?: PendingAssetsMap | null,
+  ) {
     const targetSlug = slugOverride ?? slug;
     if (!targetSlug) {
       return { ok: false, reason: "missing_slug" } as const;
     }
     pendingContextRef.current = context ?? null;
+    pendingAssetsRef.current = pendingAssets ?? null;
     setPendingSlug(targetSlug);
     const nextToken = token ?? getAccessToken();
     if (!nextToken) {
@@ -97,6 +108,8 @@ export default function useEffectUploadStart({
       await savePendingUpload(uploadId, file);
       const context = pendingContextRef.current;
       pendingContextRef.current = null;
+      const pendingAssets = pendingAssetsRef.current;
+      pendingAssetsRef.current = null;
       if (context && typeof context === "object") {
         const entries = Object.entries(context).filter(([, val]) => val !== null && val !== undefined && val !== "");
         if (entries.length > 0) {
@@ -106,6 +119,9 @@ export default function useEffectUploadStart({
             // ignore storage issues
           }
         }
+      }
+      if (pendingAssets && Object.keys(pendingAssets).length > 0) {
+        await savePendingAssets(uploadId, Object.values(pendingAssets));
       }
       clearUploadError();
       router.push(`/effects/${encodeURIComponent(targetSlug)}/processing?uploadId=${uploadId}`);

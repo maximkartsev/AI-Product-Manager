@@ -2,10 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Effect;
 use App\Models\File;
+use App\Models\TokenWallet;
 use App\Services\PresignedUrlService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -77,6 +80,9 @@ class FileController extends BaseController
     public function createUpload(Request $request, PresignedUrlService $presigned): JsonResponse
     {
         $validator = Validator::make($request->all(), [
+            'effect_id' => 'numeric|required|exists:effects,id',
+            'upload_id' => 'string|required|max:128',
+            'property_key' => 'string|required|max:128',
             'kind' => 'string|required|in:image,video',
             'mime_type' => 'string|required|max:255',
             'size' => 'integer|required|min:1',
@@ -91,6 +97,34 @@ class FileController extends BaseController
         $user = $request->user();
         if (!$user) {
             return $this->sendError('Unauthorized.', [], 401);
+        }
+
+        $effect = Effect::query()->with('workflow')->find((int) $request->input('effect_id'));
+        if (!$effect) {
+            return $this->sendError('Effect not found.', [], 404);
+        }
+        if (!$effect->workflow) {
+            return $this->sendError('Effect workflow not configured.', [], 422);
+        }
+
+        $tokenCost = (int) ceil((float) $effect->credits_cost);
+        if ($tokenCost > 0) {
+            $tenantId = (string) tenant()->getKey();
+            $wallet = TokenWallet::query()->firstOrCreate(
+                ['tenant_id' => $tenantId],
+                ['user_id' => (int) $user->id, 'balance' => 0]
+            );
+
+            if ((int) $wallet->user_id !== (int) $user->id) {
+                return $this->sendError('Token wallet user mismatch.', [], 500);
+            }
+
+            if ((int) $wallet->balance < $tokenCost) {
+                return $this->sendError('Insufficient tokens.', [
+                    'required_tokens' => $tokenCost,
+                    'balance' => (int) $wallet->balance,
+                ], 422);
+            }
         }
 
         $kind = (string) $request->input('kind');
@@ -116,16 +150,71 @@ class FileController extends BaseController
             return $this->sendError('Invalid filename.', [], 422);
         }
 
+        $uploadId = (string) $request->input('upload_id');
+        if ($uploadId === '' || Str::contains($uploadId, ['..', '/', '\\'])) {
+            return $this->sendError('Invalid upload id.', [], 422);
+        }
+
+        $propertyKey = (string) $request->input('property_key');
+        if ($propertyKey === '' || Str::contains($propertyKey, ['..', '/', '\\'])) {
+            return $this->sendError('Invalid property key.', [], 422);
+        }
+
+        $targetProp = null;
+        $properties = $effect->workflow->properties ?? [];
+        foreach ($properties as $prop) {
+            if (!is_array($prop)) {
+                continue;
+            }
+            if (($prop['key'] ?? null) === $propertyKey) {
+                $targetProp = $prop;
+                break;
+            }
+        }
+
+        if (!$targetProp) {
+            return $this->sendError('Unsupported property.', [], 422);
+        }
+        if (empty($targetProp['user_configurable']) || !empty($targetProp['is_primary_input'])) {
+            return $this->sendError('Property is not configurable.', [], 422);
+        }
+
+        $propType = (string) ($targetProp['type'] ?? 'text');
+        if (!in_array($propType, ['image', 'video'], true)) {
+            return $this->sendError('Unsupported property type.', [], 422);
+        }
+        if ($propType !== $kind) {
+            return $this->sendError('Property type mismatch.', [
+                'expected' => $propType,
+                'provided' => $kind,
+            ], 422);
+        }
+
         $extension = $this->resolveExtension($originalFilename, $mimeType);
         $tenantId = (string) tenant()->getKey();
-        $path = sprintf(
-            'tenants/%s/uploads/%s.%s',
-            $tenantId,
-            (string) Str::uuid(),
-            $extension
-        );
+        $basePath = sprintf('tenants/%s/runs/%s/assets/%s', $tenantId, $uploadId, $propertyKey);
+        $path = sprintf('%s.%s', $basePath, $extension);
 
         $disk = (string) config('filesystems.default', 's3');
+
+        $existingFiles = File::query()
+            ->where('tenant_id', $tenantId)
+            ->where('user_id', (int) $user->id)
+            ->where('path', 'like', $basePath . '.%')
+            ->get();
+        foreach ($existingFiles as $existing) {
+            if ($existing->disk && $existing->path) {
+                try {
+                    Storage::disk($existing->disk)->delete($existing->path);
+                } catch (\Throwable $e) {
+                    // ignore delete failures
+                }
+            }
+            $existing->delete();
+        }
+
+        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+        $expiresAt = now()->addSeconds(max($ttlSeconds, 3600));
         $file = File::query()->create([
             'tenant_id' => $tenantId,
             'user_id' => (int) $user->id,
@@ -135,9 +224,13 @@ class FileController extends BaseController
             'size' => $size,
             'original_filename' => $originalFilename,
             'file_hash' => $request->input('file_hash'),
+            'metadata' => [
+                'expires_at' => $expiresAt->toIso8601String(),
+                'upload_id' => $uploadId,
+                'property_key' => $propertyKey,
+                'effect_id' => $effect->id,
+            ],
         ]);
-
-        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
 
         try {
             $upload = $presigned->uploadUrl($disk, $path, $ttlSeconds, $mimeType);

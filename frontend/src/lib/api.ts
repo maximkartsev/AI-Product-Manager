@@ -60,7 +60,10 @@ export type UploadInitData = {
   expires_in: number;
 };
 
-export type FileUploadInitRequest = {
+export type EffectAssetUploadInitRequest = {
+  effect_id: number;
+  upload_id: string;
+  property_key: string;
   kind: "image" | "video";
   mime_type: string;
   size: number;
@@ -629,7 +632,7 @@ export function listFiles(params?: {
   return apiGet<FilesIndexData>("/files", query);
 }
 
-export function initFileUpload(payload: FileUploadInitRequest): Promise<FileUploadInitData> {
+export function initEffectAssetUpload(payload: EffectAssetUploadInitRequest): Promise<FileUploadInitData> {
   return apiPost<FileUploadInitData>("/files/uploads", payload);
 }
 

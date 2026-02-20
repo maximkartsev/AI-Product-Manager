@@ -10,6 +10,7 @@ import useUiGuards from "@/components/guards/useUiGuards";
 import useAuthToken from "@/lib/useAuthToken";
 import { IconSparkles } from "@/app/_components/landing/icons";
 import EffectConfigFields from "@/components/effects/EffectConfigFields";
+import type { PendingAssetsMap } from "@/lib/effectUploadTypes";
 import EffectTokenInfo from "@/components/effects/EffectTokenInfo";
 import EffectUploadFooter from "@/components/effects/EffectUploadFooter";
 
@@ -22,6 +23,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const [state, setState] = useState<GalleryDetailState>({ status: "loading" });
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [inputPayload, setInputPayload] = useState<Record<string, unknown>>({});
+  const [pendingAssets, setPendingAssets] = useState<PendingAssetsMap>({});
   const { requireAuth, ensureTokens, openPlans, walletBalance, loadWalletBalance } = useUiGuards();
   const token = useAuthToken();
   const seededPromptsRef = useRef(false);
@@ -65,7 +67,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
     if (!okTokens) return;
     if (isConfigurable) {
       const hasPayload = Object.keys(inputPayload).length > 0;
-      const result = startUpload(effectSlug, hasPayload ? inputPayload : null);
+      const result = startUpload(effectSlug, hasPayload ? inputPayload : null, pendingAssets);
       if (!result.ok && result.reason === "unauthenticated") {
         requireAuth();
       }
@@ -101,6 +103,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   useEffect(() => {
     seededPromptsRef.current = false;
     setInputPayload({});
+    setPendingAssets({});
   }, [id]);
 
   useEffect(() => {
@@ -181,8 +184,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
         )}
 
         {state.status === "success" && (
-          <main className="effects-entrance effects-entrance-d1 mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <section className="overflow-hidden rounded-3xl border border-white/[0.07] bg-white/[0.03]">
+          <main className="effects-entrance effects-entrance-d1 mt-4 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <section className="min-w-0 overflow-hidden rounded-3xl border border-white/[0.07] bg-white/[0.03]">
               <div className="relative aspect-[9/16] w-full bg-gradient-to-br from-fuchsia-500/18 to-indigo-500/12">
                 {data?.processed_file_url ? (
                   <VideoPlayer
@@ -223,7 +226,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
               </div>
             </section>
 
-            <aside className="rounded-3xl border border-white/[0.07] bg-white/[0.03] p-5">
+            <aside className="min-w-0 rounded-3xl border border-white/[0.07] bg-white/[0.03] p-5">
               <div className="text-sm font-semibold text-white">Ready to try it?</div>
               <div className="mt-2 text-xs leading-5 text-white/60">
                 {token
@@ -244,6 +247,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
                   properties={configurableProps}
                   value={inputPayload}
                   onChange={setInputPayload}
+                  pendingAssets={pendingAssets}
+                  onPendingAssetsChange={setPendingAssets}
                 />
               ) : null}
 

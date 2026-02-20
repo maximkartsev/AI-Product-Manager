@@ -11,42 +11,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  initFileUpload,
-  listFiles,
-  type ConfigurableProperty,
-  type UserFile,
-} from "@/lib/api";
+import { listFiles, type ConfigurableProperty, type UserFile } from "@/lib/api";
+import type { PendingAssetSelection, PendingAssetsMap } from "@/lib/effectUploadTypes";
 
 type EffectConfigFieldsProps = {
   properties: ConfigurableProperty[];
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  pendingAssets?: PendingAssetsMap;
+  onPendingAssetsChange?: (next: PendingAssetsMap) => void;
 };
 
 type FileKind = "image" | "video";
 
 const EMPTY_FILES: Record<FileKind, UserFile[]> = { image: [], video: [] };
-
-function normalizeUploadHeaders(
-  headers: Record<string, string | string[]> | undefined,
-  fallbackContentType: string,
-): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  if (headers) {
-    for (const [key, value] of Object.entries(headers)) {
-      if (Array.isArray(value)) {
-        if (value[0]) normalized[key] = value[0];
-        continue;
-      }
-      if (value) normalized[key] = value;
-    }
-  }
-  if (!normalized["Content-Type"]) {
-    normalized["Content-Type"] = fallbackContentType;
-  }
-  return normalized;
-}
 
 function parseFileId(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
@@ -58,15 +36,19 @@ export default function EffectConfigFields({
   properties,
   value,
   onChange,
+  pendingAssets: pendingAssetsProp,
+  onPendingAssetsChange,
 }: EffectConfigFieldsProps) {
   const [filesByKind, setFilesByKind] = useState<Record<FileKind, UserFile[]>>(EMPTY_FILES);
   const [loadingKinds, setLoadingKinds] = useState<Record<FileKind, boolean>>({
     image: false,
     video: false,
   });
-  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
-  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [pendingAssetsState, setPendingAssetsState] = useState<PendingAssetsMap>({});
+
+  const pendingAssets = pendingAssetsProp ?? pendingAssetsState;
+  const setPendingAssets = onPendingAssetsChange ?? setPendingAssetsState;
 
   const needsImage = useMemo(
     () => properties.some((prop) => prop.type === "image"),
@@ -80,7 +62,8 @@ export default function EffectConfigFields({
   const updateValue = useCallback(
     (key: string, next: unknown) => {
       const nextPayload = { ...value };
-      const trimmed = typeof next === "string" ? next.trim() : next;
+      const isString = typeof next === "string";
+      const trimmed = isString ? next.trim() : next;
       if (
         trimmed === null ||
         trimmed === undefined ||
@@ -89,7 +72,7 @@ export default function EffectConfigFields({
       ) {
         delete nextPayload[key];
       } else {
-        nextPayload[key] = trimmed;
+        nextPayload[key] = isString ? next : trimmed;
       }
       onChange(nextPayload);
     },
@@ -108,6 +91,19 @@ export default function EffectConfigFields({
     }
   }, []);
 
+  const setPendingAsset = useCallback(
+    (key: string, asset: PendingAssetSelection | null) => {
+      const next = { ...pendingAssets };
+      if (!asset) {
+        delete next[key];
+      } else {
+        next[key] = asset;
+      }
+      setPendingAssets(next);
+    },
+    [pendingAssets, setPendingAssets],
+  );
+
   useEffect(() => {
     if (needsImage) {
       void loadFiles("image");
@@ -120,64 +116,25 @@ export default function EffectConfigFields({
     }
   }, [loadFiles, needsVideo]);
 
-  const handleUpload = useCallback(
-    async (kind: FileKind, propKey: string, file: File) => {
-      setUploadingKey(propKey);
-      setUploadErrors((prev) => ({ ...prev, [propKey]: "" }));
-      try {
-        const init = await initFileUpload({
-          kind,
-          mime_type: file.type || "application/octet-stream",
-          size: file.size,
-          original_filename: file.name,
-        });
-
-        if (!init.upload_url) {
-          throw new Error("Upload URL not provided.");
-        }
-
-        const headers = normalizeUploadHeaders(init.upload_headers, file.type || "application/octet-stream");
-        const response = await fetch(init.upload_url, {
-          method: "PUT",
-          headers,
-          body: file,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Upload failed (${response.status}).`);
-        }
-
-        await loadFiles(kind);
-        if (init.file?.id) {
-          updateValue(propKey, init.file.id);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Upload failed.";
-        setUploadErrors((prev) => ({ ...prev, [propKey]: message }));
-      } finally {
-        setUploadingKey(null);
-      }
-    },
-    [loadFiles, updateValue],
-  );
-
   const [promptProps, otherTextProps, assetProps] = useMemo(() => {
     const textProps = properties.filter((prop) => prop.type === "text");
     const assets = properties.filter((prop) => prop.type === "image" || prop.type === "video");
     const positive = textProps.find((prop) => prop.key === "positive_prompt") ?? null;
     const negative = textProps.find((prop) => prop.key === "negative_prompt") ?? null;
-    const remaining = textProps.filter(
-      (prop) => prop.key !== "positive_prompt" && prop.key !== "negative_prompt",
-    );
-    return [[positive, negative] as const, remaining, assets] as const;
+    const hasPair = !!positive && !!negative;
+    const remaining = hasPair
+      ? textProps.filter(
+          (prop) => prop.key !== "positive_prompt" && prop.key !== "negative_prompt",
+        )
+      : textProps;
+    return [[positive, negative, hasPair] as const, remaining, assets] as const;
   }, [properties]);
 
   if (properties.length === 0) {
     return null;
   }
 
-  const [positiveProp, negativeProp] = promptProps;
-  const showPromptPair = !!positiveProp && !!negativeProp;
+  const [positiveProp, negativeProp, showPromptPair] = promptProps;
 
   return (
     <div className="mt-4 space-y-4">
@@ -221,12 +178,21 @@ export default function EffectConfigFields({
               {prop.description ? (
                 <div className="mt-1 text-[11px] text-white/45">{prop.description}</div>
               ) : null}
-              <Input
-                value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
-                onChange={(event) => updateValue(prop.key, event.target.value)}
-                placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
-                className="mt-2 text-xs"
-              />
+              {prop.key.endsWith("_prompt") ? (
+                <Textarea
+                  value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
+                  onChange={(event) => updateValue(prop.key, event.target.value)}
+                  placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
+                  className="mt-2 min-h-[84px] text-xs"
+                />
+              ) : (
+                <Input
+                  value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
+                  onChange={(event) => updateValue(prop.key, event.target.value)}
+                  placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
+                  className="mt-2 text-xs"
+                />
+              )}
             </div>
           ))}
         </div>
@@ -238,8 +204,7 @@ export default function EffectConfigFields({
             const kind = prop.type as FileKind;
             const files = filesByKind[kind];
             const selectedId = parseFileId(value[prop.key]);
-            const isUploading = uploadingKey === prop.key;
-            const error = uploadErrors[prop.key];
+            const pending = pendingAssets[prop.key];
             return (
               <div key={prop.key} className="space-y-2">
                 <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
@@ -251,7 +216,7 @@ export default function EffectConfigFields({
                 {prop.description ? (
                   <div className="text-[11px] text-white/45">{prop.description}</div>
                 ) : null}
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Select
                     value={selectedId ? String(selectedId) : "__none__"}
                     onValueChange={(next) => {
@@ -260,9 +225,12 @@ export default function EffectConfigFields({
                       } else {
                         updateValue(prop.key, Number(next));
                       }
+                      if (pending) {
+                        setPendingAsset(prop.key, null);
+                      }
                     }}
                   >
-                    <SelectTrigger className="flex-1 text-xs">
+                    <SelectTrigger className="flex-1 min-w-0 text-xs">
                       <SelectValue placeholder={loadingKinds[kind] ? "Loading..." : "Select a file..."} />
                     </SelectTrigger>
                     <SelectContent>
@@ -285,7 +253,8 @@ export default function EffectConfigFields({
                       const file = event.target.files?.[0];
                       event.target.value = "";
                       if (!file) return;
-                      void handleUpload(kind, prop.key, file);
+                      updateValue(prop.key, null);
+                      setPendingAsset(prop.key, { propertyKey: prop.key, kind, file });
                     }}
                   />
                   <Button
@@ -293,13 +262,28 @@ export default function EffectConfigFields({
                     variant="outline"
                     size="sm"
                     className="text-xs"
-                    disabled={isUploading}
                     onClick={() => inputRefs.current[prop.key]?.click()}
                   >
-                    {isUploading ? "Uploading..." : "Upload"}
+                    {pending ? "Replace file" : "Choose file"}
                   </Button>
                 </div>
-                {error ? <div className="text-[11px] text-red-200">{error}</div> : null}
+                {pending ? (
+                  <div className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/60">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate" title={pending.file.name}>
+                        Selected: {pending.file.name}
+                      </span>
+                      <button
+                        type="button"
+                        className="shrink-0 text-[10px] font-semibold text-white/50 hover:text-white"
+                        onClick={() => setPendingAsset(prop.key, null)}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="mt-1 text-[10px] text-white/40">Uploads when processing starts.</div>
+                  </div>
+                ) : null}
               </div>
             );
           })}

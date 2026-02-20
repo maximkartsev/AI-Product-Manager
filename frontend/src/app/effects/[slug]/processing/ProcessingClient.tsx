@@ -6,13 +6,22 @@ import {
   getAccessToken,
   getEffect,
   getVideo,
+  initEffectAssetUpload,
   initVideoUpload,
   submitAiJob,
   type ApiEffect,
   type VideoData,
 } from "@/lib/api";
 import useAuthToken from "@/lib/useAuthToken";
-import { deletePendingUpload, deletePreview, loadPendingUpload, loadPreview, savePreview } from "@/lib/uploadPreviewStore";
+import {
+  deletePendingAssets,
+  deletePendingUpload,
+  deletePreview,
+  loadPendingAssets,
+  loadPendingUpload,
+  loadPreview,
+  savePreview,
+} from "@/lib/uploadPreviewStore";
 import ProcessingStepProcessing from "@/app/effects/[slug]/processing/ProcessingStepProcessing";
 import ProcessingStepResult from "@/app/effects/[slug]/processing/ProcessingStepResult";
 import ProcessingStepUpload from "@/app/effects/[slug]/processing/ProcessingStepUpload";
@@ -405,6 +414,43 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           }
         }
 
+        const pendingAssets = uploadId ? await loadPendingAssets(uploadId) : [];
+        if (pendingAssets.length > 0) {
+          if (!uploadId) {
+            throw new Error("Upload session missing.");
+          }
+          if (!inputPayload) {
+            inputPayload = {};
+          }
+          for (const asset of pendingAssets) {
+            const mimeType = asset.file.type || "application/octet-stream";
+            const init = await initEffectAssetUpload({
+              effect_id: effectState.data.id,
+              upload_id: uploadId,
+              property_key: asset.propertyKey,
+              kind: asset.kind,
+              mime_type: mimeType,
+              size: asset.file.size,
+              original_filename: asset.file.name,
+            });
+
+            const uploadHeaders = normalizeUploadHeaders(init.upload_headers, mimeType);
+            const response = await fetch(init.upload_url, {
+              method: "PUT",
+              headers: uploadHeaders,
+              body: asset.file,
+            });
+
+            if (!response.ok) {
+              throw new Error(`Upload failed (${response.status}).`);
+            }
+
+            if (init.file?.id) {
+              inputPayload[asset.propertyKey] = init.file.id;
+            }
+          }
+        }
+
         const video = await createVideo({
           effect_id: effectState.data.id,
           original_file_id: init.file.id,
@@ -443,7 +489,10 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           // ignore storage issues
         }
 
-        await deletePendingUpload(uploadId);
+        if (uploadId) {
+          await deletePendingUpload(uploadId);
+          await deletePendingAssets(uploadId);
+        }
         setUploadStatus("done");
         uploadInFlightRef.current = false;
         setVideoId(video.id);

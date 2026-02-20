@@ -11,6 +11,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import EffectConfigFields from "@/components/effects/EffectConfigFields";
+import type { PendingAssetsMap } from "@/lib/effectUploadTypes";
 import EffectTokenInfo from "@/components/effects/EffectTokenInfo";
 import EffectUploadFooter from "@/components/effects/EffectUploadFooter";
 
@@ -28,6 +29,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   const { requireAuth, ensureTokens, openPlans, walletBalance, loadWalletBalance } = useUiGuards();
   const token = useAuthToken();
   const [inputPayload, setInputPayload] = useState<Record<string, unknown>>({});
+  const [pendingAssets, setPendingAssets] = useState<PendingAssetsMap>({});
   const {
     fileInputRef,
     startUpload,
@@ -115,6 +117,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
 
   useEffect(() => {
     setInputPayload({});
+    setPendingAssets({});
   }, [slug]);
 
   const handleStartUpload = async () => {
@@ -124,7 +127,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
     if (!okTokens) return;
     if (isConfigurable) {
       const hasPayload = Object.keys(inputPayload).length > 0;
-      const result = startUpload(slug, hasPayload ? inputPayload : null);
+      const result = startUpload(slug, hasPayload ? inputPayload : null, pendingAssets);
       if (!result.ok && result.reason === "unauthenticated") {
         requireAuth();
       }
@@ -199,8 +202,8 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         )}
 
         {state.status === "success" && (
-          <main className="mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+          <main className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <section className="min-w-0 overflow-hidden rounded-3xl border border-white/10 bg-white/5">
               <div className="relative aspect-[9/16] w-full bg-gradient-to-br from-fuchsia-500/18 to-indigo-500/12">
                 {state.data.preview_video_url ? (
                   <VideoPlayer
@@ -256,7 +259,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
               </div>
             </section>
 
-            <aside className="rounded-3xl border border-white/10 bg-white/5 p-5">
+            <aside className="min-w-0 rounded-3xl border border-white/10 bg-white/5 p-5">
               <div className="text-sm font-semibold text-white">Ready to try it?</div>
               <div className="mt-2 text-xs leading-5 text-white/60">
                 {token
@@ -277,6 +280,8 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
                   properties={configurableProps}
                   value={inputPayload}
                   onChange={setInputPayload}
+                  pendingAssets={pendingAssets}
+                  onPendingAssetsChange={setPendingAssets}
                 />
               ) : null}
 

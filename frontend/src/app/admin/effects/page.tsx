@@ -389,10 +389,25 @@ export default function AdminEffectsPage() {
           return <p className="text-xs text-muted-foreground">Select a workflow to configure property overrides.</p>;
         }
         return (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {props.map((prop) => (
-              <div key={prop.key}>
-                <label className="text-xs text-muted-foreground">{prop.name || prop.key} ({prop.type})</label>
+              <div key={prop.key} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-foreground">{prop.name || prop.key}</span>
+                    <span className="rounded-full border border-border/70 bg-background/60 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      {prop.type}
+                    </span>
+                  </div>
+                  {prop.user_configurable ? (
+                      <span className="rounded-full border border-red-500/40 bg-red-200/10 px-2 py-0.5 text-[10px] font-semibold text-red-400">
+                      User configurable
+                    </span>
+                  ) : null}
+                </div>
+                {prop.description ? (
+                  <div className="text-[11px] text-muted-foreground">{prop.description}</div>
+                ) : null}
                 {prop.type === "text" ? (
                   <Input
                     value={overrides[prop.key] ?? ""}
@@ -402,7 +417,7 @@ export default function AdminEffectsPage() {
                       onChange(JSON.stringify(next));
                     }}
                     placeholder={`Default: ${prop.default_value || "(empty)"}`}
-                    className="h-8 text-sm"
+                    className="h-9 text-sm bg-background/80"
                   />
                 ) : (
                   <Input
@@ -413,7 +428,7 @@ export default function AdminEffectsPage() {
                       onChange(JSON.stringify(next));
                     }}
                     placeholder={`S3 path for ${prop.type}`}
-                    className="h-8 text-sm"
+                    className="h-9 text-sm bg-background/80"
                   />
                 )}
               </div>

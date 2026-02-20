@@ -87,6 +87,39 @@ class EffectsApiTest extends TestCase
         $response->assertJsonPath('data.is_premium', true);
     }
 
+    public function test_effect_show_includes_configurable_properties(): void
+    {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+            'properties' => [
+                [
+                    'key' => 'positive_prompt',
+                    'name' => 'Style Prompt',
+                    'type' => 'text',
+                    'placeholder' => '__POSITIVE_PROMPT__',
+                    'user_configurable' => true,
+                    'is_primary_input' => false,
+                ],
+            ],
+        ]);
+
+        $effect = Effect::query()->create([
+            'name' => 'Show Effect ' . uniqid(),
+            'slug' => 'show-' . uniqid(),
+            'description' => 'Show effect description',
+            'is_premium' => true,
+            'is_active' => true,
+            'workflow_id' => $workflow->id,
+        ]);
+
+        $response = $this->getJson('/api/effects/' . $effect->slug);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.configurable_properties.0.key', 'positive_prompt');
+    }
+
     public function test_effect_show_missing_returns_404_envelope(): void
     {
         $response = $this->getJson('/api/effects/does-not-exist-' . uniqid());

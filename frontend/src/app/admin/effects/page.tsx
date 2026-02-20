@@ -392,7 +392,16 @@ export default function AdminEffectsPage() {
           <div className="flex flex-col gap-2">
             {props.map((prop) => (
               <div key={prop.key}>
-                <label className="text-xs text-muted-foreground">{prop.name || prop.key} ({prop.type})</label>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted-foreground">
+                    {prop.name || prop.key} ({prop.type})
+                  </label>
+                  {prop.user_configurable ? (
+                    <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
+                      User configurable
+                    </span>
+                  ) : null}
+                </div>
                 {prop.type === "text" ? (
                   <Input
                     value={overrides[prop.key] ?? ""}

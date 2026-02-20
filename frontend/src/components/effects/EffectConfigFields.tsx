@@ -166,18 +166,20 @@ export default function EffectConfigFields({
     const assets = properties.filter((prop) => prop.type === "image" || prop.type === "video");
     const positive = textProps.find((prop) => prop.key === "positive_prompt") ?? null;
     const negative = textProps.find((prop) => prop.key === "negative_prompt") ?? null;
-    const remaining = textProps.filter(
-      (prop) => prop.key !== "positive_prompt" && prop.key !== "negative_prompt",
-    );
-    return [[positive, negative] as const, remaining, assets] as const;
+    const hasPair = !!positive && !!negative;
+    const remaining = hasPair
+      ? textProps.filter(
+          (prop) => prop.key !== "positive_prompt" && prop.key !== "negative_prompt",
+        )
+      : textProps;
+    return [[positive, negative, hasPair] as const, remaining, assets] as const;
   }, [properties]);
 
   if (properties.length === 0) {
     return null;
   }
 
-  const [positiveProp, negativeProp] = promptProps;
-  const showPromptPair = !!positiveProp && !!negativeProp;
+  const [positiveProp, negativeProp, showPromptPair] = promptProps;
 
   return (
     <div className="mt-4 space-y-4">
@@ -221,12 +223,21 @@ export default function EffectConfigFields({
               {prop.description ? (
                 <div className="mt-1 text-[11px] text-white/45">{prop.description}</div>
               ) : null}
-              <Input
-                value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
-                onChange={(event) => updateValue(prop.key, event.target.value)}
-                placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
-                className="mt-2 text-xs"
-              />
+              {prop.key.endsWith("_prompt") ? (
+                <Textarea
+                  value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
+                  onChange={(event) => updateValue(prop.key, event.target.value)}
+                  placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
+                  className="mt-2 min-h-[84px] text-xs"
+                />
+              ) : (
+                <Input
+                  value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
+                  onChange={(event) => updateValue(prop.key, event.target.value)}
+                  placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
+                  className="mt-2 text-xs"
+                />
+              )}
             </div>
           ))}
         </div>

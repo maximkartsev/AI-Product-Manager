@@ -67,7 +67,7 @@ class EffectController extends BaseController
     {
         $query = Effect::query()
             ->where('is_active', true)
-            ->with(['category']);
+            ->with(['category', 'workflow']);
 
         if (is_numeric($slugOrId)) {
             $item = $query->whereKey((int) $slugOrId)->first();

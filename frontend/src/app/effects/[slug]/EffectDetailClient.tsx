@@ -10,7 +10,7 @@ import useAuthToken from "@/lib/useAuthToken";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
-import EffectPromptFields from "@/components/effects/EffectPromptFields";
+import EffectConfigFields from "@/components/effects/EffectConfigFields";
 import EffectTokenInfo from "@/components/effects/EffectTokenInfo";
 import EffectUploadFooter from "@/components/effects/EffectUploadFooter";
 
@@ -27,8 +27,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   const autoUploadRef = useRef(false);
   const { requireAuth, ensureTokens, openPlans, walletBalance, loadWalletBalance } = useUiGuards();
   const token = useAuthToken();
-  const [positivePrompt, setPositivePrompt] = useState("");
-  const [negativePrompt, setNegativePrompt] = useState("");
+  const [inputPayload, setInputPayload] = useState<Record<string, unknown>>({});
   const {
     fileInputRef,
     startUpload,
@@ -89,7 +88,12 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
 
   const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
   const disableUpload: boolean = false;
-  const isConfigurable = state.status === "success" && state.data.type === "configurable";
+  const configurableProps = useMemo(
+    () => (state.status === "success" ? state.data.configurable_properties ?? [] : []),
+    [state],
+  );
+  const isConfigurable =
+    state.status === "success" && state.data.type === "configurable" && configurableProps.length > 0;
 
   useEffect(() => {
     if (autoUploadRef.current) return;
@@ -109,13 +113,18 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
     })();
   }, [clearUploadError, creditsCost, ensureTokens, isConfigurable, requireAuth, searchParams, slug, startUpload, state.status]);
 
+  useEffect(() => {
+    setInputPayload({});
+  }, [slug]);
+
   const handleStartUpload = async () => {
     clearUploadError();
     if (!requireAuth()) return;
     const okTokens = await ensureTokens(creditsCost);
     if (!okTokens) return;
     if (isConfigurable) {
-      const result = startUpload(slug, { positivePrompt, negativePrompt });
+      const hasPayload = Object.keys(inputPayload).length > 0;
+      const result = startUpload(slug, hasPayload ? inputPayload : null);
       if (!result.ok && result.reason === "unauthenticated") {
         requireAuth();
       }
@@ -264,11 +273,10 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
               />
 
               {isConfigurable ? (
-                <EffectPromptFields
-                  positivePrompt={positivePrompt}
-                  onPositivePromptChange={setPositivePrompt}
-                  negativePrompt={negativePrompt}
-                  onNegativePromptChange={setNegativePrompt}
+                <EffectConfigFields
+                  properties={configurableProps}
+                  value={inputPayload}
+                  onChange={setInputPayload}
                 />
               ) : null}
 

@@ -72,7 +72,6 @@ class AiJobSubmissionTest extends TestCase
             'effect_id' => $effect->id,
             'idempotency_key' => 'job_' . uniqid(),
             'input_file_id' => $fileId,
-            'input_payload' => ['prompt' => 'hello'],
         ];
 
         $first = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
@@ -193,6 +192,291 @@ class AiJobSubmissionTest extends TestCase
         $this->assertSame('prefix updated positive suffix', $nodeTwoInputs['text'] ?? null);
     }
 
+    public function test_ai_job_submission_accepts_configurable_text_property(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $workflowPath = 'resources/comfyui/workflows/test_style_override.json';
+
+        Storage::disk('s3')->put($workflowPath, json_encode([
+            '1' => [
+                'inputs' => [
+                    'style' => '__STYLE__',
+                ],
+                'class_type' => 'TestNode',
+            ],
+        ]));
+
+        $effect->workflow->update([
+            'comfyui_workflow_path' => $workflowPath,
+            'properties' => [
+                ['key' => 'style', 'type' => 'text', 'placeholder' => '__STYLE__', 'user_configurable' => true],
+                ['key' => 'input_video', 'type' => 'video', 'placeholder' => '__INPUT_PATH__', 'is_primary_input' => true],
+            ],
+        ]);
+
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+            'input_payload' => [
+                'style' => 'cinematic',
+            ],
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $jobId = $response->json('data.id');
+        $this->assertNotNull($jobId);
+
+        $job = $this->fetchTenantJob($tenant->id, $jobId);
+        $payloadRaw = $job['input_payload'] ?? null;
+        $inputPayload = is_string($payloadRaw) ? json_decode($payloadRaw, true) : $payloadRaw;
+        $this->assertIsArray($inputPayload);
+
+        $workflow = $inputPayload['workflow'] ?? null;
+        $this->assertIsArray($workflow);
+        $nodeInputs = $workflow['1']['inputs'] ?? null;
+        $this->assertIsArray($nodeInputs);
+        $this->assertSame('cinematic', $nodeInputs['style'] ?? null);
+    }
+
+    public function test_ai_job_submission_rejects_unknown_user_properties(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $workflowPath = 'resources/comfyui/workflows/test_unknown_property.json';
+
+        Storage::disk('s3')->put($workflowPath, json_encode([
+            '1' => [
+                'inputs' => [
+                    'prompt' => '__PROMPT__',
+                ],
+                'class_type' => 'TestNode',
+            ],
+        ]));
+
+        $effect->workflow->update([
+            'comfyui_workflow_path' => $workflowPath,
+            'properties' => [
+                ['key' => 'prompt', 'type' => 'text', 'placeholder' => '__PROMPT__', 'user_configurable' => true],
+                ['key' => 'input_video', 'type' => 'video', 'placeholder' => '__INPUT_PATH__', 'is_primary_input' => true],
+            ],
+        ]);
+
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+            'input_payload' => [
+                'unknown_key' => 'value',
+            ],
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'Unsupported property: unknown_key');
+    }
+
+    public function test_ai_job_submission_rejects_asset_property_string_path(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $workflowPath = 'resources/comfyui/workflows/test_asset_string_path.json';
+
+        Storage::disk('s3')->put($workflowPath, json_encode([
+            '1' => [
+                'inputs' => [
+                    'image' => '__REF_IMAGE__',
+                ],
+                'class_type' => 'TestNode',
+            ],
+        ]));
+
+        $effect->workflow->update([
+            'comfyui_workflow_path' => $workflowPath,
+            'properties' => [
+                ['key' => 'ref_image', 'type' => 'image', 'placeholder' => '__REF_IMAGE__', 'user_configurable' => true],
+                ['key' => 'input_video', 'type' => 'video', 'placeholder' => '__INPUT_PATH__', 'is_primary_input' => true],
+            ],
+        ]);
+
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+            'input_payload' => [
+                'ref_image' => 'tenants/' . $tenant->id . '/uploads/example.png',
+            ],
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'Invalid file id for ref_image.');
+    }
+
+    public function test_ai_job_submission_accepts_asset_property_file_id(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $workflowPath = 'resources/comfyui/workflows/test_asset_file_id.json';
+
+        Storage::disk('s3')->put($workflowPath, json_encode([
+            '1' => [
+                'inputs' => [
+                    'image' => '__REF_IMAGE__',
+                ],
+                'class_type' => 'TestNode',
+            ],
+        ]));
+
+        $effect->workflow->update([
+            'comfyui_workflow_path' => $workflowPath,
+            'properties' => [
+                ['key' => 'ref_image', 'type' => 'image', 'placeholder' => '__REF_IMAGE__', 'user_configurable' => true],
+                ['key' => 'input_video', 'type' => 'video', 'placeholder' => '__INPUT_PATH__', 'is_primary_input' => true],
+            ],
+        ]);
+
+        $file = $this->createTenantFileWithMime($tenant->id, $user->id, 'image/png', 'png');
+        $fileId = $file['id'];
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $inputFileId = $this->createTenantFile($tenant->id, $user->id);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $inputFileId,
+            'input_payload' => [
+                'ref_image' => $fileId,
+            ],
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $jobId = $response->json('data.id');
+        $this->assertNotNull($jobId);
+
+        $job = $this->fetchTenantJob($tenant->id, $jobId);
+        $payloadRaw = $job['input_payload'] ?? null;
+        $inputPayload = is_string($payloadRaw) ? json_decode($payloadRaw, true) : $payloadRaw;
+        $this->assertIsArray($inputPayload);
+
+        $assets = $inputPayload['assets'] ?? null;
+        $this->assertIsArray($assets);
+        $this->assertNotEmpty($assets);
+
+        $asset = collect($assets)->firstWhere('key', 'ref_image');
+        $this->assertNotNull($asset);
+        $this->assertSame($file['path'], $asset['s3_path'] ?? null);
+        $this->assertSame($file['disk'], $asset['s3_disk'] ?? null);
+    }
+
+    public function test_ai_job_submission_rejects_asset_property_wrong_mime_type(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $workflowPath = 'resources/comfyui/workflows/test_asset_wrong_mime.json';
+
+        Storage::disk('s3')->put($workflowPath, json_encode([
+            '1' => [
+                'inputs' => [
+                    'image' => '__REF_IMAGE__',
+                ],
+                'class_type' => 'TestNode',
+            ],
+        ]));
+
+        $effect->workflow->update([
+            'comfyui_workflow_path' => $workflowPath,
+            'properties' => [
+                ['key' => 'ref_image', 'type' => 'image', 'placeholder' => '__REF_IMAGE__', 'user_configurable' => true],
+                ['key' => 'input_video', 'type' => 'video', 'placeholder' => '__INPUT_PATH__', 'is_primary_input' => true],
+            ],
+        ]);
+
+        $file = $this->createTenantFileWithMime($tenant->id, $user->id, 'video/mp4', 'mp4');
+        $fileId = $file['id'];
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $inputFileId = $this->createTenantFile($tenant->id, $user->id);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $inputFileId,
+            'input_payload' => [
+                'ref_image' => $fileId,
+            ],
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'File type mismatch for ref_image.');
+    }
+
+    public function test_ai_job_submission_requires_required_property(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $workflowPath = 'resources/comfyui/workflows/test_required_property.json';
+
+        Storage::disk('s3')->put($workflowPath, json_encode([
+            '1' => [
+                'inputs' => [
+                    'style' => '__STYLE__',
+                ],
+                'class_type' => 'TestNode',
+            ],
+        ]));
+
+        $effect->workflow->update([
+            'comfyui_workflow_path' => $workflowPath,
+            'properties' => [
+                ['key' => 'style', 'type' => 'text', 'placeholder' => '__STYLE__', 'user_configurable' => true, 'required' => true],
+                ['key' => 'input_video', 'type' => 'video', 'placeholder' => '__INPUT_PATH__', 'is_primary_input' => true],
+            ],
+        ]);
+
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+            'input_payload' => [],
+        ];
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'Missing required property: style');
+    }
+
     public function test_ai_job_submission_fails_when_tokens_insufficient(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
@@ -279,6 +563,28 @@ class AiJobSubmissionTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function createTenantFileWithMime(string $tenantId, int $userId, string $mimeType, string $extension): array
+    {
+        $path = 'tenants/' . $tenantId . '/uploads/' . uniqid() . '.' . $extension;
+        $id = (int) DB::connection('tenant_pool_1')->table('files')->insertGetId([
+            'tenant_id' => $tenantId,
+            'user_id' => $userId,
+            'disk' => 's3',
+            'path' => $path,
+            'mime_type' => $mimeType,
+            'size' => 1234,
+            'original_filename' => 'input.' . $extension,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [
+            'id' => $id,
+            'path' => $path,
+            'disk' => 's3',
+        ];
     }
 
     private function getWalletBalance(string $tenantId): int

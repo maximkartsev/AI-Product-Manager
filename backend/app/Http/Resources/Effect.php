@@ -19,6 +19,30 @@ class Effect extends JsonResource
     {
         $data = parent::toArray($request);
         $category = $this->relationLoaded('category') ? $this->category : null;
+        $workflow = $this->relationLoaded('workflow') ? $this->workflow : null;
+        $configurableProps = [];
+        if ($workflow && is_array($workflow->properties)) {
+            foreach ($workflow->properties as $prop) {
+                if (!is_array($prop)) {
+                    continue;
+                }
+                if (empty($prop['user_configurable']) || !empty($prop['is_primary_input'])) {
+                    continue;
+                }
+                $key = $prop['key'] ?? null;
+                if (!is_string($key) || trim($key) === '') {
+                    continue;
+                }
+                $configurableProps[] = [
+                    'key' => $key,
+                    'name' => $prop['name'] ?? null,
+                    'description' => $prop['description'] ?? null,
+                    'type' => $prop['type'] ?? 'text',
+                    'required' => (bool) ($prop['required'] ?? false),
+                    'default_value' => $prop['default_value'] ?? null,
+                ];
+            }
+        }
 
         $data['thumbnail_url'] = $this->presignEffectAsset($data['thumbnail_url'] ?? null);
         $data['preview_video_url'] = $this->presignEffectAsset($data['preview_video_url'] ?? null);
@@ -28,6 +52,7 @@ class Effect extends JsonResource
             'slug' => $category->slug,
             'description' => $category->description,
         ] : null;
+        $data['configurable_properties'] = $configurableProps;
 
         return $data;
     }

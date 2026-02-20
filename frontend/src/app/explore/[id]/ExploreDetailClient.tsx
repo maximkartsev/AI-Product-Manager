@@ -9,7 +9,7 @@ import useEffectUploadStart from "@/lib/useEffectUploadStart";
 import useUiGuards from "@/components/guards/useUiGuards";
 import useAuthToken from "@/lib/useAuthToken";
 import { IconSparkles } from "@/app/_components/landing/icons";
-import EffectPromptFields from "@/components/effects/EffectPromptFields";
+import EffectConfigFields from "@/components/effects/EffectConfigFields";
 import EffectTokenInfo from "@/components/effects/EffectTokenInfo";
 import EffectUploadFooter from "@/components/effects/EffectUploadFooter";
 
@@ -21,8 +21,7 @@ type GalleryDetailState =
 export default function ExploreDetailClient({ id }: { id: number }) {
   const [state, setState] = useState<GalleryDetailState>({ status: "loading" });
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [positivePrompt, setPositivePrompt] = useState("");
-  const [negativePrompt, setNegativePrompt] = useState("");
+  const [inputPayload, setInputPayload] = useState<Record<string, unknown>>({});
   const { requireAuth, ensureTokens, openPlans, walletBalance, loadWalletBalance } = useUiGuards();
   const token = useAuthToken();
   const seededPromptsRef = useRef(false);
@@ -37,7 +36,12 @@ export default function ExploreDetailClient({ id }: { id: number }) {
     onError: setUploadError,
   });
 
-  const isConfigurable = state.status === "success" && state.data.effect?.type === "configurable";
+  const configurableProps = useMemo(
+    () => (state.status === "success" ? state.data.effect?.configurable_properties ?? [] : []),
+    [state],
+  );
+  const isConfigurable =
+    state.status === "success" && state.data.effect?.type === "configurable" && configurableProps.length > 0;
 
   const creditsCost = useMemo(() => {
     if (state.status !== "success") return 0;
@@ -60,7 +64,8 @@ export default function ExploreDetailClient({ id }: { id: number }) {
     const okTokens = await ensureTokens(creditsCost);
     if (!okTokens) return;
     if (isConfigurable) {
-      const result = startUpload(effectSlug, { positivePrompt, negativePrompt });
+      const hasPayload = Object.keys(inputPayload).length > 0;
+      const result = startUpload(effectSlug, hasPayload ? inputPayload : null);
       if (!result.ok && result.reason === "unauthenticated") {
         requireAuth();
       }
@@ -95,22 +100,27 @@ export default function ExploreDetailClient({ id }: { id: number }) {
 
   useEffect(() => {
     seededPromptsRef.current = false;
-    setPositivePrompt("");
-    setNegativePrompt("");
+    setInputPayload({});
   }, [id]);
 
   useEffect(() => {
     if (state.status !== "success") return;
     if (seededPromptsRef.current) return;
     const payload = state.data.input_payload;
-    const positive = typeof payload?.positive_prompt === "string" ? payload.positive_prompt.trim() : "";
-    const negative = typeof payload?.negative_prompt === "string" ? payload.negative_prompt.trim() : "";
-    if (positive || negative) {
-      setPositivePrompt(positive);
-      setNegativePrompt(negative);
+    const allowed = new Set(configurableProps.map((prop) => prop.key));
+    const nextPayload: Record<string, unknown> = {};
+    if (payload && typeof payload === "object") {
+      Object.entries(payload).forEach(([key, val]) => {
+        if (!allowed.has(key)) return;
+        if (val === null || val === undefined) return;
+        nextPayload[key] = val;
+      });
+    }
+    if (Object.keys(nextPayload).length > 0) {
+      setInputPayload(nextPayload);
     }
     seededPromptsRef.current = true;
-  }, [state]);
+  }, [configurableProps, state]);
 
   const data = state.status === "success" ? state.data : null;
   const effectName = data?.effect?.name ?? "AI Effect";
@@ -230,11 +240,10 @@ export default function ExploreDetailClient({ id }: { id: number }) {
               />
 
               {isConfigurable ? (
-                <EffectPromptFields
-                  positivePrompt={positivePrompt}
-                  onPositivePromptChange={setPositivePrompt}
-                  negativePrompt={negativePrompt}
-                  onNegativePromptChange={setNegativePrompt}
+                <EffectConfigFields
+                  properties={configurableProps}
+                  value={inputPayload}
+                  onChange={setInputPayload}
                 />
               ) : null}
 

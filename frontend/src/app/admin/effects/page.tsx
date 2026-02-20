@@ -79,12 +79,8 @@ const effectSchema = z.object({
   is_active: z.boolean(),
   is_premium: z.boolean(),
   is_new: z.boolean(),
-  comfyui_workflow_path: z.string().nullable().optional(),
-  comfyui_input_path_placeholder: z.string().nullable().optional(),
   thumbnail_url: z.string().nullable().optional(),
   preview_video_url: z.string().nullable().optional(),
-  output_extension: z.string().nullable().optional(),
-  output_mime_type: z.string().nullable().optional(),
 });
 
 // ---- Upload Field Component ----
@@ -189,12 +185,9 @@ const initialFormState: Record<string, string> = {
   is_active: "true",
   is_premium: "true",
   is_new: "true",
-  comfyui_workflow_path: "",
-  comfyui_input_path_placeholder: "__INPUT_PATH__",
   thumbnail_url: "",
   preview_video_url: "",
-  output_extension: "mp4",
-  output_mime_type: "video/mp4",
+  technical_note: "",
 };
 
 const PREMIUM_CREDITS = "5";
@@ -523,16 +516,16 @@ export default function AdminEffectsPage() {
       ),
     },
     {
-      key: "comfyui_workflow_path",
-      label: "ComfyUI Workflow Path",
+      key: "technical_note",
+      label: "Technical settings",
       section: "Technical",
-      render: ({ value, onChange }) => (
-        <UploadField kind="workflow" value={value} onChange={onChange} placeholder="resources/comfyui/workflows/..." accept=".json,application/json" />
+      fullWidth: true,
+      render: () => (
+        <div className="rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Technical settings are managed on the linked Workflow. Update workflow JSON, outputs, and placeholders there.
+        </div>
       ),
     },
-    { key: "comfyui_input_path_placeholder", label: "Input Path Placeholder", type: "text", placeholder: "path/to/input" },
-    { key: "output_extension", label: "Output Extension", type: "text", placeholder: "mp4" },
-    { key: "output_mime_type", label: "Output MIME Type", type: "text", placeholder: "video/mp4" },
   ];
 
   const getFormData = (formState: Record<string, any>): AdminEffectPayload => {
@@ -571,12 +564,8 @@ export default function AdminEffectsPage() {
       is_active: parseBoolean(String(formState.is_active || "")),
       is_premium: parseBoolean(String(formState.is_premium || "")),
       is_new: parseBoolean(String(formState.is_new || "")),
-      comfyui_workflow_path: str("comfyui_workflow_path"),
-      comfyui_input_path_placeholder: str("comfyui_input_path_placeholder"),
       thumbnail_url: str("thumbnail_url"),
       preview_video_url: str("preview_video_url"),
-      output_extension: str("output_extension"),
-      output_mime_type: str("output_mime_type"),
     };
   };
 

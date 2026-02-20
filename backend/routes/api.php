@@ -24,6 +24,7 @@ use \App\Http\Controllers\MeController as MeController;
 use \App\Http\Controllers\WalletController as WalletController;
 use \App\Http\Controllers\EffectController as EffectController;
 use \App\Http\Controllers\CategoryController as CategoryController;
+use \App\Http\Controllers\FileController as FileController;
 use \App\Http\Controllers\VideoController as VideoController;
 use \App\Http\Controllers\GalleryController as GalleryController;
 use \App\Http\Controllers\Admin\EffectsController as AdminEffectsController;
@@ -202,6 +203,8 @@ Route::middleware([
     });
 
     Route::post('/ai-jobs', [AiJobController::class, 'store']);
+    Route::get('/files', [FileController::class, 'index']);
+    Route::post('/files/uploads', [FileController::class, 'createUpload']);
     Route::post('/videos/uploads', [VideoController::class, 'createUpload']);
     Route::get('/videos', [VideoController::class, 'index']);
     Route::post('/videos', [VideoController::class, 'store']);

@@ -98,15 +98,25 @@ class WorkflowPayloadService
                 );
             } elseif (in_array($type, ['image', 'video'], true) && $value) {
                 // Asset properties: add to assets array for worker to download
-                $assets[] = [
-                    'key' => $key,
-                    'placeholder' => $placeholder,
-                    's3_path' => $value,
-                    's3_disk' => config('filesystems.default'),
-                    'content_hash' => $prop['default_value_hash'] ?? null,
-                    'type' => $type,
-                    'is_primary_input' => false,
-                ];
+                $assetPath = null;
+                $assetDisk = config('filesystems.default');
+                if (is_array($value)) {
+                    $assetPath = $value['path'] ?? null;
+                    $assetDisk = $value['disk'] ?? $assetDisk;
+                } elseif (is_string($value)) {
+                    $assetPath = $value;
+                }
+                if ($assetPath) {
+                    $assets[] = [
+                        'key' => $key,
+                        'placeholder' => $placeholder,
+                        's3_path' => $assetPath,
+                        's3_disk' => $assetDisk,
+                        'content_hash' => $prop['default_value_hash'] ?? null,
+                        'type' => $type,
+                        'is_primary_input' => false,
+                    ];
+                }
             }
         }
 

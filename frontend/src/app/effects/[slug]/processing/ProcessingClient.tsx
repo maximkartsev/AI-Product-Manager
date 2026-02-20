@@ -385,19 +385,19 @@ export default function ProcessingClient({ slug }: { slug: string }) {
 
         setUploadProgress(100);
 
-        let promptPayload: Record<string, string> | null = null;
+        let inputPayload: Record<string, unknown> | null = null;
         if (uploadId) {
           try {
             const raw = window.sessionStorage.getItem(`upload_ctx_${uploadId}`);
             if (raw) {
-              const parsed = JSON.parse(raw) as Record<string, unknown>;
-              const positive = typeof parsed.positive_prompt === "string" ? parsed.positive_prompt.trim() : "";
-              const negative = typeof parsed.negative_prompt === "string" ? parsed.negative_prompt.trim() : "";
-              const nextPayload: Record<string, string> = {};
-              if (positive) nextPayload.positive_prompt = positive;
-              if (negative) nextPayload.negative_prompt = negative;
-              if (Object.keys(nextPayload).length > 0) {
-                promptPayload = nextPayload;
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                const entries = Object.entries(parsed as Record<string, unknown>).filter(
+                  ([, val]) => val !== null && val !== undefined && val !== "",
+                );
+                if (entries.length > 0) {
+                  inputPayload = Object.fromEntries(entries);
+                }
               }
             }
           } catch {
@@ -409,7 +409,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           effect_id: effectState.data.id,
           original_file_id: init.file.id,
           title: pendingFile.name,
-          input_payload: promptPayload ?? undefined,
+          input_payload: inputPayload ?? undefined,
         });
 
         void savePreview(video.id, pendingFile);
@@ -419,7 +419,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           effect_id: effectState.data.id,
           video_id: video.id,
           idempotency_key: idempotencyKey,
-          input_payload: promptPayload ?? undefined,
+          input_payload: inputPayload ?? undefined,
         });
 
         if (job.status === "failed") {

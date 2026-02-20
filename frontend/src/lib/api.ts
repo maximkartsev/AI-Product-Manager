@@ -60,6 +60,44 @@ export type UploadInitData = {
   expires_in: number;
 };
 
+export type FileUploadInitRequest = {
+  kind: "image" | "video";
+  mime_type: string;
+  size: number;
+  original_filename: string;
+  file_hash?: string | null;
+};
+
+export type UserFile = {
+  id: number;
+  disk?: string | null;
+  path?: string | null;
+  url?: string | null;
+  mime_type?: string | null;
+  size?: number | null;
+  original_filename?: string | null;
+  created_at?: string | null;
+  download_url?: string | null;
+};
+
+export type FilesIndexData = {
+  items: UserFile[];
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  order?: string | null;
+  search?: string | null;
+  filters?: unknown[];
+};
+
+export type FileUploadInitData = {
+  file: UserFile;
+  upload_url: string;
+  upload_headers: Record<string, string | string[]>;
+  expires_in: number;
+};
+
 export type VideoInputPayload = {
   positive_prompt?: string;
   negative_prompt?: string;
@@ -109,6 +147,7 @@ export type GalleryEffect = {
   type?: string | null;
   is_premium?: boolean;
   credits_cost?: number | null;
+  configurable_properties?: ConfigurableProperty[] | null;
   category?: {
     id: number;
     slug: string;
@@ -166,6 +205,15 @@ export type AiJobData = {
   video_id?: number | null;
 };
 
+export type ConfigurableProperty = {
+  key: string;
+  name?: string | null;
+  description?: string | null;
+  type: "text" | "image" | "video";
+  required?: boolean;
+  default_value?: string | null;
+};
+
 export type ApiEffect = {
   id: number;
   name: string;
@@ -187,6 +235,7 @@ export type ApiEffect = {
   last_processing_time_seconds?: number | null;
   is_premium: boolean;
   is_active: boolean;
+  configurable_properties?: ConfigurableProperty[] | null;
 };
 
 export type ApiCategory = {
@@ -563,6 +612,27 @@ export function getMe(): Promise<MeData> {
   return apiGet<MeData>("/me");
 }
 
+export function listFiles(params?: {
+  kind?: "image" | "video";
+  page?: number;
+  perPage?: number;
+  order?: string | null;
+  search?: string | null;
+}): Promise<FilesIndexData> {
+  const query: Query = {
+    kind: params?.kind ?? undefined,
+    page: params?.page ?? 1,
+    perPage: params?.perPage ?? 20,
+    order: params?.order ?? undefined,
+    search: params?.search ?? undefined,
+  };
+  return apiGet<FilesIndexData>("/files", query);
+}
+
+export function initFileUpload(payload: FileUploadInitRequest): Promise<FileUploadInitData> {
+  return apiPost<FileUploadInitData>("/files/uploads", payload);
+}
+
 export function initVideoUpload(payload: UploadInitRequest): Promise<UploadInitData> {
   return apiPost<UploadInitData>("/videos/uploads", payload);
 }
@@ -857,10 +927,6 @@ export type AdminEffect = {
   type?: string | null;
   thumbnail_url?: string | null;
   preview_video_url?: string | null;
-  comfyui_workflow_path?: string | null;
-  comfyui_input_path_placeholder?: string | null;
-  output_extension?: string | null;
-  output_mime_type?: string | null;
   output_node_id?: string | null;
   credits_cost?: number | null;
   popularity_score?: number | null;

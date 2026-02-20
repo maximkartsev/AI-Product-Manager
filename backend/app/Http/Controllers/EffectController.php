@@ -18,7 +18,7 @@ class EffectController extends BaseController
     {
         $query = Effect::query()
             ->where('is_active', true)
-            ->with(['category']);
+            ->with(['category', 'workflow']);
 
         $categorySlug = $request->get('category');
         if (is_string($categorySlug) && $categorySlug !== '') {

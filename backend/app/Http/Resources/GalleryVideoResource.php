@@ -21,6 +21,30 @@ class GalleryVideoResource extends JsonResource
         $category = $effect && $effect->relationLoaded('category') ? $effect->category : null;
         $effectName = $effect?->name;
         $displayTitle = is_string($effectName) && trim($effectName) !== '' ? trim($effectName) : null;
+        $configurableProps = [];
+        $workflow = $effect && $effect->relationLoaded('workflow') ? $effect->workflow : null;
+        if ($workflow && is_array($workflow->properties)) {
+            foreach ($workflow->properties as $prop) {
+                if (!is_array($prop)) {
+                    continue;
+                }
+                if (empty($prop['user_configurable']) || !empty($prop['is_primary_input'])) {
+                    continue;
+                }
+                $key = $prop['key'] ?? null;
+                if (!is_string($key) || trim($key) === '') {
+                    continue;
+                }
+                $configurableProps[] = [
+                    'key' => $key,
+                    'name' => $prop['name'] ?? null,
+                    'description' => $prop['description'] ?? null,
+                    'type' => $prop['type'] ?? 'text',
+                    'required' => (bool) ($prop['required'] ?? false),
+                    'default_value' => $prop['default_value'] ?? null,
+                ];
+            }
+        }
 
         return [
             'id' => $this->id,
@@ -38,6 +62,7 @@ class GalleryVideoResource extends JsonResource
                 'type' => $effect->type,
                 'is_premium' => $effect->is_premium,
                 'credits_cost' => $effect->credits_cost,
+                'configurable_properties' => $configurableProps,
                 'category' => $category ? [
                     'id' => $category->id,
                     'slug' => $category->slug,

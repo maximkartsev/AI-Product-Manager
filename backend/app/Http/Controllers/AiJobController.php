@@ -6,6 +6,7 @@ use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\Effect;
 use App\Models\File;
+use App\Models\User;
 use App\Models\Video;
 use App\Services\TokenLedgerService;
 use App\Services\WorkflowPayloadService;
@@ -122,7 +123,7 @@ class AiJobController extends BaseController
         }
 
         try {
-            $inputPayload = $this->buildInputPayload($effect, $inputPayload, $inputFile);
+            $inputPayload = $this->buildInputPayload($effect, $inputPayload, $inputFile, $user);
         } catch (\RuntimeException $e) {
             return $this->sendError($e->getMessage(), [], 422);
         }
@@ -176,28 +177,164 @@ class AiJobController extends BaseController
         ]);
     }
 
-    private function buildInputPayload(Effect $effect, array $inputPayload, ?File $inputFile): array
+    private function buildInputPayload(Effect $effect, array $inputPayload, ?File $inputFile, User $user): array
     {
         if (!$effect->workflow_id || !$effect->workflow) {
             throw new \RuntimeException('Effect is not configured for processing.');
         }
 
         $service = app(WorkflowPayloadService::class);
-        $userInput = array_filter([
-            'positive_prompt' => $this->normalizePrompt(data_get($inputPayload, 'positive_prompt')),
-            'negative_prompt' => $this->normalizePrompt(data_get($inputPayload, 'negative_prompt')),
-        ], fn ($v) => $v !== null);
+        $properties = $effect->workflow->properties ?? [];
+        $allowed = $this->buildAllowedPropertyMap($properties);
+        $userInput = $this->extractUserInput($inputPayload, $allowed, $user);
         $resolvedProps = $service->resolveProperties($effect->workflow, $effect, $userInput);
+        $this->assertRequiredProperties($properties, $resolvedProps);
         return $service->buildJobPayload($effect, $resolvedProps, $inputFile);
     }
 
-    private function normalizePrompt(mixed $value): ?string
+    private function buildAllowedPropertyMap(array $properties): array
+    {
+        $allowed = [];
+        foreach ($properties as $prop) {
+            if (!is_array($prop)) {
+                continue;
+            }
+            if (empty($prop['user_configurable']) || !empty($prop['is_primary_input'])) {
+                continue;
+            }
+            $key = $prop['key'] ?? null;
+            if (!is_string($key) || trim($key) === '') {
+                continue;
+            }
+            $allowed[$key] = $prop;
+        }
+        return $allowed;
+    }
+
+    private function extractUserInput(array $inputPayload, array $allowed, User $user): array
+    {
+        $userInput = [];
+        foreach ($inputPayload as $key => $value) {
+            if (!array_key_exists($key, $allowed)) {
+                throw new \RuntimeException("Unsupported property: {$key}");
+            }
+            $prop = $allowed[$key];
+            $type = $prop['type'] ?? 'text';
+            if ($type === 'text') {
+                $normalized = $this->normalizeTextInput($value);
+                if ($normalized !== null) {
+                    $userInput[$key] = $normalized;
+                }
+                continue;
+            }
+            if (in_array($type, ['image', 'video'], true)) {
+                $fileId = $this->normalizeFileId($value);
+                if (!$fileId) {
+                    throw new \RuntimeException("Invalid file id for {$key}.");
+                }
+                $file = File::query()->find($fileId);
+                if (!$file) {
+                    throw new \RuntimeException("File not found for {$key}.");
+                }
+                if ((int) $file->user_id !== (int) $user->id) {
+                    throw new \RuntimeException("File ownership mismatch for {$key}.");
+                }
+                $expiresAt = data_get($file->metadata, 'expires_at');
+                if ($expiresAt && now()->gte(\Carbon\Carbon::parse($expiresAt))) {
+                    throw new \RuntimeException("File has expired for {$key}.");
+                }
+                if (!$this->matchesFileType($file->mime_type, $type)) {
+                    throw new \RuntimeException("File type mismatch for {$key}.");
+                }
+                $userInput[$key] = [
+                    'disk' => $file->disk,
+                    'path' => $file->path,
+                ];
+                continue;
+            }
+
+            $normalized = $this->normalizeTextInput($value);
+            if ($normalized !== null) {
+                $userInput[$key] = $normalized;
+            }
+        }
+
+        return $userInput;
+    }
+
+    private function assertRequiredProperties(array $properties, array $resolvedProps): void
+    {
+        foreach ($properties as $prop) {
+            if (!is_array($prop)) {
+                continue;
+            }
+            if (empty($prop['required']) || !empty($prop['is_primary_input'])) {
+                continue;
+            }
+            $key = $prop['key'] ?? null;
+            if (!is_string($key) || trim($key) === '') {
+                continue;
+            }
+            $type = $prop['type'] ?? 'text';
+            $value = $resolvedProps[$key] ?? null;
+            if ($type === 'text') {
+                $text = is_string($value) ? trim($value) : '';
+                if ($text === '') {
+                    throw new \RuntimeException("Missing required property: {$key}");
+                }
+                continue;
+            }
+            if (in_array($type, ['image', 'video'], true)) {
+                if (is_array($value)) {
+                    $path = $value['path'] ?? null;
+                    if (is_string($path) && trim($path) !== '') {
+                        continue;
+                    }
+                } elseif (is_string($value) && trim($value) !== '') {
+                    continue;
+                }
+                throw new \RuntimeException("Missing required property: {$key}");
+            }
+            if ($value === null || $value === '') {
+                throw new \RuntimeException("Missing required property: {$key}");
+            }
+        }
+    }
+
+    private function normalizeTextInput(mixed $value): ?string
     {
         if (!is_string($value)) {
             return null;
         }
         $trimmed = trim($value);
         return $trimmed !== '' ? $trimmed : null;
+    }
+
+    private function normalizeFileId(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+        if (is_string($value) && ctype_digit($value)) {
+            $parsed = (int) $value;
+            return $parsed > 0 ? $parsed : null;
+        }
+        if (is_numeric($value)) {
+            $parsed = (int) $value;
+            return $parsed > 0 ? $parsed : null;
+        }
+        return null;
+    }
+
+    private function matchesFileType(?string $mimeType, string $expectedType): bool
+    {
+        if (!$mimeType) {
+            return false;
+        }
+        $normalized = strtolower($mimeType);
+        return $expectedType === 'image'
+            ? str_starts_with($normalized, 'image/')
+            : str_starts_with($normalized, 'video/');
     }
 
     private function ensureDispatch(AiJob $job, int $priority = 0, ?string $provider = null): ?AiJobDispatch

@@ -9,6 +9,8 @@ namespace App\Models;
  */
 abstract class CentralModel extends BaseModel
 {
+    public bool $enableLoggingModelsEvents = false;
+
     protected $connection = 'central';
 }
 

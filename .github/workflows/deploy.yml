@@ -249,74 +249,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ==========================================
-  # Job 4: Deploy Infrastructure (manual gate)
-  # ==========================================
-  deploy-infrastructure-staging:
-    name: Deploy Infrastructure (staging)
-    runs-on: ubuntu-latest
-    needs: [build-and-push]
-    environment: staging-infra
-    if: inputs.stage == 'staging'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install CDK dependencies
-        working-directory: infrastructure
-        run: npm ci
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: CDK diff
-        working-directory: infrastructure
-        run: npx cdk diff --context stage=${{ env.STAGE }} --all
-
-      - name: CDK deploy
-        working-directory: infrastructure
-        run: npx cdk deploy --context stage=${{ env.STAGE }} --all --require-approval never
-
-  deploy-infrastructure-production:
-    name: Deploy Infrastructure (production)
-    runs-on: ubuntu-latest
-    needs: [build-and-push]
-    environment: production-infra
-    if: inputs.stage == 'production'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install CDK dependencies
-        working-directory: infrastructure
-        run: npm ci
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: CDK diff
-        working-directory: infrastructure
-        run: npx cdk diff --context stage=${{ env.STAGE }} --all
-
-      - name: CDK deploy
-        working-directory: infrastructure
-        run: npx cdk deploy --context stage=${{ env.STAGE }} --all --require-approval never
-
-  # ==========================================
-  # Job 5: Deploy ECS Services
+  # Job 4: Deploy ECS Services
   # ==========================================
   deploy-services:
     name: Deploy ECS Services
@@ -361,7 +294,7 @@ jobs:
             --services ${{ env.ECS_FRONTEND_SERVICE }}
 
   # ==========================================
-  # Job 6: Run Migrations (manual gate)
+  # Job 5: Run Migrations (manual gate)
   # ==========================================
   run-migrations-staging:
     name: Run Migrations (staging)

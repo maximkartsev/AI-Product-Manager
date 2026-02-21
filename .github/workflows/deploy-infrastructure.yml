@@ -1,0 +1,201 @@
+name: Deploy Infrastructure
+
+run-name: Deploy Infrastructure (${{ inputs.stage }}) by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Stage to deploy'
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      aws_region:
+        description: 'AWS region'
+        required: true
+        type: choice
+        default: us-east-1
+        options:
+          - us-east-1
+          - us-west-2
+      deploy_network:
+        description: 'Deploy: Network stack (VPC, subnets, SGs)'
+        required: true
+        type: boolean
+        default: true
+      deploy_data:
+        description: 'Deploy: Data stack (RDS, Redis, buckets)'
+        required: true
+        type: boolean
+        default: true
+      deploy_compute:
+        description: 'Deploy: Compute stack (ECS, ALB, services)'
+        required: true
+        type: boolean
+        default: true
+      deploy_gpu:
+        description: 'Deploy: GPU stack (per-fleet ASGs)'
+        required: true
+        type: boolean
+        default: true
+      deploy_monitoring:
+        description: 'Deploy: Monitoring stack (alarms, dashboards)'
+        required: true
+        type: boolean
+        default: true
+      deploy_cicd:
+        description: 'Deploy: CI/CD stack (ECR repos)'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ inputs.aws_region }}
+  STAGE: ${{ inputs.stage }}
+
+jobs:
+  deploy-infra-staging:
+    name: Deploy Infrastructure (staging)
+    runs-on: ubuntu-latest
+    environment: staging-infra
+    if: inputs.stage == 'staging'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve stacks
+        shell: bash
+        env:
+          DEPLOY_NETWORK: ${{ inputs.deploy_network }}
+          DEPLOY_DATA: ${{ inputs.deploy_data }}
+          DEPLOY_COMPUTE: ${{ inputs.deploy_compute }}
+          DEPLOY_GPU: ${{ inputs.deploy_gpu }}
+          DEPLOY_MONITORING: ${{ inputs.deploy_monitoring }}
+          DEPLOY_CICD: ${{ inputs.deploy_cicd }}
+        run: |
+          set -euo pipefail
+
+          prefix="bp-${STAGE}"
+          stacks=()
+
+          [[ "${DEPLOY_NETWORK}" == "true" ]] && stacks+=("${prefix}-network")
+          [[ "${DEPLOY_DATA}" == "true" ]] && stacks+=("${prefix}-data")
+          [[ "${DEPLOY_COMPUTE}" == "true" ]] && stacks+=("${prefix}-compute")
+          [[ "${DEPLOY_GPU}" == "true" ]] && stacks+=("${prefix}-gpu")
+          [[ "${DEPLOY_MONITORING}" == "true" ]] && stacks+=("${prefix}-monitoring")
+          [[ "${DEPLOY_CICD}" == "true" ]] && stacks+=("${prefix}-cicd")
+
+          if [[ "${#stacks[@]}" -eq 0 ]]; then
+            echo "No stacks selected. Check at least one stack checkbox." >&2
+            exit 1
+          fi
+
+          echo "CDK_STACKS=${stacks[*]}" >> "$GITHUB_ENV"
+          echo "Selected stacks: ${stacks[*]}"
+
+          {
+            echo "## Infrastructure deploy selection"
+            echo ""
+            echo "- **Stage:** ${STAGE}"
+            echo "- **Region:** ${AWS_REGION}"
+            echo "- **Stacks:** ${stacks[*]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: CDK diff
+        working-directory: infrastructure
+        run: npx cdk diff --context stage=${STAGE} $CDK_STACKS
+
+      - name: CDK deploy
+        working-directory: infrastructure
+        run: npx cdk deploy --context stage=${STAGE} $CDK_STACKS --require-approval never
+
+  deploy-infra-production:
+    name: Deploy Infrastructure (production)
+    runs-on: ubuntu-latest
+    environment: production-infra
+    if: inputs.stage == 'production'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve stacks
+        shell: bash
+        env:
+          DEPLOY_NETWORK: ${{ inputs.deploy_network }}
+          DEPLOY_DATA: ${{ inputs.deploy_data }}
+          DEPLOY_COMPUTE: ${{ inputs.deploy_compute }}
+          DEPLOY_GPU: ${{ inputs.deploy_gpu }}
+          DEPLOY_MONITORING: ${{ inputs.deploy_monitoring }}
+          DEPLOY_CICD: ${{ inputs.deploy_cicd }}
+        run: |
+          set -euo pipefail
+
+          prefix="bp-${STAGE}"
+          stacks=()
+
+          [[ "${DEPLOY_NETWORK}" == "true" ]] && stacks+=("${prefix}-network")
+          [[ "${DEPLOY_DATA}" == "true" ]] && stacks+=("${prefix}-data")
+          [[ "${DEPLOY_COMPUTE}" == "true" ]] && stacks+=("${prefix}-compute")
+          [[ "${DEPLOY_GPU}" == "true" ]] && stacks+=("${prefix}-gpu")
+          [[ "${DEPLOY_MONITORING}" == "true" ]] && stacks+=("${prefix}-monitoring")
+          [[ "${DEPLOY_CICD}" == "true" ]] && stacks+=("${prefix}-cicd")
+
+          if [[ "${#stacks[@]}" -eq 0 ]]; then
+            echo "No stacks selected. Check at least one stack checkbox." >&2
+            exit 1
+          fi
+
+          echo "CDK_STACKS=${stacks[*]}" >> "$GITHUB_ENV"
+          echo "Selected stacks: ${stacks[*]}"
+
+          {
+            echo "## Infrastructure deploy selection"
+            echo ""
+            echo "- **Stage:** ${STAGE}"
+            echo "- **Region:** ${AWS_REGION}"
+            echo "- **Stacks:** ${stacks[*]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: CDK diff
+        working-directory: infrastructure
+        run: npx cdk diff --context stage=${STAGE} $CDK_STACKS
+
+      - name: CDK deploy
+        working-directory: infrastructure
+        run: npx cdk deploy --context stage=${STAGE} $CDK_STACKS --require-approval never
+

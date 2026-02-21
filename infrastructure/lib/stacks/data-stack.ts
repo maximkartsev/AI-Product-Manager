@@ -108,10 +108,8 @@ export class DataStack extends cdk.Stack {
       numCacheNodes: 1,
       cacheSubnetGroupName: redisSubnetGroup.ref,
       vpcSecurityGroupIds: [sgRedis.securityGroupId],
-      transitEncryptionEnabled: true,
-      // Note: atRestEncryption and AUTH token for single-node CfnCacheCluster
-      // require CfnReplicationGroup. Security group restriction used for now.
-      // Upgrade to CfnReplicationGroup when AUTH/encryption-at-rest is needed.
+      // Note: encryption-in-transit / at-rest and AUTH token require CfnReplicationGroup.
+      // For the simple single-node CacheCluster we rely on VPC/Security Group restriction.
     });
     redis.addDependency(redisSubnetGroup);
 

@@ -46,6 +46,10 @@ Thumbs.db
 # Docker
 *.log
 
+# Python
+__pycache__/
+*.pyc
+
 .venv/
 *.iml
 .claude/

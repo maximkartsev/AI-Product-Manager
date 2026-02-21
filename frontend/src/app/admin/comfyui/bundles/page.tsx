@@ -26,13 +26,15 @@ const ACTION_OPTIONS = [
   { value: "copy", label: "Copy" },
   { value: "extract_zip", label: "Extract ZIP" },
   { value: "extract_tar_gz", label: "Extract TAR.GZ" },
-];
+ ] as const;
+
+type BundleAssetAction = (typeof ACTION_OPTIONS)[number]["value"];
 
 type BundleFormState = {
   name: string;
   notes: string;
   asset_file_ids: number[];
-  asset_overrides: Record<number, { target_path?: string; action?: string }>;
+  asset_overrides: Record<number, { target_path?: string; action?: BundleAssetAction }>;
   bundle_id: string;
   s3_prefix: string;
 };
@@ -81,13 +83,13 @@ export default function AdminComfyUiBundlesPage() {
     const manifest = bundle.manifest as { assets?: Array<any> } | null;
     const assets = Array.isArray(manifest?.assets) ? manifest!.assets : [];
     const assetIds = assets.map((item) => Number(item.asset_id)).filter((id) => Number.isFinite(id));
-    const overrides: Record<number, { target_path?: string; action?: string }> = {};
+    const overrides: Record<number, { target_path?: string; action?: BundleAssetAction }> = {};
     assets.forEach((item) => {
       const id = Number(item.asset_id);
       if (!Number.isFinite(id)) return;
       overrides[id] = {
         target_path: item.target_path,
-        action: item.action,
+        action: item.action as BundleAssetAction | undefined,
       };
     });
 
@@ -230,7 +232,7 @@ export default function AdminComfyUiBundlesPage() {
       section: "Bundle Contents",
       render: ({ formState, setFormState }) => {
         const selectedIds = new Set<number>(formState.asset_file_ids || []);
-        const overrides: Record<number, { target_path?: string; action?: string }> = formState.asset_overrides || {};
+        const overrides: Record<number, { target_path?: string; action?: BundleAssetAction }> = formState.asset_overrides || {};
 
         const toggleAsset = (id: number) => {
           const nextIds = new Set(selectedIds);
@@ -252,7 +254,7 @@ export default function AdminComfyUiBundlesPage() {
           }));
         };
 
-        const updateOverride = (id: number, patch: { target_path?: string; action?: string }) => {
+        const updateOverride = (id: number, patch: { target_path?: string; action?: BundleAssetAction }) => {
           setFormState((prev) => ({
             ...prev,
             asset_overrides: {
@@ -312,7 +314,7 @@ export default function AdminComfyUiBundlesPage() {
                       />
                       <Select
                         value={override.action || "copy"}
-                        onValueChange={(value) => updateOverride(assetId, { action: value })}
+                        onValueChange={(value) => updateOverride(assetId, { action: value as BundleAssetAction })}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select action" />
@@ -354,7 +356,7 @@ export default function AdminComfyUiBundlesPage() {
   };
 
   const handleCreate = async (formState: Record<string, any>): Promise<ComfyUiAssetBundle> => {
-    const overrides = formState.asset_overrides || {};
+    const overrides: Record<number, { target_path?: string; action?: BundleAssetAction }> = formState.asset_overrides || {};
     const assetOverrides = Object.entries(overrides)
       .map(([id, value]) => ({
         asset_file_id: Number(id),

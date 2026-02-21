@@ -18,7 +18,7 @@ return new class extends Migration
         if (!Schema::hasTable('payments')) {
             Schema::create('payments', function (Blueprint $table) {
                 $table->id();
-                $table->foreignId('purchase_id')->constrained()->index();
+                $table->foreignId('purchase_id')->index()->constrained();
                 $table->string('transaction_id')->unique();
                 $table->string('status', 50)->default('pending')->index();
                 $table->decimal('amount', 10, 2)->default(0.0);

@@ -344,7 +344,7 @@ export default function AdminComfyUiFleetsPage() {
         }
       />
 
-      <EntityFormSheet<Record<string, any>, ComfyUiFleetCreateRequest>
+      <EntityFormSheet<ComfyUiFleetCreateRequest, never>
         entityName="Fleet"
         formFields={formFields}
         initialFormState={initialFormState}

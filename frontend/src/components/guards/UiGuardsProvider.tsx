@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import AuthModal from "@/app/_components/landing/AuthModal";
 import PlansModal from "@/components/billing/PlansModal";
 import { ApiError, getAccessToken, getWallet } from "@/lib/api";
@@ -27,7 +27,6 @@ export const UiGuardsContext = createContext<UiGuardsContextValue | null>(null);
 
 export default function UiGuardsProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const token = useAuthToken();
   const [authOpen, setAuthOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
@@ -40,19 +39,21 @@ export default function UiGuardsProvider({ children }: { children: React.ReactNo
   const openAuth = useCallback(() => setAuthOpen(true), []);
 
   useEffect(() => {
-    if (searchParams.get("auth") === "signup") {
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.get("auth") === "signup") {
       setAuthMessage("Account not found — sign up to get started with AI Video Effects.");
       openAuth();
       router.replace("/", { scroll: false });
     }
 
-    const errorParam = searchParams.get("auth_error");
+    const errorParam = params.get("auth_error");
     if (errorParam) {
       setAuthError(errorParam);
       openAuth();
       router.replace("/", { scroll: false });
     }
-  }, [searchParams, openAuth, router]);
+  }, [openAuth, router]);
 
   const closeAuth = useCallback(() => {
     setAuthOpen(false);

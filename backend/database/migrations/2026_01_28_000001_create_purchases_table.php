@@ -19,7 +19,7 @@ return new class extends Migration
             Schema::create('purchases', function (Blueprint $table) {
                 $table->id();
                 $table->string('tenant_id')->index();
-                $table->foreignId('user_id')->constrained()->index();
+                $table->foreignId('user_id')->index()->constrained();
                 $table->unsignedBigInteger('package_id')->nullable()->index();
                 $table->decimal('original_amount', 10, 2)->default(0.0);
                 $table->decimal('applied_discount_amount', 10, 2)->default(0.0);

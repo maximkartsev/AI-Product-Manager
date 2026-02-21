@@ -13,12 +13,17 @@ STATE_FILE="$HOME/.comfyui-dev-instance"
 AWS_REGION_INPUT="${AWS_REGION:-}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-g4dn.xlarge}"
 AMI_ID="${AMI_ID:-}"
+AMI_SSM_PARAM="${AMI_SSM_PARAM:-}"
 KEY_NAME="${KEY_NAME:-}"
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-}"
 AUTO_SHUTDOWN_HOURS="${AUTO_SHUTDOWN_HOURS:-4}"
 VOLUME_SIZE="${VOLUME_SIZE:-100}"
+STAGE_INPUT="${STAGE:-}"
+FLEET_SLUG_INPUT="${FLEET_SLUG:-}"
 WORKFLOW_SLUG_INPUT="${WORKFLOW_SLUG:-}"
 WORKFLOW_SLUG="${WORKFLOW_SLUG_INPUT:-image-to-video}"
+FLEET_SLUG="${FLEET_SLUG_INPUT:-gpu-default}"
+STAGE="${STAGE_INPUT:-staging}"
 SG_NAME_BASE="comfyui-dev-sg"
 
 echo "=== ComfyUI Dev GPU Launcher ==="
@@ -38,6 +43,12 @@ fi
 AWS_REGION="${AWS_REGION_INPUT:-us-east-1}"
 if [ -z "$AWS_REGION_INPUT" ] && [ -n "${DEVGPU_AWS_REGION:-}" ]; then
   AWS_REGION="$DEVGPU_AWS_REGION"
+fi
+if [ -z "$STAGE_INPUT" ] && [ -n "${DEVGPU_STAGE:-}" ]; then
+  STAGE="$DEVGPU_STAGE"
+fi
+if [ -z "$FLEET_SLUG_INPUT" ] && [ -n "${DEVGPU_FLEET_SLUG:-}" ]; then
+  FLEET_SLUG="$DEVGPU_FLEET_SLUG"
 fi
 if [ -z "$WORKFLOW_SLUG_INPUT" ] && [ -n "${DEVGPU_WORKFLOW_SLUG:-}" ]; then
   WORKFLOW_SLUG="$DEVGPU_WORKFLOW_SLUG"
@@ -125,6 +136,8 @@ DEVGPU_SG_ID="$SG_ID"
 DEVGPU_SG_NAME="$SG_NAME"
 DEVGPU_VPC_ID="$VPC_ID"
 DEVGPU_SUBNET_ID="$SUBNET_ID"
+DEVGPU_STAGE="$STAGE"
+DEVGPU_FLEET_SLUG="$FLEET_SLUG"
 DEVGPU_WORKFLOW_SLUG="$WORKFLOW_SLUG"
 DEVGPU_INSTANCE_TYPE="$INSTANCE_TYPE"
 EOF
@@ -191,15 +204,23 @@ fi
 
 # ── Resolve AMI ──────────────────────────────────────────────────────────────
 if [ -z "$AMI_ID" ]; then
-  echo "Resolving AMI from SSM parameter /bp/ami/${WORKFLOW_SLUG}..."
+  if [ -n "$AMI_SSM_PARAM" ]; then
+    AMI_PARAM="$AMI_SSM_PARAM"
+  elif [ -n "$FLEET_SLUG" ]; then
+    AMI_PARAM="/bp/ami/fleets/${STAGE}/${FLEET_SLUG}"
+  else
+    AMI_PARAM="/bp/ami/${WORKFLOW_SLUG}"
+  fi
+
+  echo "Resolving AMI from SSM parameter ${AMI_PARAM}..."
   AMI_ID=$(aws ssm get-parameter \
     --region "$AWS_REGION" \
-    --name "/bp/ami/${WORKFLOW_SLUG}" \
+    --name "$AMI_PARAM" \
     --query 'Parameter.Value' \
     --output text 2>/dev/null) || true
 
   if [ -z "$AMI_ID" ]; then
-    echo "ERROR: Could not resolve AMI. Set AMI_ID env var or create SSM parameter /bp/ami/${WORKFLOW_SLUG}."
+    echo "ERROR: Could not resolve AMI. Set AMI_ID or AMI_SSM_PARAM, or create the expected SSM parameter."
     exit 1
   fi
 fi
@@ -281,7 +302,7 @@ LAUNCH_ARGS=(
   --metadata-options "HttpTokens=required,HttpEndpoint=enabled,HttpPutResponseHopLimit=1"
   --instance-initiated-shutdown-behavior stop
   --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=$VOLUME_SIZE,VolumeType=gp3,DeleteOnTermination=true,Encrypted=true}"
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=comfyui-dev},{Key=ManagedBy,Value=dev-gpu-scripts},{Key=WorkflowSlug,Value=$WORKFLOW_SLUG}]"
+  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=comfyui-dev},{Key=ManagedBy,Value=dev-gpu-scripts},{Key=Stage,Value=$STAGE},{Key=FleetSlug,Value=$FLEET_SLUG},{Key=WorkflowSlug,Value=$WORKFLOW_SLUG}]"
   --count 1
   --query 'Instances[0].InstanceId'
   --output text
@@ -326,6 +347,8 @@ echo ""
 echo "  Auto-shutdown: ${AUTO_SHUTDOWN_HOURS}h from boot (instance will stop)"
 echo "  Region       : $AWS_REGION"
 echo "  Instance type: $INSTANCE_TYPE"
+echo "  Stage        : $STAGE"
+echo "  Fleet        : $FLEET_SLUG"
 echo "  Workflow     : $WORKFLOW_SLUG"
 echo "========================================"
 echo ""

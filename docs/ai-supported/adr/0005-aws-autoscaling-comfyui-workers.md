@@ -5,25 +5,25 @@
 
 ## Context
 
-ComfyUI GPU workers process image-to-video and video-to-video jobs. Currently workers are manually provisioned. We need automatic scaling: scale to zero when idle, scale up under load, with each workflow type running on dedicated GPU instances with pre-loaded neural network models.
+ComfyUI GPU workers process image-to-video and video-to-video jobs. Currently workers are manually provisioned. We need automatic scaling: scale to zero when idle, scale up under load, with shared GPU fleets that can serve multiple workflows using a superset of models in a bundle.
 
 ## Decision
 
-### Per-Workflow ASGs with Spot Instances
+### Per-Fleet ASGs with Spot Instances
 
-Each workflow gets its own Auto Scaling Group (ASG) because each workflow requires different neural network models (2-10GB) baked into the AMI. ASGs cannot mix AMIs, making per-workflow ASGs technically mandatory.
+Each fleet gets its own Auto Scaling Group (ASG) because each fleet can have a distinct bundle of models. Fleets provide a shared pool of GPU workers for many workflows while keeping AMIs and bundles aligned per fleet.
 
 All instances use **Spot pricing** (60-70% savings over On-Demand). Warm pools are not used because they do not support Spot instances.
 
-### ASG Configuration (per workflow)
+### ASG Configuration (per fleet)
 
 ```bash
 aws autoscaling create-auto-scaling-group \
-  --auto-scaling-group-name asg-<workflow-slug> \
+  --auto-scaling-group-name asg-<stage>-<fleet-slug> \
   --mixed-instances-policy '{
     "LaunchTemplate": {
       "LaunchTemplateSpecification": {
-        "LaunchTemplateName": "lt-<workflow-slug>",
+        "LaunchTemplateName": "lt-<stage>-<fleet-slug>",
         "Version": "$Latest"
       },
       "Overrides": [
@@ -43,7 +43,7 @@ aws autoscaling create-auto-scaling-group \
   --vpc-zone-identifier "subnet-aaa,subnet-bbb,subnet-ccc" \
   --capacity-rebalance \
   --default-instance-warmup 300 \
-  --tags Key=WorkflowSlug,Value=<workflow-slug>,PropagateAtLaunch=true
+  --tags Key=FleetSlug,Value=<fleet-slug>,PropagateAtLaunch=true
 ```
 
 Key settings:
@@ -63,7 +63,7 @@ After 15 minutes of `QueueDepth == 0`, scale desired capacity to 0.
 
 ### Fleet Self-Registration
 
-ASG instances self-register via `POST /api/worker/register` with a fleet secret (stored in SSM Parameter Store). Registration requires `workflow_slugs` (e.g. `["face-swap"]`). The backend resolves slugs to workflow IDs, assigns them to the worker, and issues a per-worker auth token. On shutdown (SIGTERM or Spot interruption), workers call `POST /api/worker/deregister`.
+ASG instances self-register via `POST /api/worker/register` with a fleet secret (stored in SSM Parameter Store). Registration requires `fleet_slug` and `stage`. The backend resolves workflow IDs via the `comfyui_workflow_fleets` mapping, assigns them to the worker, and issues a per-worker auth token. On shutdown (SIGTERM or Spot interruption), workers call `POST /api/worker/deregister`.
 
 This is the **only** registration path. Admin panel provides management (approve/revoke/drain/rotate-token/assign-workflows) but not worker creation.
 
@@ -71,7 +71,7 @@ Security controls:
 - Rate limiting: 10 registrations/minute per IP
 - Max fleet workers cap (configurable, default 50)
 - Fleet secret via `X-Fleet-Secret` header
-- `workflow_slugs` required (min:1, validated against active workflows)
+- `fleet_slug` required (validated against active fleets with assigned workflows)
 
 ### Spot Interruption Handling
 
@@ -83,7 +83,7 @@ Workers run a background thread polling EC2 instance metadata every 5 seconds fo
 4. ASG launches replacement Spot instance
 5. New worker picks up the requeued job
 
-### CloudWatch Metrics (8 per workflow)
+### CloudWatch Metrics (8 per fleet)
 
 Published every minute by `workers:publish-metrics` artisan command:
 
@@ -106,7 +106,7 @@ Published every minute by `workers:publish-metrics` artisan command:
 
 | Control | Value |
 |---|---|
-| ASG max-size | 10 per workflow |
+| ASG max-size | 10 per fleet |
 | All-Spot policy | OnDemandBaseCapacity=0 |
 | AWS Budgets alarm | Alert at threshold |
 | GPU Spot quota | Request increase for G/VT Spot |
@@ -128,7 +128,7 @@ T+5:15   Processing begins
 - **Cost:** ~60-70% savings with Spot (g4dn.xlarge: ~$0.16-0.20/hr vs $0.526/hr On-Demand)
 - **Cold start:** ~3-5 min from zero (acceptable for async video jobs taking 1-30 min)
 - **Reliability:** Spot interruptions handled via requeue (no job loss, no attempt penalty)
-- **Complexity:** Per-workflow ASGs + fleet registration + Spot monitoring adds operational surface
+- **Complexity:** Per-fleet ASGs + workflow routing mapping + Spot monitoring adds operational surface
 - **Scale limit:** DB-backed queue viable up to ~50-100 concurrent workers; consider SQS beyond that
 
 ## Files Changed

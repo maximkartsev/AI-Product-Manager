@@ -8,7 +8,7 @@ use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Workflow;
 use App\Services\ComfyUiAssetAuditService;
-use Aws\Ssm\SsmClient;
+use App\Services\ComfyUiFleetSsmService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -182,7 +182,7 @@ class ComfyUiFleetsController extends BaseController
         return $this->sendResponse($fleet, 'Workflows assigned to fleet');
     }
 
-    public function activateBundle(Request $request, $id, ComfyUiAssetAuditService $audit): JsonResponse
+    public function activateBundle(Request $request, $id, ComfyUiAssetAuditService $audit, ComfyUiFleetSsmService $ssm): JsonResponse
     {
         $fleet = ComfyUiGpuFleet::query()->find($id);
         if (!$fleet) {
@@ -207,7 +207,7 @@ class ComfyUiFleetsController extends BaseController
         $fleet->active_bundle_s3_prefix = $bundle->s3_prefix;
         $fleet->save();
 
-        $this->putActiveBundleParameter($fleet->stage, $fleet->slug, $bundle->s3_prefix);
+        $ssm->putActiveBundle($fleet->stage, $fleet->slug, $bundle->s3_prefix);
 
         $user = $request->user();
         $audit->log(
@@ -221,21 +221,5 @@ class ComfyUiFleetsController extends BaseController
         );
 
         return $this->sendResponse($fleet, 'Fleet bundle activated');
-    }
-
-    private function putActiveBundleParameter(string $stage, string $fleetSlug, string $bundlePrefix): void
-    {
-        $region = (string) config('services.comfyui.aws_region', 'us-east-1');
-        $client = new SsmClient([
-            'version' => 'latest',
-            'region' => $region,
-        ]);
-
-        $client->putParameter([
-            'Name' => "/bp/{$stage}/fleets/{$fleetSlug}/active_bundle",
-            'Value' => $bundlePrefix,
-            'Type' => 'String',
-            'Overwrite' => true,
-        ]);
     }
 }

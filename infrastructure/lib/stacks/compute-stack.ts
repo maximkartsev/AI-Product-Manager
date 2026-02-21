@@ -185,7 +185,7 @@ export class ComputeStack extends cdk.Stack {
     backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
       actions: ['ssm:PutParameter', 'ssm:GetParameter'],
       resources: [
-        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/assets/*/active_bundle`,
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleets/*/active_bundle`,
       ],
     }));
 

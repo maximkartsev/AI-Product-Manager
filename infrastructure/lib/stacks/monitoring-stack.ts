@@ -382,7 +382,7 @@ export class MonitoringStack extends cdk.Stack {
           budgetType: 'COST',
           timeUnit: 'MONTHLY',
           budgetLimit: {
-            amount: config.budgetMonthlyUsd.toString(),
+            amount: config.budgetMonthlyUsd,
             unit: 'USD',
           },
         },

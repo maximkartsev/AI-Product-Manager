@@ -90,11 +90,15 @@ jobs:
         id: upload
 
       - name: Record audit log (optional)
-        if: ${{ secrets.ASSET_OPS_API_URL != '' && secrets.ASSET_OPS_SECRET != '' }}
         env:
           ASSET_OPS_API_URL: ${{ secrets.ASSET_OPS_API_URL }}
           ASSET_OPS_SECRET: ${{ secrets.ASSET_OPS_SECRET }}
         run: |
+          if [ -z "${ASSET_OPS_API_URL}" ] || [ -z "${ASSET_OPS_SECRET}" ]; then
+            echo "ASSET_OPS_* secrets not set; skipping audit log."
+            exit 0
+          fi
+
           LOG_KEY="${{ steps.upload.outputs.log_key }}"
           BUNDLE_PREFIX="${{ inputs.bundle_prefix }}"
           BUNDLE_PREFIX="${BUNDLE_PREFIX%/}"

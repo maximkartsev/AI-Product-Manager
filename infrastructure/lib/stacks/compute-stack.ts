@@ -202,7 +202,7 @@ export class ComputeStack extends cdk.Stack {
       portMappings: [{ containerPort: 80, protocol: ecs.Protocol.TCP }],
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'nginx', logGroup: backendLogGroup }),
       healthCheck: {
-        command: ['CMD-SHELL', 'curl -f http://localhost/up || exit 1'],
+        command: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost/up || exit 1'],
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
         retries: 3,
@@ -350,7 +350,9 @@ export class ComputeStack extends cdk.Stack {
       portMappings: [{ containerPort: 3000, protocol: ecs.Protocol.TCP }],
       environment: {
         NODE_ENV: 'production',
-        NEXT_PUBLIC_API_URL: this.apiBaseUrl || '',
+        // The frontend expects the backend API base to include `/api`.
+        NEXT_PUBLIC_API_BASE_URL: `${this.apiBaseUrl}/api`,
+        NEXT_PUBLIC_API_URL: `${this.apiBaseUrl}/api`,
       },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'nextjs', logGroup: frontendLogGroup }),
       healthCheck: {

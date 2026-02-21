@@ -374,12 +374,28 @@ type Query = Record<string, string | number | boolean | null | undefined>;
 function resolveApiBaseUrl(): string {
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL;
   if (!baseUrl) {
+    if (typeof window !== "undefined") {
+      return `${window.location.origin}/api`;
+    }
     throw new ApiError({
       status: 0,
       message:
-        "Missing NEXT_PUBLIC_API_BASE_URL (or NEXT_PUBLIC_API_URL). Set it to your backend API base (e.g. http://localhost:80/api).",
+        "Missing NEXT_PUBLIC_API_BASE_URL (or NEXT_PUBLIC_API_URL). Set it to your backend API base (e.g. http://localhost:80/api). For AWS (single ALB), `/api` also works.",
     });
   }
+
+  // Allow relative base (e.g. "/api") when frontend and backend share the same origin.
+  if (baseUrl.startsWith("/")) {
+    if (typeof window === "undefined") {
+      throw new ApiError({
+        status: 0,
+        message:
+          "NEXT_PUBLIC_API_BASE_URL is a relative path. This is supported in the browser but not in server-only contexts. Set it to an absolute URL for server usage.",
+      });
+    }
+    return `${window.location.origin}${baseUrl}`.replace(/\/$/, "");
+  }
+
   return baseUrl.replace(/\/$/, "");
 }
 

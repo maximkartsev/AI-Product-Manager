@@ -26,6 +26,14 @@ RUN npm install -g pnpm
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Build-time public env vars (baked into the client bundle).
+# In AWS, frontend and backend share the same origin behind the ALB, so `/api` is correct.
+ARG NEXT_PUBLIC_API_BASE_URL=/api
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
+# Avoid accidentally baking developer-only settings into production images.
+RUN rm -f .env.local
+
 # Build the application
 RUN pnpm run build
 

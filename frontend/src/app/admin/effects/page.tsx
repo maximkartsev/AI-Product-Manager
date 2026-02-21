@@ -15,7 +15,7 @@ import {
   deleteAdminEffect,
   getAdminEffects,
   getAdminWorkflows,
-  initEffectAssetUpload,
+  initAdminEffectUpload,
   updateAdminEffect,
   type AdminEffect,
   type AdminEffectPayload,
@@ -79,12 +79,8 @@ const effectSchema = z.object({
   is_active: z.boolean(),
   is_premium: z.boolean(),
   is_new: z.boolean(),
-  comfyui_workflow_path: z.string().nullable().optional(),
-  comfyui_input_path_placeholder: z.string().nullable().optional(),
   thumbnail_url: z.string().nullable().optional(),
   preview_video_url: z.string().nullable().optional(),
-  output_extension: z.string().nullable().optional(),
-  output_mime_type: z.string().nullable().optional(),
 });
 
 // ---- Upload Field Component ----
@@ -115,7 +111,7 @@ function UploadField({
     setError(null);
 
     try {
-      const init = await initEffectAssetUpload({
+      const init = await initAdminEffectUpload({
         kind,
         mime_type: file.type || "application/octet-stream",
         size: file.size,
@@ -189,12 +185,9 @@ const initialFormState: Record<string, string> = {
   is_active: "true",
   is_premium: "true",
   is_new: "true",
-  comfyui_workflow_path: "",
-  comfyui_input_path_placeholder: "__INPUT_PATH__",
   thumbnail_url: "",
   preview_video_url: "",
-  output_extension: "mp4",
-  output_mime_type: "video/mp4",
+  technical_note: "",
 };
 
 const PREMIUM_CREDITS = "5";
@@ -396,10 +389,25 @@ export default function AdminEffectsPage() {
           return <p className="text-xs text-muted-foreground">Select a workflow to configure property overrides.</p>;
         }
         return (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {props.map((prop) => (
-              <div key={prop.key}>
-                <label className="text-xs text-muted-foreground">{prop.name || prop.key} ({prop.type})</label>
+              <div key={prop.key} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-foreground">{prop.name || prop.key}</span>
+                    <span className="rounded-full border border-border/70 bg-background/60 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      {prop.type}
+                    </span>
+                  </div>
+                  {prop.user_configurable ? (
+                      <span className="rounded-full border border-red-500/40 bg-red-200/10 px-2 py-0.5 text-[10px] font-semibold text-red-400">
+                      User configurable
+                    </span>
+                  ) : null}
+                </div>
+                {prop.description ? (
+                  <div className="text-[11px] text-muted-foreground">{prop.description}</div>
+                ) : null}
                 {prop.type === "text" ? (
                   <Input
                     value={overrides[prop.key] ?? ""}
@@ -409,7 +417,7 @@ export default function AdminEffectsPage() {
                       onChange(JSON.stringify(next));
                     }}
                     placeholder={`Default: ${prop.default_value || "(empty)"}`}
-                    className="h-8 text-sm"
+                    className="h-9 text-sm bg-background/80"
                   />
                 ) : (
                   <Input
@@ -420,7 +428,7 @@ export default function AdminEffectsPage() {
                       onChange(JSON.stringify(next));
                     }}
                     placeholder={`S3 path for ${prop.type}`}
-                    className="h-8 text-sm"
+                    className="h-9 text-sm bg-background/80"
                   />
                 )}
               </div>
@@ -523,22 +531,28 @@ export default function AdminEffectsPage() {
       ),
     },
     {
-      key: "comfyui_workflow_path",
-      label: "ComfyUI Workflow Path",
+      key: "technical_note",
+      label: "Technical settings",
       section: "Technical",
-      render: ({ value, onChange }) => (
-        <UploadField kind="workflow" value={value} onChange={onChange} placeholder="resources/comfyui/workflows/..." accept=".json,application/json" />
+      fullWidth: true,
+      render: () => (
+        <div className="rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Technical settings are managed on the linked Workflow. Update workflow JSON, outputs, and placeholders there.
+        </div>
       ),
     },
-    { key: "comfyui_input_path_placeholder", label: "Input Path Placeholder", type: "text", placeholder: "path/to/input" },
-    { key: "output_extension", label: "Output Extension", type: "text", placeholder: "mp4" },
-    { key: "output_mime_type", label: "Output MIME Type", type: "text", placeholder: "video/mp4" },
   ];
 
   const getFormData = (formState: Record<string, any>): AdminEffectPayload => {
     const str = (key: string) => {
       const v = String(formState[key] || "").trim();
       return v || null;
+    };
+    const stripQuery = (value: string | null) => {
+      if (!value) return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      return trimmed.split(/[?#]/)[0] || null;
     };
 
     const rawTags = String(formState.tags || "").trim();
@@ -571,12 +585,8 @@ export default function AdminEffectsPage() {
       is_active: parseBoolean(String(formState.is_active || "")),
       is_premium: parseBoolean(String(formState.is_premium || "")),
       is_new: parseBoolean(String(formState.is_new || "")),
-      comfyui_workflow_path: str("comfyui_workflow_path"),
-      comfyui_input_path_placeholder: str("comfyui_input_path_placeholder"),
-      thumbnail_url: str("thumbnail_url"),
-      preview_video_url: str("preview_video_url"),
-      output_extension: str("output_extension"),
-      output_mime_type: str("output_mime_type"),
+      thumbnail_url: stripQuery(str("thumbnail_url")),
+      preview_video_url: stripQuery(str("preview_video_url")),
     };
   };
 

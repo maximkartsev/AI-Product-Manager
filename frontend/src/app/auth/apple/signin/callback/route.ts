@@ -17,10 +17,14 @@ export async function POST(request: NextRequest) {
     request.headers.get("host") ??
     request.nextUrl.host;
   const origin = `${proto}://${host}`;
+  const backendBase = backendUrl
+    ? backendUrl.startsWith("/") ? `${origin}${backendUrl}` : backendUrl
+    : null;
 
   let res: Response;
   try {
-    res = await fetch(`${backendUrl}/auth/apple/signin/callback`, {
+    if (!backendBase) throw new Error("Missing backend base URL");
+    res = await fetch(`${backendBase}/auth/apple/signin/callback`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),

@@ -10,8 +10,8 @@ import { NagSuppressions } from 'cdk-nag';
 
 export interface ScaleToZeroLambdaProps {
   readonly stage: string;
-  /** Map of workflow slug -> { asgName, queueEmptyAlarm } */
-  readonly workflows: Array<{
+  /** Map of fleet slug -> { asgName, queueEmptyAlarm } */
+  readonly fleets: Array<{
     slug: string;
     asgName: string;
     queueEmptyAlarm: cloudwatch.Alarm;
@@ -26,7 +26,7 @@ export class ScaleToZeroLambda extends Construct {
   constructor(scope: Construct, id: string, props: ScaleToZeroLambdaProps) {
     super(scope, id);
 
-    if (props.workflows.length === 0) return;
+    if (props.fleets.length === 0) return;
 
     // SNS topic for scale-to-zero triggers
     const topic = new sns.Topic(this, 'Topic', {
@@ -47,7 +47,7 @@ asg_client = boto3.client('autoscaling')
 
 # Map alarm name patterns to ASG names
 ASG_MAP = ${JSON.stringify(
-  Object.fromEntries(props.workflows.map(w => [w.queueEmptyAlarm.alarmName, w.asgName]))
+  Object.fromEntries(props.fleets.map(f => [f.queueEmptyAlarm.alarmName, f.asgName]))
 )}
 
 def handler(event, context):
@@ -88,9 +88,6 @@ def handler(event, context):
     });
 
     // Grant Lambda permission to manage ASG capacity
-    const asgArns = props.workflows.map(w =>
-      `arn:aws:autoscaling:*:*:autoScalingGroup:*:autoScalingGroupName/${w.asgName}`
-    );
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ['autoscaling:SetDesiredCapacity', 'autoscaling:DescribeAutoScalingGroups'],
       resources: ['*'], // DescribeAutoScalingGroups doesn't support resource-level permissions
@@ -99,9 +96,9 @@ def handler(event, context):
     // Subscribe Lambda to SNS topic
     topic.addSubscription(new snsSubscriptions.LambdaSubscription(fn));
 
-    // Connect each workflow's queue-empty alarm to SNS
-    for (const workflow of props.workflows) {
-      workflow.queueEmptyAlarm.addAlarmAction(new cloudwatchActions.SnsAction(topic));
+    // Connect each fleet's queue-empty alarm to SNS
+    for (const fleet of props.fleets) {
+      fleet.queueEmptyAlarm.addAlarmAction(new cloudwatchActions.SnsAction(topic));
     }
 
     NagSuppressions.addResourceSuppressions(topic, [

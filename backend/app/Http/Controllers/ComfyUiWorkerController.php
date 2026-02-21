@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\ComfyUiWorker;
+use App\Models\ComfyUiGpuFleet;
+use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
 use App\Models\File;
 use App\Models\Tenant;
@@ -37,8 +39,8 @@ class ComfyUiWorkerController extends BaseController
             'display_name' => 'string|nullable|max:255',
             'capabilities' => 'array|nullable',
             'max_concurrency' => 'integer|nullable|min:1',
-            'workflow_slugs' => 'required|array|min:1',
-            'workflow_slugs.*' => 'required|string|max:255|exists:workflows,slug',
+            'fleet_slug' => 'required|string|max:128',
+            'stage' => 'string|nullable|in:staging,production',
         ]);
 
         if ($validator->fails()) {
@@ -87,16 +89,34 @@ class ComfyUiWorkerController extends BaseController
         $plainToken = Str::random(64);
         $tokenHash = hash('sha256', $plainToken);
 
-        // Resolve workflow slugs to IDs — reject if none are valid/active
-        $slugs = (array) $request->input('workflow_slugs', []);
+        $stage = (string) ($request->input('stage') ?: config('app.env'));
+        if (!in_array($stage, ['staging', 'production'], true)) {
+            return $this->sendError('Invalid stage. Expected staging or production.', [], 422);
+        }
+
+        $fleetSlug = (string) $request->input('fleet_slug');
+        $fleet = ComfyUiGpuFleet::query()
+            ->where('stage', $stage)
+            ->where('slug', $fleetSlug)
+            ->first();
+        if (!$fleet) {
+            return $this->sendError('Fleet not found.', [], 404);
+        }
+
+        $workflowIds = ComfyUiWorkflowFleet::query()
+            ->where('fleet_id', $fleet->id)
+            ->where('stage', $stage)
+            ->pluck('workflow_id')
+            ->toArray();
+
         $workflowIds = Workflow::query()
-            ->whereIn('slug', $slugs)
+            ->whereIn('id', $workflowIds)
             ->where('is_active', true)
             ->pluck('id')
             ->toArray();
 
         if (empty($workflowIds)) {
-            return $this->sendError('No valid active workflows found for provided slugs.', [], 422);
+            return $this->sendError('No active workflows assigned to this fleet.', [], 422);
         }
 
         $worker = ComfyUiWorker::query()->create([
@@ -122,7 +142,7 @@ class ComfyUiWorkerController extends BaseController
                 $worker->worker_id,
                 null,
                 $request->ip(),
-                ['registration_source' => 'fleet', 'workflow_slugs' => $slugs]
+                ['registration_source' => 'fleet', 'fleet_slug' => $fleetSlug, 'stage' => $stage]
             );
         } catch (\Throwable $e) {
             // non-blocking
@@ -132,6 +152,8 @@ class ComfyUiWorkerController extends BaseController
             'worker_id' => $worker->worker_id,
             'token' => $plainToken,
             'workflows_assigned' => $worker->workflows()->pluck('slug')->toArray(),
+            'fleet_slug' => $fleetSlug,
+            'stage' => $stage,
         ], 'Worker registered');
     }
 

@@ -60,6 +60,32 @@ return [
             'report' => false,
         ],
 
+        'comfyui_models' => [
+            'driver' => 's3',
+            'key' => env('COMFYUI_MODELS_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID')),
+            'secret' => env('COMFYUI_MODELS_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY')),
+            'region' => env('COMFYUI_MODELS_REGION', env('AWS_DEFAULT_REGION')),
+            'bucket' => env('COMFYUI_MODELS_BUCKET'),
+            'url' => env('COMFYUI_MODELS_URL', env('AWS_URL')),
+            'endpoint' => env('COMFYUI_MODELS_ENDPOINT', env('AWS_ENDPOINT')),
+            'use_path_style_endpoint' => env('COMFYUI_MODELS_USE_PATH_STYLE_ENDPOINT', env('AWS_USE_PATH_STYLE_ENDPOINT', false)),
+            'throw' => false,
+            'report' => false,
+        ],
+
+        'comfyui_logs' => [
+            'driver' => 's3',
+            'key' => env('COMFYUI_LOGS_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID')),
+            'secret' => env('COMFYUI_LOGS_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY')),
+            'region' => env('COMFYUI_LOGS_REGION', env('AWS_DEFAULT_REGION')),
+            'bucket' => env('COMFYUI_LOGS_BUCKET'),
+            'url' => env('COMFYUI_LOGS_URL', env('AWS_URL')),
+            'endpoint' => env('COMFYUI_LOGS_ENDPOINT', env('AWS_ENDPOINT')),
+            'use_path_style_endpoint' => env('COMFYUI_LOGS_USE_PATH_STYLE_ENDPOINT', env('AWS_USE_PATH_STYLE_ENDPOINT', false)),
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
 
     /*

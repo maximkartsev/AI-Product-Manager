@@ -5,7 +5,9 @@ Launch a single GPU instance with the ComfyUI web UI accessible from the interne
 ## Prerequisites
 
 - **AWS CLI** configured with credentials (`aws configure`)
-- **Production AMI** built via Packer and registered in SSM at `/bp/ami/<workflow-slug>` (or pass `AMI_ID` directly)
+  - Your AWS identity must be able to use **EC2** (launch/stop instances, create security groups) and read **SSM Parameter Store** (to resolve the AMI from `/bp/ami/fleets/<stage>/<fleet_slug>`).
+- **S3 read access** to the models bucket (required only if you plan to apply bundles via the GitHub Action)
+- **Production AMI** built via Packer and registered in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>` (or pass `AMI_ID` directly)
 - **EC2 key pair** (optional — only needed for SSH)
 - **Session Manager** (optional) requires an instance profile with `AmazonSSMManagedInstanceCore`
 
@@ -15,6 +17,40 @@ Launch a single GPU instance with the ComfyUI web UI accessible from the interne
 cd infrastructure/dev-gpu
 ./launch.sh
 # → prints ComfyUI URL, open it in your browser
+```
+
+If you get `Permission denied` on `./launch.sh` (common on fresh checkouts), run:
+
+```bash
+chmod +x launch.sh shutdown.sh
+./launch.sh
+```
+
+Or run it explicitly with bash:
+
+```bash
+bash ./launch.sh
+```
+
+## Apply Bundle to Running Dev Instance (GitHub Action)
+
+If you’re iterating on models/LoRAs/VAEs, you can sync a bundle onto the **running** dev instance without recreating it:
+
+1. Ensure the instance has an **SSM-enabled** instance profile (e.g. `AmazonSSMManagedInstanceCore`).
+2. Ensure the instance role has **S3 read** to the models bucket (`bp-models-<account>-<stage>`).
+3. Run the workflow `.github/workflows/apply-comfyui-bundle.yml` with:
+   - `instance_id`, `fleet_slug`, `bundle_prefix`, `models_bucket`
+
+The workflow will `aws s3 sync` the bundle to `/opt/comfyui` and restart `comfyui.service`.
+
+If you see errors like `$'\r': command not found`, your scripts were checked out with Windows (CRLF) line endings. Fix with:
+
+```bash
+# Option A (recommended)
+dos2unix launch.sh shutdown.sh user-data.sh
+
+# Option B (no extra tools)
+sed -i 's/\r$//' launch.sh shutdown.sh user-data.sh
 ```
 
 When done:
@@ -29,11 +65,24 @@ Re-run `./launch.sh` to resume a stopped dev instance.
 
 ### GitHub Actions (recommended)
 
+Prerequisite (one-time): configure GitHub Actions → AWS auth (OIDC) and set the secret:
+
+- Create an AWS IAM role that GitHub Actions can assume via OIDC.
+- Add the role ARN as a repo Actions secret named `AWS_DEPLOY_ROLE_ARN`.
+- Setup details are in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
+
 1. Go to **Actions → Build GPU AMI**.
 2. Run workflow with:
-   - `workflow_slug`: e.g. `image-to-video`
+   - `fleet_slug`: e.g. `gpu-default`
+   - `stage`: `staging` or `production`
    - `instance_type`: e.g. `g4dn.xlarge`
-3. The workflow writes the AMI ID to SSM at `/bp/ami/<workflow_slug>`.
+3. The workflow writes the AMI ID to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
+
+If the workflow fails at **Configure AWS credentials** with:
+
+- `Credentials could not be loaded ... Could not load credentials from any providers`
+
+Then `AWS_DEPLOY_ROLE_ARN` is missing/empty or the IAM role trust policy doesn’t allow this repo/branch. Re-check the OIDC setup in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
 
 ### Local Packer
 
@@ -41,7 +90,7 @@ Re-run `./launch.sh` to resume a stopped dev instance.
 cd infrastructure/packer
 packer init .
 packer build \
-  -var "workflow_slug=image-to-video" \
+  -var "fleet_slug=gpu-default" \
   -var "instance_type=g4dn.xlarge" \
   -var "aws_region=us-east-1" \
   .
@@ -51,8 +100,9 @@ Then write the AMI ID to SSM:
 
 ```bash
 aws ssm put-parameter \
-  --name "/bp/ami/image-to-video" \
+  --name "/bp/ami/fleets/staging/gpu-default" \
   --value "ami-xxxxxxxx" \
+  --data-type "aws:ec2:image" \
   --type String \
   --overwrite
 ```
@@ -97,8 +147,11 @@ All settings are via environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | `AWS_REGION` | `us-east-1` | AWS region |
+| `STAGE` | `staging` | SSM stage for fleet AMI lookup |
+| `FLEET_SLUG` | `gpu-default` | Fleet slug for AMI lookup |
+| `AMI_SSM_PARAM` | *(none)* | Override SSM parameter path for AMI lookup |
 | `INSTANCE_TYPE` | `g4dn.xlarge` | EC2 instance type (must have GPU) |
-| `WORKFLOW_SLUG` | `image-to-video` | SSM AMI path: `/bp/ami/<workflow-slug>` |
+| `WORKFLOW_SLUG` | `image-to-video` | Legacy fallback if `AMI_SSM_PARAM` is set to `/bp/ami/<workflow-slug>` |
 | `AMI_ID` | *(from SSM)* | Override AMI ID instead of SSM lookup |
 | `KEY_NAME` | *(none)* | EC2 key pair name for SSH access |
 | `INSTANCE_PROFILE` | *(none)* | IAM instance profile (Name or ARN) for SSM Session Manager |
@@ -198,6 +251,67 @@ sudo systemctl status comfyui
 
 # Check ComfyUI logs
 sudo journalctl -u comfyui -f
+```
+
+**ERROR: Could not resolve AMI**
+
+`./launch.sh` resolves the AMI ID from SSM at `/bp/ami/fleets/<stage>/<fleet_slug>` (defaults: `staging`, `gpu-default`).
+
+- If the parameter doesn’t exist, either create it (see “Build / Register the AMI”) or pass `AMI_ID=ami-...` when launching.
+- Alternatively, pass `AMI_SSM_PARAM=/bp/ami/<workflow-slug>` to use legacy per-workflow AMIs.
+- If you see `AccessDeniedException` for `ssm:GetParameter`, your AWS identity lacks SSM read permissions. You can fix it by attaching `AmazonSSMReadOnlyAccess`, or by adding this minimal inline policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadGpuAmiFromSsm",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter"],
+      "Resource": [
+        "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/bp/ami/*",
+        "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/bp/ami/fleets/*"
+      ]
+    }
+  ]
+}
+```
+
+**UnauthorizedOperation / AccessDenied for EC2**
+
+If you see errors like `not authorized to perform: ec2:DescribeVpcs` (or `RunInstances`, `CreateSecurityGroup`, etc.), your AWS identity lacks EC2 permissions required by `launch.sh` / `shutdown.sh`.
+
+Quick fix (broad): attach the AWS managed policy **`AmazonEC2FullAccess`**.
+
+Minimal inline policy (covers what the dev-gpu scripts use):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DevGpuEc2",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeInstances",
+        "ec2:DescribeSecurityGroups",
+        "ec2:RunInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:CreateTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
 ```
 
 **"Connection refused" or timeout**

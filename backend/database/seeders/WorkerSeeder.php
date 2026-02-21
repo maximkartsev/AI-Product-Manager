@@ -17,7 +17,6 @@ class WorkerSeeder extends Seeder
             ['worker_id' => 'seed-worker-local'],
             [
                 'display_name' => 'Local Dev Worker',
-                'environment' => 'self_hosted',
                 'capabilities' => ['gpu' => 'seed'],
                 'max_concurrency' => 1,
                 'is_approved' => true,

@@ -6,13 +6,22 @@ import {
   getAccessToken,
   getEffect,
   getVideo,
+  initEffectAssetUpload,
   initVideoUpload,
   submitAiJob,
   type ApiEffect,
   type VideoData,
 } from "@/lib/api";
 import useAuthToken from "@/lib/useAuthToken";
-import { deletePendingUpload, deletePreview, loadPendingUpload, loadPreview, savePreview } from "@/lib/uploadPreviewStore";
+import {
+  deletePendingAssets,
+  deletePendingUpload,
+  deletePreview,
+  loadPendingAssets,
+  loadPendingUpload,
+  loadPreview,
+  savePreview,
+} from "@/lib/uploadPreviewStore";
 import ProcessingStepProcessing from "@/app/effects/[slug]/processing/ProcessingStepProcessing";
 import ProcessingStepResult from "@/app/effects/[slug]/processing/ProcessingStepResult";
 import ProcessingStepUpload from "@/app/effects/[slug]/processing/ProcessingStepUpload";
@@ -385,19 +394,19 @@ export default function ProcessingClient({ slug }: { slug: string }) {
 
         setUploadProgress(100);
 
-        let promptPayload: Record<string, string> | null = null;
+        let inputPayload: Record<string, unknown> | null = null;
         if (uploadId) {
           try {
             const raw = window.sessionStorage.getItem(`upload_ctx_${uploadId}`);
             if (raw) {
-              const parsed = JSON.parse(raw) as Record<string, unknown>;
-              const positive = typeof parsed.positive_prompt === "string" ? parsed.positive_prompt.trim() : "";
-              const negative = typeof parsed.negative_prompt === "string" ? parsed.negative_prompt.trim() : "";
-              const nextPayload: Record<string, string> = {};
-              if (positive) nextPayload.positive_prompt = positive;
-              if (negative) nextPayload.negative_prompt = negative;
-              if (Object.keys(nextPayload).length > 0) {
-                promptPayload = nextPayload;
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                const entries = Object.entries(parsed as Record<string, unknown>).filter(
+                  ([, val]) => val !== null && val !== undefined && val !== "",
+                );
+                if (entries.length > 0) {
+                  inputPayload = Object.fromEntries(entries);
+                }
               }
             }
           } catch {
@@ -405,11 +414,48 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           }
         }
 
+        const pendingAssets = uploadId ? await loadPendingAssets(uploadId) : [];
+        if (pendingAssets.length > 0) {
+          if (!uploadId) {
+            throw new Error("Upload session missing.");
+          }
+          if (!inputPayload) {
+            inputPayload = {};
+          }
+          for (const asset of pendingAssets) {
+            const mimeType = asset.file.type || "application/octet-stream";
+            const init = await initEffectAssetUpload({
+              effect_id: effectState.data.id,
+              upload_id: uploadId,
+              property_key: asset.propertyKey,
+              kind: asset.kind,
+              mime_type: mimeType,
+              size: asset.file.size,
+              original_filename: asset.file.name,
+            });
+
+            const uploadHeaders = normalizeUploadHeaders(init.upload_headers, mimeType);
+            const response = await fetch(init.upload_url, {
+              method: "PUT",
+              headers: uploadHeaders,
+              body: asset.file,
+            });
+
+            if (!response.ok) {
+              throw new Error(`Upload failed (${response.status}).`);
+            }
+
+            if (init.file?.id) {
+              inputPayload[asset.propertyKey] = init.file.id;
+            }
+          }
+        }
+
         const video = await createVideo({
           effect_id: effectState.data.id,
           original_file_id: init.file.id,
           title: pendingFile.name,
-          input_payload: promptPayload ?? undefined,
+          input_payload: inputPayload ?? undefined,
         });
 
         void savePreview(video.id, pendingFile);
@@ -419,7 +465,7 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           effect_id: effectState.data.id,
           video_id: video.id,
           idempotency_key: idempotencyKey,
-          input_payload: promptPayload ?? undefined,
+          input_payload: inputPayload ?? undefined,
         });
 
         if (job.status === "failed") {
@@ -443,7 +489,10 @@ export default function ProcessingClient({ slug }: { slug: string }) {
           // ignore storage issues
         }
 
-        await deletePendingUpload(uploadId);
+        if (uploadId) {
+          await deletePendingUpload(uploadId);
+          await deletePendingAssets(uploadId);
+        }
         setUploadStatus("done");
         uploadInFlightRef.current = false;
         setVideoId(video.id);

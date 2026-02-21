@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Models\Effect;
 use App\Models\Workflow;
+use App\Services\PresignedUrlService;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class EffectsApiTest extends TestCase
@@ -19,6 +21,16 @@ class EffectsApiTest extends TestCase
             Artisan::call('migrate');
             static::$prepared = true;
         }
+
+        config(['services.comfyui.presigned_ttl_seconds' => 900]);
+        config(['filesystems.default' => 's3']);
+        Storage::fake('s3');
+        app()->instance(PresignedUrlService::class, new class extends PresignedUrlService {
+            public function downloadUrl(string $disk, string $path, int $ttlSeconds): string
+            {
+                return "signed://{$path}";
+            }
+        });
     }
 
     public function test_effects_index_returns_only_active_effects(): void
@@ -85,6 +97,102 @@ class EffectsApiTest extends TestCase
         ]);
         $response->assertJsonPath('data.slug', $effect->slug);
         $response->assertJsonPath('data.is_premium', true);
+    }
+
+    public function test_effect_show_includes_configurable_properties(): void
+    {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+            'properties' => [
+                [
+                    'key' => 'positive_prompt',
+                    'name' => 'Style Prompt',
+                    'type' => 'text',
+                    'placeholder' => '__POSITIVE_PROMPT__',
+                    'user_configurable' => true,
+                    'is_primary_input' => false,
+                ],
+            ],
+        ]);
+
+        $effect = Effect::query()->create([
+            'name' => 'Show Effect ' . uniqid(),
+            'slug' => 'show-' . uniqid(),
+            'description' => 'Show effect description',
+            'is_premium' => true,
+            'is_active' => true,
+            'workflow_id' => $workflow->id,
+        ]);
+
+        $response = $this->getJson('/api/effects/' . $effect->slug);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.configurable_properties.0.key', 'positive_prompt');
+    }
+
+    public function test_effect_show_uses_effect_override_default_value(): void
+    {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+            'properties' => [
+                [
+                    'key' => 'positive_prompt',
+                    'name' => 'Style Prompt',
+                    'type' => 'text',
+                    'placeholder' => '__POSITIVE_PROMPT__',
+                    'user_configurable' => true,
+                    'is_primary_input' => false,
+                    'default_value' => 'workflow default',
+                ],
+            ],
+        ]);
+
+        $effect = Effect::query()->create([
+            'name' => 'Override Effect ' . uniqid(),
+            'slug' => 'override-' . uniqid(),
+            'description' => 'Override effect description',
+            'is_premium' => false,
+            'is_active' => true,
+            'workflow_id' => $workflow->id,
+            'property_overrides' => [
+                'positive_prompt' => 'override default',
+            ],
+        ]);
+
+        $response = $this->getJson('/api/effects/' . $effect->slug);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.configurable_properties.0.default_value', 'override default');
+    }
+
+    public function test_effect_show_presign_ignores_query_params(): void
+    {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'is_active' => true,
+        ]);
+
+        $effect = Effect::query()->create([
+            'name' => 'Preview Effect ' . uniqid(),
+            'slug' => 'preview-' . uniqid(),
+            'description' => 'Preview effect description',
+            'is_premium' => false,
+            'is_active' => true,
+            'workflow_id' => $workflow->id,
+            'thumbnail_url' => 'https://minio.example/bp-media/effects/thumbnails/foo.jpg?X-Amz-Signature=abc',
+        ]);
+
+        $response = $this->getJson('/api/effects/' . $effect->slug);
+
+        $response->assertStatus(200);
+        $url = $response->json('data.thumbnail_url');
+        $this->assertStringContainsString('effects/thumbnails/foo.jpg', (string) $url);
+        $this->assertStringNotContainsString('X-Amz-', (string) $url);
     }
 
     public function test_effect_show_missing_returns_404_envelope(): void

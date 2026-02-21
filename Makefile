@@ -1,4 +1,4 @@
-.PHONY: init check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate seed install-frontend
+.PHONY: init check-submodules setup-env build-containers create-minio-bucket create-database create-tenant-pools install-backend generate-key migrate seed install-frontend
 
 # Prerequisites
 # docker --version
@@ -19,7 +19,7 @@ DB_NAME := bp
 DB_USER := root
 DB_PASSWORD := root
 
-init: check-submodules setup-env build-containers create-database create-tenant-pools install-backend generate-key migrate seed install-frontend
+init: check-submodules setup-env build-containers create-minio-bucket create-database create-tenant-pools install-backend generate-key migrate seed install-frontend
 	@echo "✅ Initialization complete!"
 
 check-submodules:
@@ -78,6 +78,26 @@ build-containers:
 	@echo "⏳ Waiting for containers to be ready..."
 	@sleep 5
 	@echo "✅ Containers are running"
+
+create-minio-bucket:
+	@echo "🪣 Ensuring MinIO bucket exists..."
+	@cd $(LARADOCK_DIR) && \
+	BUCKET=$$(grep -E '^AWS_BUCKET=' ../backend/.env 2>/dev/null | head -n1 | cut -d= -f2); \
+	if [ -z "$$BUCKET" ]; then BUCKET=bp-media; fi; \
+	MINIO_USER=$$(grep -E '^MINIO_ROOT_USER=' .env 2>/dev/null | head -n1 | cut -d= -f2); \
+	MINIO_PASS=$$(grep -E '^MINIO_ROOT_PASSWORD=' .env 2>/dev/null | head -n1 | cut -d= -f2); \
+	if [ -z "$$MINIO_USER" ]; then MINIO_USER=laradock; fi; \
+	if [ -z "$$MINIO_PASS" ]; then MINIO_PASS=laradock; fi; \
+	for i in 1 2 3 4 5; do \
+		if docker run --rm --network $(COMPOSE_PROJECT_NAME)_backend minio/mc sh -c "mc alias set local http://minio:9000 $$MINIO_USER $$MINIO_PASS >/dev/null 2>&1 && mc mb --ignore-existing local/$$BUCKET"; then \
+			echo "✅ MinIO bucket ready: $$BUCKET"; \
+			exit 0; \
+		fi; \
+		echo "⏳ Waiting for MinIO to be ready (attempt $$i/5)..."; \
+		sleep 3; \
+	done; \
+	echo "❌ Failed to create MinIO bucket $$BUCKET"; \
+	exit 1
 
 create-database:
 	@echo "🗄️  Creating database $(DB_NAME)..."

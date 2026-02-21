@@ -32,7 +32,8 @@ CAPABILITIES = os.environ.get("CAPABILITIES", "")
 
 # ASG / Spot instance support
 ASG_NAME = os.environ.get("ASG_NAME", "")
-WORKFLOW_SLUGS = os.environ.get("WORKFLOW_SLUGS", "")
+FLEET_SLUG = os.environ.get("FLEET_SLUG", "")
+FLEET_STAGE = os.environ.get("FLEET_STAGE", "")
 
 # Shutdown state
 _shutdown_requested = False
@@ -151,14 +152,17 @@ def _set_scale_in_protection(protected: bool) -> None:
 
 def _fleet_register() -> Tuple[str, str]:
     """Register this worker with the backend via fleet secret. Returns (worker_id, token)."""
-    slugs = [s.strip() for s in WORKFLOW_SLUGS.split(",") if s.strip()] if WORKFLOW_SLUGS else []
+    if not FLEET_SLUG:
+        raise RuntimeError("FLEET_SLUG is required for fleet registration.")
     payload: Dict[str, Any] = {
         "worker_id": WORKER_ID,
         "display_name": WORKER_ID,
         "capabilities": _parse_capabilities(),
         "max_concurrency": MAX_CONCURRENCY,
-        "workflow_slugs": slugs,
+        "fleet_slug": FLEET_SLUG,
     }
+    if FLEET_STAGE:
+        payload["stage"] = FLEET_STAGE
 
     resp = requests.post(
         f"{API_BASE_URL}/api/worker/register",

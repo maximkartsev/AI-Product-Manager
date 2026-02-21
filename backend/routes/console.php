@@ -1,7 +1,9 @@
 <?php
 
 use App\Models\AiJobDispatch;
+use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorker;
+use App\Models\ComfyUiWorkflowFleet;
 use App\Models\WorkerAuditLog;
 use App\Models\Workflow;
 use Illuminate\Foundation\Inspiring;
@@ -26,9 +28,38 @@ Artisan::command('videos:cleanup-expired', function () {
 Artisan::command('workers:publish-metrics', function () {
     $maxAttempts = (int) config('services.comfyui.max_attempts', 3);
     $namespace = 'ComfyUI/Workers';
+    $stage = (string) config('app.env');
+    if (!in_array($stage, ['staging', 'production'], true)) {
+        $stage = 'staging';
+    }
+    $emitWorkflowMetrics = (bool) config('services.comfyui.emit_workflow_metrics', true);
+    $emitFleetMetrics = (bool) config('services.comfyui.emit_fleet_metrics', true);
 
     // All active workflows
     $workflows = Workflow::query()->where('is_active', true)->get();
+
+    $workflowToFleet = ComfyUiWorkflowFleet::query()
+        ->where('stage', $stage)
+        ->pluck('fleet_id', 'workflow_id');
+
+    $fleets = ComfyUiGpuFleet::query()
+        ->where('stage', $stage)
+        ->get(['id', 'slug']);
+
+    $fleetAggregates = [];
+    foreach ($fleets as $fleet) {
+        $fleetAggregates[$fleet->id] = [
+            'slug' => $fleet->slug,
+            'queueDepth' => 0,
+            'availableCapacity' => 0,
+            'activeWorkers' => 0,
+            'durations' => [],
+            'failed' => 0,
+            'total' => 0,
+            'leaseExpired' => 0,
+            'spotInterruptions' => 0,
+        ];
+    }
 
     // Single GROUP BY query for queue stats
     $queueStats = AiJobDispatch::query()
@@ -54,6 +85,27 @@ Artisan::command('workers:publish-metrics', function () {
         ->groupBy('ww.workflow_id')
         ->get()
         ->keyBy('workflow_id');
+
+    $fleetWorkerStats = collect();
+    if ($emitFleetMetrics) {
+        $workerFleetSub = DB::connection('central')
+            ->table('comfy_ui_workers as w')
+            ->join('worker_workflows as ww', 'w.id', '=', 'ww.worker_id')
+            ->join('comfyui_workflow_fleets as wf', 'wf.workflow_id', '=', 'ww.workflow_id')
+            ->where('wf.stage', $stage)
+            ->where('w.is_approved', true)
+            ->where('w.last_seen_at', '>=', now()->subMinutes(5))
+            ->select('w.id as worker_id', 'wf.fleet_id', 'w.max_concurrency', 'w.current_load')
+            ->distinct();
+
+        $fleetWorkerStats = DB::connection('central')
+            ->query()
+            ->fromSub($workerFleetSub, 'x')
+            ->selectRaw('fleet_id, COUNT(DISTINCT worker_id) as active_workers, SUM(max_concurrency - current_load) as available_capacity')
+            ->groupBy('fleet_id')
+            ->get()
+            ->keyBy('fleet_id');
+    }
 
     // Job processing P50 per workflow (completed in last 10 min)
     $durationStats = AiJobDispatch::query()
@@ -141,24 +193,82 @@ Artisan::command('workers:publish-metrics', function () {
         $leaseExpired = (int) ($leaseExpiredStats[$wId]->expired ?? 0);
         $spotInterruptions = (int) ($spotByWorkflow[$wId]['requeued'] ?? 0);
 
-        $dimensions = [
-            ['Name' => 'WorkflowSlug', 'Value' => $slug],
-        ];
+        if ($emitWorkflowMetrics) {
+            $dimensions = [
+                ['Name' => 'WorkflowSlug', 'Value' => $slug],
+            ];
 
-        $metricData[] = ['MetricName' => 'QueueDepth', 'Dimensions' => $dimensions, 'Value' => $queueDepth, 'Unit' => 'Count'];
-        $metricData[] = ['MetricName' => 'BacklogPerInstance', 'Dimensions' => $dimensions, 'Value' => $backlog, 'Unit' => 'Count'];
-        $metricData[] = ['MetricName' => 'ActiveWorkers', 'Dimensions' => $dimensions, 'Value' => $activeWorkers, 'Unit' => 'Count'];
-        $metricData[] = ['MetricName' => 'AvailableCapacity', 'Dimensions' => $dimensions, 'Value' => $availableCapacity, 'Unit' => 'Count'];
-        $metricData[] = ['MetricName' => 'JobProcessingP50', 'Dimensions' => $dimensions, 'Value' => $p50, 'Unit' => 'Seconds'];
-        $metricData[] = ['MetricName' => 'ErrorRate', 'Dimensions' => $dimensions, 'Value' => $errorRate, 'Unit' => 'Percent'];
-        $metricData[] = ['MetricName' => 'LeaseExpiredCount', 'Dimensions' => $dimensions, 'Value' => $leaseExpired, 'Unit' => 'Count'];
-        $metricData[] = ['MetricName' => 'SpotInterruptionCount', 'Dimensions' => $dimensions, 'Value' => $spotInterruptions, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'QueueDepth', 'Dimensions' => $dimensions, 'Value' => $queueDepth, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'BacklogPerInstance', 'Dimensions' => $dimensions, 'Value' => $backlog, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'ActiveWorkers', 'Dimensions' => $dimensions, 'Value' => $activeWorkers, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'AvailableCapacity', 'Dimensions' => $dimensions, 'Value' => $availableCapacity, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'JobProcessingP50', 'Dimensions' => $dimensions, 'Value' => $p50, 'Unit' => 'Seconds'];
+            $metricData[] = ['MetricName' => 'ErrorRate', 'Dimensions' => $dimensions, 'Value' => $errorRate, 'Unit' => 'Percent'];
+            $metricData[] = ['MetricName' => 'LeaseExpiredCount', 'Dimensions' => $dimensions, 'Value' => $leaseExpired, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'SpotInterruptionCount', 'Dimensions' => $dimensions, 'Value' => $spotInterruptions, 'Unit' => 'Count'];
 
-        $this->info("  {$slug}: depth={$queueDepth} backlog={$backlog} workers={$activeWorkers} capacity={$availableCapacity} p50={$p50}s err={$errorRate}% expired={$leaseExpired} spot={$spotInterruptions}");
+            $this->info("  {$slug}: depth={$queueDepth} backlog={$backlog} workers={$activeWorkers} capacity={$availableCapacity} p50={$p50}s err={$errorRate}% expired={$leaseExpired} spot={$spotInterruptions}");
+        }
+
+        if ($emitFleetMetrics) {
+            $fleetId = $workflowToFleet->get($wId);
+            if ($fleetId && isset($fleetAggregates[$fleetId])) {
+                $fleetAggregates[$fleetId]['queueDepth'] += $queueDepth;
+                $fleetAggregates[$fleetId]['failed'] += (int) ($errorStats[$wId]->failed ?? 0);
+                $fleetAggregates[$fleetId]['total'] += (int) ($errorStats[$wId]->total ?? 0);
+                $fleetAggregates[$fleetId]['leaseExpired'] += $leaseExpired;
+                $fleetAggregates[$fleetId]['spotInterruptions'] += $spotInterruptions;
+
+                if (isset($durationStats[$wId]) && $durationStats[$wId]->count() > 0) {
+                    $fleetAggregates[$fleetId]['durations'] = array_merge(
+                        $fleetAggregates[$fleetId]['durations'],
+                        $durationStats[$wId]->pluck('duration_seconds')->all()
+                    );
+                }
+            }
+        }
+    }
+
+    if ($emitFleetMetrics) {
+        foreach ($fleetAggregates as $fleetId => $stats) {
+            $fleetSlug = $stats['slug'];
+            $fleetWorkers = $fleetWorkerStats[$fleetId] ?? null;
+            $activeWorkers = (int) ($fleetWorkers->active_workers ?? 0);
+            $availableCapacity = (int) ($fleetWorkers->available_capacity ?? 0);
+            $queueDepth = (int) $stats['queueDepth'];
+            $backlog = $activeWorkers > 0 ? round($queueDepth / $activeWorkers, 2) : $queueDepth;
+
+            $p50 = 0;
+            if (!empty($stats['durations'])) {
+                sort($stats['durations']);
+                $p50Index = (int) floor(count($stats['durations']) * 0.5);
+                $p50 = $stats['durations'][$p50Index] ?? 0;
+            }
+
+            $errorRate = 0;
+            if ($stats['total'] > 0) {
+                $errorRate = round(($stats['failed'] / $stats['total']) * 100, 2);
+            }
+
+            $dimensions = [
+                ['Name' => 'FleetSlug', 'Value' => $fleetSlug],
+            ];
+
+            $metricData[] = ['MetricName' => 'QueueDepth', 'Dimensions' => $dimensions, 'Value' => $queueDepth, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'BacklogPerInstance', 'Dimensions' => $dimensions, 'Value' => $backlog, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'ActiveWorkers', 'Dimensions' => $dimensions, 'Value' => $activeWorkers, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'AvailableCapacity', 'Dimensions' => $dimensions, 'Value' => $availableCapacity, 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'JobProcessingP50', 'Dimensions' => $dimensions, 'Value' => $p50, 'Unit' => 'Seconds'];
+            $metricData[] = ['MetricName' => 'ErrorRate', 'Dimensions' => $dimensions, 'Value' => $errorRate, 'Unit' => 'Percent'];
+            $metricData[] = ['MetricName' => 'LeaseExpiredCount', 'Dimensions' => $dimensions, 'Value' => (int) $stats['leaseExpired'], 'Unit' => 'Count'];
+            $metricData[] = ['MetricName' => 'SpotInterruptionCount', 'Dimensions' => $dimensions, 'Value' => (int) $stats['spotInterruptions'], 'Unit' => 'Count'];
+
+            $this->info("  fleet {$fleetSlug}: depth={$queueDepth} backlog={$backlog} workers={$activeWorkers} capacity={$availableCapacity} p50={$p50}s err={$errorRate}% expired={$stats['leaseExpired']} spot={$stats['spotInterruptions']}");
+        }
     }
 
     if (empty($metricData)) {
-        $this->comment('No active workflows — nothing to publish.');
+        $this->comment('No metrics to publish.');
         return;
     }
 
@@ -180,7 +290,7 @@ Artisan::command('workers:publish-metrics', function () {
     } catch (\Throwable $e) {
         $this->error('CloudWatch publish failed: ' . $e->getMessage());
     }
-})->purpose('Publish per-workflow worker metrics to CloudWatch');
+})->purpose('Publish worker metrics to CloudWatch (workflow + fleet)');
 
 /*
 |--------------------------------------------------------------------------

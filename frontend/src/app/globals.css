@@ -181,6 +181,16 @@ body {
   display: none;
 }
 
+.effect-textarea-scroll-body {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.effect-textarea-scroll-body::-webkit-scrollbar {
+  display: none;
+}
+
 .auth-modal-max-h {
   max-height: calc(var(--auth-modal-vh, 100vh) - 2rem);
 }
@@ -227,6 +237,10 @@ body {
 
 @media (max-width: 640px) {
   .auth-modal-scrollbar {
+    display: none;
+  }
+
+  .effect-textarea-scrollbar {
     display: none;
   }
 }

@@ -21,8 +21,11 @@ export interface DataStackProps extends cdk.StackProps {
 export class DataStack extends cdk.Stack {
   public readonly dbSecret: secretsmanager.ISecret;
   public readonly redisSecret: secretsmanager.ISecret;
+  public readonly assetOpsSecret: secretsmanager.ISecret;
   public readonly redisEndpoint: string;
   public readonly mediaBucket: s3.IBucket;
+  public readonly modelsBucket: s3.IBucket;
+  public readonly logsBucket: s3.IBucket;
   public readonly dbInstanceId: string;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
@@ -46,11 +49,14 @@ export class DataStack extends cdk.Stack {
       },
     });
 
+    const rdsInstanceType = (config.rdsInstanceClass ?? 't4g.small').replace(/^db\./, '');
+    const enablePerformanceInsights = !/\.(micro|small)$/.test(rdsInstanceType);
+
     const dbInstance = new rds.DatabaseInstance(this, 'Database', {
       engine: rds.DatabaseInstanceEngine.mariaDb({
         version: rds.MariaDbEngineVersion.VER_10_11,
       }),
-      instanceType: new ec2.InstanceType(config.rdsInstanceClass ?? 'db.t4g.small'),
+      instanceType: new ec2.InstanceType(rdsInstanceType),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [sgRds],
@@ -70,8 +76,10 @@ export class DataStack extends cdk.Stack {
         ? cdk.RemovalPolicy.RETAIN
         : cdk.RemovalPolicy.SNAPSHOT,
       monitoringInterval: cdk.Duration.seconds(60),
-      enablePerformanceInsights: true,
-      performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+      enablePerformanceInsights,
+      performanceInsightRetention: enablePerformanceInsights
+        ? rds.PerformanceInsightRetention.DEFAULT
+        : undefined,
     });
 
     this.dbSecret = dbInstance.secret!;
@@ -105,10 +113,8 @@ export class DataStack extends cdk.Stack {
       numCacheNodes: 1,
       cacheSubnetGroupName: redisSubnetGroup.ref,
       vpcSecurityGroupIds: [sgRedis.securityGroupId],
-      transitEncryptionEnabled: true,
-      // Note: atRestEncryption and AUTH token for single-node CfnCacheCluster
-      // require CfnReplicationGroup. Security group restriction used for now.
-      // Upgrade to CfnReplicationGroup when AUTH/encryption-at-rest is needed.
+      // Note: encryption-in-transit / at-rest and AUTH token require CfnReplicationGroup.
+      // For the simple single-node CacheCluster we rely on VPC/Security Group restriction.
     });
     redis.addDependency(redisSubnetGroup);
 
@@ -121,7 +127,7 @@ export class DataStack extends cdk.Stack {
     });
 
     // ========================================
-    // S3 Media Bucket
+    // S3 Media Bucket (user uploads / outputs)
     // ========================================
 
     this.mediaBucket = new s3.Bucket(this, 'MediaBucket', {
@@ -150,6 +156,58 @@ export class DataStack extends cdk.Stack {
     });
 
     // ========================================
+    // S3 Access Logs Bucket (server access logs destination)
+    // ========================================
+
+    const accessLogsBucket = new s3.Bucket(this, 'AccessLogsBucket', {
+      bucketName: `bp-access-logs-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      lifecycleRules: [
+        {
+          transitions: [
+            { storageClass: s3.StorageClass.INFREQUENT_ACCESS, transitionAfter: cdk.Duration.days(30) },
+          ],
+          expiration: cdk.Duration.days(90),
+        },
+      ],
+      removalPolicy: stage === 'production'
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: stage !== 'production',
+    });
+
+    // ========================================
+    // S3 ComfyUI Models Bucket (model/LoRA/VAE assets)
+    // ========================================
+
+    this.modelsBucket = new s3.Bucket(this, 'ModelsBucket', {
+      bucketName: `bp-models-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      serverAccessLogsBucket: accessLogsBucket,
+      serverAccessLogsPrefix: 's3-access-logs/models/',
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      versioned: true,
+      lifecycleRules: [
+        {
+          abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
+        },
+      ],
+      removalPolicy: stage === 'production'
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: stage !== 'production',
+    });
+
+    // Store models bucket name in SSM for tooling/ops
+    new ssm.StringParameter(this, 'ModelsBucketParam', {
+      parameterName: `/bp/${stage}/models/bucket`,
+      stringValue: this.modelsBucket.bucketName,
+    });
+
+    // ========================================
     // S3 Logs Bucket
     // ========================================
 
@@ -169,6 +227,7 @@ export class DataStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
+    this.logsBucket = logsBucket;
 
     // ========================================
     // CloudFront Distribution (media delivery)
@@ -217,6 +276,16 @@ export class DataStack extends cdk.Stack {
       description: 'OAuth client secrets (Google, Apple, TikTok). Set as JSON after deploy.',
     });
 
+    // Asset ops secret (for GitHub Actions -> backend audit logging)
+    this.assetOpsSecret = new secretsmanager.Secret(this, 'AssetOpsSecret', {
+      secretName: `/bp/${stage}/asset-ops/secret`,
+      description: 'Shared secret for asset ops automation (e.g., GitHub Actions).',
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 32,
+      },
+    });
+
     // ========================================
     // Outputs
     // ========================================
@@ -224,6 +293,7 @@ export class DataStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'RdsEndpoint', { value: dbInstance.instanceEndpoint.hostname });
     new cdk.CfnOutput(this, 'RedisEndpoint', { value: redis.attrRedisEndpointAddress });
     new cdk.CfnOutput(this, 'MediaBucketName', { value: this.mediaBucket.bucketName });
+    new cdk.CfnOutput(this, 'ModelsBucketName', { value: this.modelsBucket.bucketName });
     new cdk.CfnOutput(this, 'CloudFrontDomain', { value: distribution.distributionDomainName });
     new cdk.CfnOutput(this, 'LogsBucketName', { value: logsBucket.bucketName });
 
@@ -244,6 +314,9 @@ export class DataStack extends cdk.Stack {
     ]);
     NagSuppressions.addResourceSuppressions(this.mediaBucket, [
       { id: 'AwsSolutions-S1', reason: 'Access logs go to separate logs bucket via CloudFront' },
+    ]);
+    NagSuppressions.addResourceSuppressions(accessLogsBucket, [
+      { id: 'AwsSolutions-S1', reason: 'This is the access logs bucket (no recursive logging)' },
     ]);
     NagSuppressions.addResourceSuppressions(logsBucket, [
       { id: 'AwsSolutions-S1', reason: 'This IS the logs bucket, no recursive logging' },

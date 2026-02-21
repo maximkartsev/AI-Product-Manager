@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\AiJobDispatch;
+use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorker;
+use App\Models\ComfyUiWorkflowFleet;
 use App\Models\WorkerAuditLog;
 use App\Models\Workflow;
 use Illuminate\Support\Facades\Artisan;
@@ -37,6 +39,7 @@ class FleetRegistrationTest extends TestCase
 
         config(['services.comfyui.fleet_secret' => 'test-fleet-secret']);
         config(['services.comfyui.max_fleet_workers' => 5]);
+        config(['app.env' => 'staging']);
 
         $this->resetState();
     }
@@ -47,6 +50,8 @@ class FleetRegistrationTest extends TestCase
         DB::connection('central')->table('comfy_ui_workers')->truncate();
         DB::connection('central')->table('worker_audit_logs')->truncate();
         DB::connection('central')->table('worker_workflows')->truncate();
+        DB::connection('central')->table('comfyui_workflow_fleets')->truncate();
+        DB::connection('central')->table('comfyui_gpu_fleets')->truncate();
         DB::connection('central')->table('workflows')->truncate();
         DB::connection('central')->table('ai_job_dispatches')->truncate();
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
@@ -58,13 +63,15 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_register_creates_worker_and_returns_token(): void
     {
-        Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
 
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-abc123',
             'display_name' => 'GPU Worker 1',
             'max_concurrency' => 2,
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -84,12 +91,14 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_register_assigns_workflows_by_slug(): void
     {
-        Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
-        Workflow::query()->create(['name' => 'Upscale', 'slug' => 'upscale', 'is_active' => true]);
+        $face = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $upscale = Workflow::query()->create(['name' => 'Upscale', 'slug' => 'upscale', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$face, $upscale]);
 
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-wf123',
-            'workflow_slugs' => ['face-swap', 'upscale'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -105,6 +114,7 @@ class FleetRegistrationTest extends TestCase
     {
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-noslugs',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -116,7 +126,29 @@ class FleetRegistrationTest extends TestCase
     {
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-badslugs',
-            'workflow_slugs' => ['nonexistent-workflow'],
+            'fleet_slug' => 'missing-fleet',
+            'stage' => 'staging',
+        ], [
+            'X-Fleet-Secret' => 'test-fleet-secret',
+        ]);
+
+        $response->assertStatus(404);
+    }
+
+    public function test_fleet_register_rejects_when_fleet_has_no_workflows(): void
+    {
+        ComfyUiGpuFleet::query()->create([
+            'stage' => 'staging',
+            'slug' => 'empty-fleet',
+            'name' => 'Empty Fleet',
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 1,
+        ]);
+
+        $response = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-empty',
+            'fleet_slug' => 'empty-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -126,9 +158,13 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_register_rejects_without_fleet_secret(): void
     {
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
+
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-nosecret',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ]);
 
         $response->assertStatus(401);
@@ -136,9 +172,13 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_register_rejects_wrong_fleet_secret(): void
     {
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
+
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-wrongsecret',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'wrong-secret',
         ]);
@@ -148,18 +188,21 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_register_rejects_duplicate_worker_id(): void
     {
-        Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
 
         $this->postJson('/api/worker/register', [
             'worker_id' => 'i-dup',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ])->assertStatus(200);
 
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-dup',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -170,25 +213,29 @@ class FleetRegistrationTest extends TestCase
     public function test_fleet_register_rejects_when_max_workers_reached(): void
     {
         config(['services.comfyui.max_fleet_workers' => 2]);
-        Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
 
         $this->postJson('/api/worker/register', [
             'worker_id' => 'i-max1',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ])->assertStatus(200);
 
         $this->postJson('/api/worker/register', [
             'worker_id' => 'i-max2',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ])->assertStatus(200);
 
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-max3',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -198,11 +245,13 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_register_logs_audit_event(): void
     {
-        Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
 
         $this->postJson('/api/worker/register', [
             'worker_id' => 'i-audit',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ])->assertStatus(200);
@@ -222,7 +271,8 @@ class FleetRegistrationTest extends TestCase
 
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-noconfig',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'anything',
         ]);
@@ -236,11 +286,13 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_deregister_removes_worker(): void
     {
-        Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
 
         $reg = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-dereg',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -256,11 +308,13 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_deregister_logs_audit_event(): void
     {
-        Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
 
         $reg = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-dereg-audit',
-            'workflow_slugs' => ['face-swap'],
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'test-fleet-secret',
         ]);
@@ -436,5 +490,28 @@ class FleetRegistrationTest extends TestCase
     {
         self::assertNotNull($haystack);
         self::assertStringContainsString($needle, $haystack);
+    }
+
+    private function createFleetWithWorkflows(string $stage, string $fleetSlug, array $workflows): ComfyUiGpuFleet
+    {
+        $fleet = ComfyUiGpuFleet::query()->create([
+            'stage' => $stage,
+            'slug' => $fleetSlug,
+            'name' => 'Fleet ' . uniqid(),
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 1,
+        ]);
+
+        foreach ($workflows as $workflow) {
+            ComfyUiWorkflowFleet::query()->create([
+                'workflow_id' => $workflow->id,
+                'fleet_id' => $fleet->id,
+                'stage' => $stage,
+                'assigned_at' => now(),
+                'assigned_by_email' => 'tests@example.com',
+            ]);
+        }
+
+        return $fleet;
     }
 }

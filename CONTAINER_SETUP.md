@@ -201,6 +201,36 @@ DB_PASSWORD=root
 APP_URL=http://localhost:8000
 ```
 
+#### Storage (local dev)
+
+App media (effects thumbnails/previews, workflow uploads) uses MinIO via the default S3 disk:
+
+```env
+FILESYSTEM_DISK=s3
+AWS_ACCESS_KEY_ID=laradock
+AWS_SECRET_ACCESS_KEY=laradock
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=bp-media
+AWS_USE_PATH_STYLE_ENDPOINT=true
+AWS_ENDPOINT=https://minio.ngrok.pizza
+AWS_URL=https://minio.ngrok.pizza/bp-media
+```
+
+`make init` now auto-creates the bucket named in `AWS_BUCKET` (fallback `bp-media`).
+
+ComfyUI models/logs should use real AWS S3 buckets (required if AWS_* points to MinIO):
+
+```env
+COMFYUI_MODELS_BUCKET=<aws_models_bucket>
+COMFYUI_LOGS_BUCKET=<aws_logs_bucket>
+COMFYUI_MODELS_ACCESS_KEY_ID=<aws_key>
+COMFYUI_MODELS_SECRET_ACCESS_KEY=<aws_secret>
+COMFYUI_MODELS_REGION=us-east-1
+COMFYUI_LOGS_ACCESS_KEY_ID=<aws_key>
+COMFYUI_LOGS_SECRET_ACCESS_KEY=<aws_secret>
+COMFYUI_LOGS_REGION=us-east-1
+```
+
 ### Frontend Environment
 
 Create `frontend/.env.local`:

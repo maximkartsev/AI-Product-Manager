@@ -4,10 +4,14 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\BaseController;
 use App\Http\Resources\Workflow as WorkflowResource;
+use App\Models\ComfyUiGpuFleet;
+use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Workflow;
 use App\Services\PresignedUrlService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -15,7 +19,7 @@ class WorkflowsController extends BaseController
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Workflow::query();
+        $query = Workflow::query()->with('fleets');
 
         [$perPage, $page, $fieldsToSelect, $searchStr, $from] = $this->buildParamsFromRequest($request, $query);
 
@@ -45,7 +49,7 @@ class WorkflowsController extends BaseController
 
     public function show($id): JsonResponse
     {
-        $item = Workflow::find($id);
+        $item = Workflow::with('fleets')->find($id);
         if (is_null($item)) {
             return $this->sendError('Workflow not found');
         }
@@ -86,6 +90,11 @@ class WorkflowsController extends BaseController
         }
 
         $input = $request->all();
+        if (array_key_exists('slug', $input) && $input['slug'] !== $item->slug) {
+            return $this->sendError('Validation Error', [
+                'slug' => ['Slug cannot be changed after creation.'],
+            ], 422);
+        }
         $rules = Workflow::getRules($id);
 
         foreach ($rules as $k => $v) {
@@ -111,6 +120,87 @@ class WorkflowsController extends BaseController
         $item->fresh();
 
         return $this->sendResponse(new WorkflowResource($item), 'Workflow updated successfully');
+    }
+
+    public function assignFleets(Request $request, $id): JsonResponse
+    {
+        $workflow = Workflow::find($id);
+        if (is_null($workflow)) {
+            return $this->sendError('Workflow not found');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'staging_fleet_id' => 'integer|nullable|exists:comfyui_gpu_fleets,id',
+            'production_fleet_id' => 'integer|nullable|exists:comfyui_gpu_fleets,id',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation Error', $validator->errors(), 422);
+        }
+
+        $stagingFleetId = $request->input('staging_fleet_id');
+        $productionFleetId = $request->input('production_fleet_id');
+        $fleetIds = array_values(array_filter([$stagingFleetId, $productionFleetId], fn ($id) => !is_null($id)));
+
+        $fleetsById = ComfyUiGpuFleet::query()
+            ->whereIn('id', $fleetIds)
+            ->get()
+            ->keyBy('id');
+
+        if ($stagingFleetId !== null && (!isset($fleetsById[$stagingFleetId]) || $fleetsById[$stagingFleetId]->stage !== 'staging')) {
+            return $this->sendError('Validation Error', [
+                'staging_fleet_id' => ['Selected fleet must belong to staging stage.'],
+            ], 422);
+        }
+
+        if ($productionFleetId !== null && (!isset($fleetsById[$productionFleetId]) || $fleetsById[$productionFleetId]->stage !== 'production')) {
+            return $this->sendError('Validation Error', [
+                'production_fleet_id' => ['Selected fleet must belong to production stage.'],
+            ], 422);
+        }
+
+        $user = $request->user();
+        $now = Carbon::now();
+
+        DB::transaction(function () use ($workflow, $stagingFleetId, $productionFleetId, $user, $now) {
+            if ($stagingFleetId) {
+                ComfyUiWorkflowFleet::query()->updateOrCreate(
+                    ['workflow_id' => $workflow->id, 'stage' => 'staging'],
+                    [
+                        'fleet_id' => $stagingFleetId,
+                        'assigned_at' => $now,
+                        'assigned_by_user_id' => $user?->id,
+                        'assigned_by_email' => $user?->email,
+                    ]
+                );
+            } else {
+                ComfyUiWorkflowFleet::query()
+                    ->where('workflow_id', $workflow->id)
+                    ->where('stage', 'staging')
+                    ->delete();
+            }
+
+            if ($productionFleetId) {
+                ComfyUiWorkflowFleet::query()->updateOrCreate(
+                    ['workflow_id' => $workflow->id, 'stage' => 'production'],
+                    [
+                        'fleet_id' => $productionFleetId,
+                        'assigned_at' => $now,
+                        'assigned_by_user_id' => $user?->id,
+                        'assigned_by_email' => $user?->email,
+                    ]
+                );
+            } else {
+                ComfyUiWorkflowFleet::query()
+                    ->where('workflow_id', $workflow->id)
+                    ->where('stage', 'production')
+                    ->delete();
+            }
+        });
+
+        $workflow->load('fleets');
+
+        return $this->sendResponse(new WorkflowResource($workflow), 'Workflow fleet assignments updated successfully');
     }
 
     public function destroy($id): JsonResponse

@@ -1,5 +1,5 @@
 import { Info } from "lucide-react";
-import { Textarea } from "@/components/ui/textarea";
+import EffectTextarea from "@/components/effects/EffectTextarea";
 
 type EffectPromptFieldsProps = {
   positivePrompt: string;
@@ -28,7 +28,7 @@ export default function EffectPromptFields({
             <Info className="h-3 w-3" />
           </button>
         </div>
-        <Textarea
+        <EffectTextarea
           value={positivePrompt}
           onChange={(event) => onPositivePromptChange(event.target.value)}
           placeholder="Describe the look, style, or details to add..."
@@ -47,7 +47,7 @@ export default function EffectPromptFields({
             <Info className="h-3 w-3" />
           </button>
         </div>
-        <Textarea
+        <EffectTextarea
           value={negativePrompt}
           onChange={(event) => onNegativePromptChange(event.target.value)}
           placeholder="Describe elements to avoid..."

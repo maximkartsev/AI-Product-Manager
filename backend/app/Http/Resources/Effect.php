@@ -19,6 +19,35 @@ class Effect extends JsonResource
     {
         $data = parent::toArray($request);
         $category = $this->relationLoaded('category') ? $this->category : null;
+        $workflow = $this->relationLoaded('workflow') ? $this->workflow : null;
+        $configurableProps = [];
+        $overrides = is_array($this->property_overrides) ? $this->property_overrides : [];
+        if ($workflow && is_array($workflow->properties)) {
+            foreach ($workflow->properties as $prop) {
+                if (!is_array($prop)) {
+                    continue;
+                }
+                if (empty($prop['user_configurable']) || !empty($prop['is_primary_input'])) {
+                    continue;
+                }
+                $key = $prop['key'] ?? null;
+                if (!is_string($key) || trim($key) === '') {
+                    continue;
+                }
+                $defaultValue = $prop['default_value'] ?? null;
+                if (array_key_exists($key, $overrides)) {
+                    $defaultValue = $overrides[$key];
+                }
+                $configurableProps[] = [
+                    'key' => $key,
+                    'name' => $prop['name'] ?? null,
+                    'description' => $prop['description'] ?? null,
+                    'type' => $prop['type'] ?? 'text',
+                    'required' => (bool) ($prop['required'] ?? false),
+                    'default_value' => $defaultValue,
+                ];
+            }
+        }
 
         $data['thumbnail_url'] = $this->presignEffectAsset($data['thumbnail_url'] ?? null);
         $data['preview_video_url'] = $this->presignEffectAsset($data['preview_video_url'] ?? null);
@@ -28,6 +57,7 @@ class Effect extends JsonResource
             'slug' => $category->slug,
             'description' => $category->description,
         ] : null;
+        $data['configurable_properties'] = $configurableProps;
 
         return $data;
     }
@@ -63,19 +93,11 @@ class Effect extends JsonResource
         }
 
         if (!Str::startsWith($raw, ['http://', 'https://'])) {
-            return ltrim($raw, '/');
-        }
-
-        $base = '';
-        try {
-            $base = (string) Storage::disk($disk)->url('');
-        } catch (\Throwable $e) {
-            $base = '';
-        }
-        $base = $base !== '' ? rtrim($base, '/') . '/' : '';
-
-        if ($base !== '' && Str::startsWith($raw, $base)) {
-            return ltrim(substr($raw, strlen($base)), '/');
+            $trimmed = ltrim($raw, '/');
+            if (Str::startsWith($trimmed, 'bp-media/')) {
+                $trimmed = substr($trimmed, strlen('bp-media/'));
+            }
+            return $trimmed ?: null;
         }
 
         $path = parse_url($raw, PHP_URL_PATH);
@@ -84,6 +106,17 @@ class Effect extends JsonResource
         }
 
         $trimmed = ltrim($path, '/');
+        $basePath = '';
+        try {
+            $base = (string) Storage::disk($disk)->url('');
+            $basePath = (string) parse_url($base, PHP_URL_PATH);
+        } catch (\Throwable $e) {
+            $basePath = '';
+        }
+        $basePath = $basePath !== '' ? trim($basePath, '/') . '/' : '';
+        if ($basePath !== '' && Str::startsWith($trimmed, $basePath)) {
+            $trimmed = substr($trimmed, strlen($basePath));
+        }
         if (Str::startsWith($trimmed, 'bp-media/')) {
             $trimmed = substr($trimmed, strlen('bp-media/'));
         } elseif (Str::startsWith($trimmed, 'tenants/')) {

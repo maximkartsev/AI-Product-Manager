@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as z from "zod";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTableView, type DataTableFormField } from "@/components/ui/DataTable";
@@ -10,13 +10,17 @@ import { useDataTable } from "@/hooks/useDataTable";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   getAdminWorkflows,
   createAdminWorkflow,
   updateAdminWorkflow,
   deleteAdminWorkflow,
+  assignWorkflowFleets,
+  getComfyUiFleets,
   initWorkflowAssetUpload,
   ApiError,
+  type ComfyUiGpuFleet,
   type AdminWorkflow,
   type AdminWorkflowPayload,
 } from "@/lib/api";
@@ -82,12 +86,14 @@ function UploadField({
   onChange,
   placeholder,
   accept,
+  workflowId,
 }: {
   kind: "workflow_json" | "property_asset";
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   accept?: string;
+  workflowId?: number | null;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -107,6 +113,7 @@ function UploadField({
         mime_type: file.type || "application/octet-stream",
         size: file.size,
         original_filename: file.name,
+        workflow_id: workflowId ?? undefined,
       });
 
       if (!init.upload_url) {
@@ -171,6 +178,13 @@ const initialFormState: Record<string, string> = {
   output_extension: "mp4",
   output_mime_type: "video/mp4",
   properties: "[]",
+  staging_fleet_id: "",
+  production_fleet_id: "",
+};
+
+type WorkflowFormPayload = AdminWorkflowPayload & {
+  staging_fleet_id?: number | null;
+  production_fleet_id?: number | null;
 };
 
 // ---- Page Component ----
@@ -183,6 +197,13 @@ export default function AdminWorkflowsPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [blockedEffects, setBlockedEffects] = useState<{ id: number; name: string; slug: string }[]>([]);
   const [showBlockedDialog, setShowBlockedDialog] = useState(false);
+  const [fleetOptions, setFleetOptions] = useState<ComfyUiGpuFleet[]>([]);
+
+  useEffect(() => {
+    getComfyUiFleets({ perPage: 200 })
+      .then((data) => setFleetOptions(data.items ?? []))
+      .catch(() => {});
+  }, []);
 
   const deletingIdRef = useRef(deletingId);
   deletingIdRef.current = deletingId;
@@ -201,6 +222,10 @@ export default function AdminWorkflowsPage() {
         }
       }
     });
+    const stagingFleet = (item.fleets ?? []).find((fleet) => fleet.pivot?.stage === "staging");
+    const productionFleet = (item.fleets ?? []).find((fleet) => fleet.pivot?.stage === "production");
+    newFormState.staging_fleet_id = stagingFleet ? String(stagingFleet.id) : "";
+    newFormState.production_fleet_id = productionFleet ? String(productionFleet.id) : "";
     setEditingItem({ id: item.id, data: newFormState });
     setShowPanel(true);
   };
@@ -317,7 +342,7 @@ export default function AdminWorkflowsPage() {
             const currentSlug = formState.slug || "";
             const autoSlug = slugify(value);
             onChange(newName);
-            if (currentSlug === "" || currentSlug === autoSlug) {
+            if (!editingItem && (currentSlug === "" || currentSlug === autoSlug)) {
               setFormState((prev) => ({ ...prev, slug: slugify(newName) }));
             }
           }}
@@ -325,7 +350,30 @@ export default function AdminWorkflowsPage() {
         />
       ),
     },
-    { key: "slug", label: "Slug", type: "text", required: true, placeholder: "workflow-slug" },
+    {
+      key: "slug",
+      label: "Slug",
+      type: "text",
+      required: true,
+      placeholder: "workflow-slug",
+      render: ({ value, onChange }) => (
+        <div className="flex flex-col gap-1">
+          <Input
+            id="slug"
+            type="text"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="workflow-slug"
+            disabled={Boolean(editingItem)}
+          />
+          {editingItem ? (
+            <span className="text-xs text-muted-foreground">
+              Slug cannot be changed after creation.
+            </span>
+          ) : null}
+        </div>
+      ),
+    },
     { key: "description", label: "Description", type: "text", placeholder: "Workflow description", fullWidth: true },
     {
       key: "is_active",
@@ -361,6 +409,7 @@ export default function AdminWorkflowsPage() {
           onChange={onChange}
           placeholder="resources/comfyui/workflows/..."
           accept=".json,application/json"
+          workflowId={editingItem?.id}
         />
       ),
     },
@@ -385,12 +434,67 @@ export default function AdminWorkflowsPage() {
         />
       ),
     },
+    {
+      key: "staging_fleet_id",
+      label: "Staging Fleet",
+      section: "ComfyUI Routing",
+      render: ({ value, onChange }) => (
+        <Select
+          value={value || "__none__"}
+          onValueChange={(nextValue) => onChange(nextValue === "__none__" ? "" : nextValue)}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select staging fleet" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Unassigned</SelectItem>
+            {fleetOptions
+              .filter((fleet) => fleet.stage === "staging")
+              .map((fleet) => (
+                <SelectItem key={fleet.id} value={String(fleet.id)}>
+                  {fleet.name} ({fleet.slug})
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      ),
+    },
+    {
+      key: "production_fleet_id",
+      label: "Production Fleet",
+      render: ({ value, onChange }) => (
+        <Select
+          value={value || "__none__"}
+          onValueChange={(nextValue) => onChange(nextValue === "__none__" ? "" : nextValue)}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select production fleet" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Unassigned</SelectItem>
+            {fleetOptions
+              .filter((fleet) => fleet.stage === "production")
+              .map((fleet) => (
+                <SelectItem key={fleet.id} value={String(fleet.id)}>
+                  {fleet.name} ({fleet.slug})
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      ),
+    },
   ];
 
-  const getFormData = (formState: Record<string, any>): AdminWorkflowPayload => {
+  const getFormData = (formState: Record<string, any>): WorkflowFormPayload => {
     const str = (key: string) => {
       const v = String(formState[key] || "").trim();
       return v || null;
+    };
+    const toOptionalId = (key: string) => {
+      const raw = String(formState[key] || "").trim();
+      if (!raw) return null;
+      const num = Number(raw);
+      return Number.isFinite(num) ? num : null;
     };
 
     let properties = null;
@@ -413,6 +517,8 @@ export default function AdminWorkflowsPage() {
       output_extension: str("output_extension"),
       output_mime_type: str("output_mime_type"),
       properties,
+      staging_fleet_id: toOptionalId("staging_fleet_id"),
+      production_fleet_id: toOptionalId("production_fleet_id"),
     };
   };
 
@@ -462,7 +568,7 @@ export default function AdminWorkflowsPage() {
         }
       />
 
-      <EntityFormSheet<AdminWorkflowPayload, AdminWorkflowPayload>
+      <EntityFormSheet<WorkflowFormPayload, WorkflowFormPayload>
         entityName="Workflow"
         formFields={formFields}
         initialFormState={initialFormState}
@@ -474,8 +580,18 @@ export default function AdminWorkflowsPage() {
         open={showPanel}
         onOpenChange={setShowPanel}
         editingItem={editingItem}
-        onCreate={createAdminWorkflow}
-        onUpdate={updateAdminWorkflow}
+        onCreate={async (payload) => {
+          const { staging_fleet_id, production_fleet_id, ...workflowPayload } = payload;
+          const created = await createAdminWorkflow(workflowPayload);
+          await assignWorkflowFleets(created.id, { staging_fleet_id, production_fleet_id });
+          return created;
+        }}
+        onUpdate={async (id, payload) => {
+          const { staging_fleet_id, production_fleet_id, ...workflowPayload } = payload;
+          const updated = await updateAdminWorkflow(id, workflowPayload);
+          await assignWorkflowFleets(id, { staging_fleet_id, production_fleet_id });
+          return updated;
+        }}
         onSaved={() => state.loadItems()}
       />
 

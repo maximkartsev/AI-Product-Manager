@@ -35,6 +35,7 @@ class GalleryController extends BaseController
         $items->load([
             'effect:id,slug,name,description,type,is_premium,category_id,credits_cost',
             'effect.category:id,slug,name,description',
+            'effect.workflow:id,properties',
         ]);
 
         $response = [
@@ -64,6 +65,7 @@ class GalleryController extends BaseController
             ->with([
                 'effect:id,slug,name,description,type,is_premium,category_id,credits_cost',
                 'effect.category:id,slug,name,description',
+                'effect.workflow:id,properties',
             ])
             ->find($id);
 

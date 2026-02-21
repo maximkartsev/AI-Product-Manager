@@ -21,6 +21,35 @@ class GalleryVideoResource extends JsonResource
         $category = $effect && $effect->relationLoaded('category') ? $effect->category : null;
         $effectName = $effect?->name;
         $displayTitle = is_string($effectName) && trim($effectName) !== '' ? trim($effectName) : null;
+        $configurableProps = [];
+        $overrides = $effect && is_array($effect->property_overrides) ? $effect->property_overrides : [];
+        $workflow = $effect && $effect->relationLoaded('workflow') ? $effect->workflow : null;
+        if ($workflow && is_array($workflow->properties)) {
+            foreach ($workflow->properties as $prop) {
+                if (!is_array($prop)) {
+                    continue;
+                }
+                if (empty($prop['user_configurable']) || !empty($prop['is_primary_input'])) {
+                    continue;
+                }
+                $key = $prop['key'] ?? null;
+                if (!is_string($key) || trim($key) === '') {
+                    continue;
+                }
+                $defaultValue = $prop['default_value'] ?? null;
+                if (array_key_exists($key, $overrides)) {
+                    $defaultValue = $overrides[$key];
+                }
+                $configurableProps[] = [
+                    'key' => $key,
+                    'name' => $prop['name'] ?? null,
+                    'description' => $prop['description'] ?? null,
+                    'type' => $prop['type'] ?? 'text',
+                    'required' => (bool) ($prop['required'] ?? false),
+                    'default_value' => $defaultValue,
+                ];
+            }
+        }
 
         return [
             'id' => $this->id,
@@ -38,6 +67,7 @@ class GalleryVideoResource extends JsonResource
                 'type' => $effect->type,
                 'is_premium' => $effect->is_premium,
                 'credits_cost' => $effect->credits_cost,
+                'configurable_properties' => $configurableProps,
                 'category' => $category ? [
                     'id' => $category->id,
                     'slug' => $category->slug,
@@ -82,24 +112,25 @@ class GalleryVideoResource extends JsonResource
             return $this->normalizeAssetPath($raw);
         }
 
-        $base = '';
-        try {
-            $base = (string) Storage::disk($disk)->url('');
-        } catch (\Throwable $e) {
-            $base = '';
-        }
-        $base = $base !== '' ? rtrim($base, '/') . '/' : '';
-
-        if ($base !== '' && Str::startsWith($raw, $base)) {
-            return $this->normalizeAssetPath(substr($raw, strlen($base)));
-        }
-
         $path = parse_url($raw, PHP_URL_PATH);
         if (!is_string($path) || $path === '') {
             return null;
         }
 
-        return $this->normalizeAssetPath($path);
+        $trimmed = ltrim($path, '/');
+        $basePath = '';
+        try {
+            $base = (string) Storage::disk($disk)->url('');
+            $basePath = (string) parse_url($base, PHP_URL_PATH);
+        } catch (\Throwable $e) {
+            $basePath = '';
+        }
+        $basePath = $basePath !== '' ? trim($basePath, '/') . '/' : '';
+        if ($basePath !== '' && Str::startsWith($trimmed, $basePath)) {
+            $trimmed = substr($trimmed, strlen($basePath));
+        }
+
+        return $this->normalizeAssetPath($trimmed);
     }
 
     private function normalizeAssetPath(string $path): ?string

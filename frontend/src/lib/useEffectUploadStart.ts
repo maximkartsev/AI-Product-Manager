@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ApiError, getAccessToken } from "@/lib/api";
-import { savePendingUpload } from "@/lib/uploadPreviewStore";
+import type { PendingAssetsMap } from "@/lib/effectUploadTypes";
+import { savePendingAssets, savePendingUpload } from "@/lib/uploadPreviewStore";
 
 type UploadState = { status: "idle" } | { status: "error"; message: string };
 
-type UploadPromptContext = {
-  positivePrompt?: string | null;
-  negativePrompt?: string | null;
-};
+type UploadContext = Record<string, unknown>;
 
 type UseEffectUploadStartArgs = {
   slug: string | null;
@@ -18,7 +16,11 @@ type UseEffectUploadStartArgs = {
 
 type UseEffectUploadStartReturn = {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
-  startUpload: (slugOverride?: string | null, context?: UploadPromptContext | null) => {
+  startUpload: (
+    slugOverride?: string | null,
+    context?: UploadContext | null,
+    pendingAssets?: PendingAssetsMap | null,
+  ) => {
     ok: boolean;
     reason?: "unauthenticated" | "missing_slug";
   };
@@ -37,7 +39,8 @@ export default function useEffectUploadStart({
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoUploadRef = useRef(false);
-  const pendingContextRef = useRef<UploadPromptContext | null>(null);
+  const pendingContextRef = useRef<UploadContext | null>(null);
+  const pendingAssetsRef = useRef<PendingAssetsMap | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [pendingSlug, setPendingSlug] = useState<string | null>(slug ?? null);
   const [uploadState, setUploadState] = useState<UploadState>({ status: "idle" });
@@ -63,12 +66,17 @@ export default function useEffectUploadStart({
     setUploadState({ status: "idle" });
   }
 
-  function startUpload(slugOverride?: string | null, context?: UploadPromptContext | null) {
+  function startUpload(
+    slugOverride?: string | null,
+    context?: UploadContext | null,
+    pendingAssets?: PendingAssetsMap | null,
+  ) {
     const targetSlug = slugOverride ?? slug;
     if (!targetSlug) {
       return { ok: false, reason: "missing_slug" } as const;
     }
     pendingContextRef.current = context ?? null;
+    pendingAssetsRef.current = pendingAssets ?? null;
     setPendingSlug(targetSlug);
     const nextToken = token ?? getAccessToken();
     if (!nextToken) {
@@ -100,20 +108,20 @@ export default function useEffectUploadStart({
       await savePendingUpload(uploadId, file);
       const context = pendingContextRef.current;
       pendingContextRef.current = null;
-      const positive = typeof context?.positivePrompt === "string" ? context.positivePrompt.trim() : "";
-      const negative = typeof context?.negativePrompt === "string" ? context.negativePrompt.trim() : "";
-      if (positive || negative) {
-        try {
-          window.sessionStorage.setItem(
-            `upload_ctx_${uploadId}`,
-            JSON.stringify({
-              ...(positive ? { positive_prompt: positive } : {}),
-              ...(negative ? { negative_prompt: negative } : {}),
-            }),
-          );
-        } catch {
-          // ignore storage issues
+      const pendingAssets = pendingAssetsRef.current;
+      pendingAssetsRef.current = null;
+      if (context && typeof context === "object") {
+        const entries = Object.entries(context).filter(([, val]) => val !== null && val !== undefined && val !== "");
+        if (entries.length > 0) {
+          try {
+            window.sessionStorage.setItem(`upload_ctx_${uploadId}`, JSON.stringify(Object.fromEntries(entries)));
+          } catch {
+            // ignore storage issues
+          }
         }
+      }
+      if (pendingAssets && Object.keys(pendingAssets).length > 0) {
+        await savePendingAssets(uploadId, Object.values(pendingAssets));
       }
       clearUploadError();
       router.push(`/effects/${encodeURIComponent(targetSlug)}/processing?uploadId=${uploadId}`);

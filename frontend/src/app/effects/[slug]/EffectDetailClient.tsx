@@ -10,7 +10,8 @@ import useAuthToken from "@/lib/useAuthToken";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
-import EffectPromptFields from "@/components/effects/EffectPromptFields";
+import EffectConfigFields from "@/components/effects/EffectConfigFields";
+import type { PendingAssetsMap } from "@/lib/effectUploadTypes";
 import EffectTokenInfo from "@/components/effects/EffectTokenInfo";
 import EffectUploadFooter from "@/components/effects/EffectUploadFooter";
 
@@ -27,8 +28,8 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
   const autoUploadRef = useRef(false);
   const { requireAuth, ensureTokens, openPlans, walletBalance, loadWalletBalance } = useUiGuards();
   const token = useAuthToken();
-  const [positivePrompt, setPositivePrompt] = useState("");
-  const [negativePrompt, setNegativePrompt] = useState("");
+  const [inputPayload, setInputPayload] = useState<Record<string, unknown>>({});
+  const [pendingAssets, setPendingAssets] = useState<PendingAssetsMap>({});
   const {
     fileInputRef,
     startUpload,
@@ -89,7 +90,12 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
 
   const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
   const disableUpload: boolean = false;
-  const isConfigurable = state.status === "success" && state.data.type === "configurable";
+  const configurableProps = useMemo(
+    () => (state.status === "success" ? state.data.configurable_properties ?? [] : []),
+    [state],
+  );
+  const isConfigurable =
+    state.status === "success" && state.data.type === "configurable" && configurableProps.length > 0;
 
   useEffect(() => {
     if (autoUploadRef.current) return;
@@ -109,13 +115,19 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
     })();
   }, [clearUploadError, creditsCost, ensureTokens, isConfigurable, requireAuth, searchParams, slug, startUpload, state.status]);
 
+  useEffect(() => {
+    setInputPayload({});
+    setPendingAssets({});
+  }, [slug]);
+
   const handleStartUpload = async () => {
     clearUploadError();
     if (!requireAuth()) return;
     const okTokens = await ensureTokens(creditsCost);
     if (!okTokens) return;
     if (isConfigurable) {
-      const result = startUpload(slug, { positivePrompt, negativePrompt });
+      const hasPayload = Object.keys(inputPayload).length > 0;
+      const result = startUpload(slug, hasPayload ? inputPayload : null, pendingAssets);
       if (!result.ok && result.reason === "unauthenticated") {
         requireAuth();
       }
@@ -190,8 +202,8 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
         )}
 
         {state.status === "success" && (
-          <main className="mt-4 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5">
+          <main className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <section className="min-w-0 overflow-hidden rounded-3xl border border-white/10 bg-white/5">
               <div className="relative aspect-[9/16] w-full bg-gradient-to-br from-fuchsia-500/18 to-indigo-500/12">
                 {state.data.preview_video_url ? (
                   <VideoPlayer
@@ -247,7 +259,7 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
               </div>
             </section>
 
-            <aside className="rounded-3xl border border-white/10 bg-white/5 p-5">
+            <aside className="min-w-0 rounded-3xl border border-white/10 bg-white/5 p-5">
               <div className="text-sm font-semibold text-white">Ready to try it?</div>
               <div className="mt-2 text-xs leading-5 text-white/60">
                 {token
@@ -264,11 +276,12 @@ export default function EffectDetailClient({ slug }: { slug: string }) {
               />
 
               {isConfigurable ? (
-                <EffectPromptFields
-                  positivePrompt={positivePrompt}
-                  onPositivePromptChange={setPositivePrompt}
-                  negativePrompt={negativePrompt}
-                  onNegativePromptChange={setNegativePrompt}
+                <EffectConfigFields
+                  properties={configurableProps}
+                  value={inputPayload}
+                  onChange={setInputPayload}
+                  pendingAssets={pendingAssets}
+                  onPendingAssetsChange={setPendingAssets}
                 />
               ) : null}
 

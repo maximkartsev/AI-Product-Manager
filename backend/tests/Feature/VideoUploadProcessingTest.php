@@ -206,6 +206,106 @@ class VideoUploadProcessingTest extends TestCase
         $tooLarge->assertStatus(422);
     }
 
+    public function test_effect_asset_upload_requires_tokens(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'style_image',
+                'type' => 'image',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/files/uploads', [
+            'effect_id' => $effect->id,
+            'upload_id' => 'upload_test',
+            'property_key' => 'style_image',
+            'kind' => 'image',
+            'mime_type' => 'image/png',
+            'size' => 1024,
+            'original_filename' => 'style.png',
+        ]);
+
+        $requiredTokens = (int) ceil((float) $effect->credits_cost);
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data.required_tokens', $requiredTokens);
+    }
+
+    public function test_effect_asset_upload_rejects_type_mismatch(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'style_image',
+                'type' => 'image',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/files/uploads', [
+            'effect_id' => $effect->id,
+            'upload_id' => 'upload_test',
+            'property_key' => 'style_image',
+            'kind' => 'video',
+            'mime_type' => 'video/mp4',
+            'size' => 1024,
+            'original_filename' => 'style.mp4',
+        ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_effect_asset_upload_success_stores_metadata(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'style_image',
+                'type' => 'image',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/files/uploads', [
+            'effect_id' => $effect->id,
+            'upload_id' => 'upload_success',
+            'property_key' => 'style_image',
+            'kind' => 'image',
+            'mime_type' => 'image/png',
+            'size' => 2048,
+            'original_filename' => 'style.png',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.upload_url', 'https://example.com/upload');
+
+        $fileId = $response->json('data.file.id');
+        $this->assertNotNull($fileId);
+
+        $file = $this->fetchTenantFile($tenant->id, $fileId);
+        $this->assertStringContainsString('runs/upload_success/assets/style_image', $file['path']);
+
+        $metadata = $file['metadata'] ?? null;
+        if (is_string($metadata)) {
+            $metadata = json_decode($metadata, true);
+        }
+        $this->assertIsArray($metadata);
+        $this->assertSame('upload_success', $metadata['upload_id'] ?? null);
+        $this->assertSame('style_image', $metadata['property_key'] ?? null);
+        $this->assertNotEmpty($metadata['expires_at'] ?? null);
+    }
+
     public function test_upload_duplicate_hash_creates_separate_files(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
@@ -432,7 +532,14 @@ class VideoUploadProcessingTest extends TestCase
     public function test_ai_job_submission_creates_dispatch_and_priority(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
-        $effect = $this->createEffect();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'positive_prompt',
+                'type' => 'text',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $this->seedWallet($tenant->id, $user->id, 25);
 
@@ -443,7 +550,7 @@ class VideoUploadProcessingTest extends TestCase
             'idempotency_key' => 'job_' . uniqid(),
             'input_file_id' => $fileId,
             'priority' => 3,
-            'input_payload' => ['prompt' => 'hello'],
+            'input_payload' => ['positive_prompt' => 'hello'],
         ];
 
         $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
@@ -564,7 +671,14 @@ class VideoUploadProcessingTest extends TestCase
     public function test_ai_job_submission_accepts_large_payload(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
-        $effect = $this->createEffect();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'positive_prompt',
+                'type' => 'text',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $this->seedWallet($tenant->id, $user->id, 25);
 
@@ -574,7 +688,7 @@ class VideoUploadProcessingTest extends TestCase
             'effect_id' => $effect->id,
             'idempotency_key' => 'job_' . uniqid(),
             'input_file_id' => $fileId,
-            'input_payload' => ['workflow' => array_fill(0, 200, ['node' => str_repeat('x', 50)])],
+            'input_payload' => ['positive_prompt' => str_repeat('x', 10000)],
         ];
 
         $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
@@ -751,6 +865,32 @@ class VideoUploadProcessingTest extends TestCase
             'slug' => 'effect-' . uniqid(),
             'description' => 'Effect description',
             'type' => 'video',
+            'credits_cost' => 5,
+            'is_active' => true,
+            'is_premium' => false,
+            'is_new' => false,
+            'workflow_id' => $workflow->id,
+        ]);
+    }
+
+    private function createConfigurableEffectWithProperty(array $properties): Effect
+    {
+        $workflow = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'comfyui_workflow_path' => 'resources/comfyui/workflows/cloud_video_effect.json',
+            'output_node_id' => '3',
+            'output_extension' => 'mp4',
+            'output_mime_type' => 'video/mp4',
+            'is_active' => true,
+            'properties' => $properties,
+        ]);
+
+        return Effect::query()->create([
+            'name' => 'Effect ' . uniqid(),
+            'slug' => 'effect-' . uniqid(),
+            'description' => 'Effect description',
+            'type' => 'configurable',
             'credits_cost' => 5,
             'is_active' => true,
             'is_premium' => false,

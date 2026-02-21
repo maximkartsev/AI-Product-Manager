@@ -532,7 +532,14 @@ class VideoUploadProcessingTest extends TestCase
     public function test_ai_job_submission_creates_dispatch_and_priority(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
-        $effect = $this->createEffect();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'positive_prompt',
+                'type' => 'text',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $this->seedWallet($tenant->id, $user->id, 25);
 
@@ -543,7 +550,7 @@ class VideoUploadProcessingTest extends TestCase
             'idempotency_key' => 'job_' . uniqid(),
             'input_file_id' => $fileId,
             'priority' => 3,
-            'input_payload' => ['prompt' => 'hello'],
+            'input_payload' => ['positive_prompt' => 'hello'],
         ];
 
         $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
@@ -664,7 +671,14 @@ class VideoUploadProcessingTest extends TestCase
     public function test_ai_job_submission_accepts_large_payload(): void
     {
         [$user, $tenant, $domain] = $this->createUserTenantDomain();
-        $effect = $this->createEffect();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'positive_prompt',
+                'type' => 'text',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $this->seedWallet($tenant->id, $user->id, 25);
 
@@ -674,7 +688,7 @@ class VideoUploadProcessingTest extends TestCase
             'effect_id' => $effect->id,
             'idempotency_key' => 'job_' . uniqid(),
             'input_file_id' => $fileId,
-            'input_payload' => ['workflow' => array_fill(0, 200, ['node' => str_repeat('x', 50)])],
+            'input_payload' => ['positive_prompt' => str_repeat('x', 10000)],
         ];
 
         $response = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);

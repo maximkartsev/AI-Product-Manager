@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cw_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -31,18 +32,23 @@ export class FleetAsg extends Construct {
     const { vpc, securityGroup, fleet, apiBaseUrl, stage, modelsBucket } = props;
     const fleetSlug = fleet.slug;
 
-    // Resolve AMI: prefer SSM parameter, fall back to hardcoded, or use Amazon Linux placeholder
+    // Resolve AMI: prefer an explicit SSM parameter, then an explicit AMI ID, otherwise default to
+    // /bp/ami/fleets/<stage>/<fleetSlug>.
+    //
+    // NOTE: MachineImage.genericLinux requires a concrete region key (e.g. "us-east-1"), so we
+    // must use the stack's resolved region instead of cdk.Aws.REGION (a token).
+    const region = cdk.Stack.of(this).region;
     let machineImage: ec2.IMachineImage;
     const amiParam = fleet.amiSsmParameter;
     if (amiParam) {
       machineImage = ec2.MachineImage.genericLinux({
-        [cdk.Aws.REGION]: `resolve:ssm:${amiParam}`,
+        [region]: `resolve:ssm:${amiParam}`,
       });
     } else if (fleet.amiId) {
-      machineImage = ec2.MachineImage.genericLinux({ [cdk.Aws.REGION]: fleet.amiId });
+      machineImage = ec2.MachineImage.genericLinux({ [region]: fleet.amiId });
     } else {
       machineImage = ec2.MachineImage.genericLinux({
-        [cdk.Aws.REGION]: `resolve:ssm:/bp/ami/fleets/${stage}/${fleetSlug}`,
+        [region]: `resolve:ssm:/bp/ami/fleets/${stage}/${fleetSlug}`,
       });
     }
 
@@ -239,14 +245,14 @@ export class FleetAsg extends Construct {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    this.asg.scaleOnMetric('StepScale', {
-      metric: queueDepthMetric,
+    // Scale from 0 -> 1 when the alarm transitions to ALARM (QueueDepth > 0).
+    // We intentionally do NOT scale back down here; scale-to-zero is handled separately.
+    const scaleFromZero = new autoscaling.StepScalingAction(this, 'ScaleFromZero', {
+      autoScalingGroup: this.asg,
       adjustmentType: autoscaling.AdjustmentType.EXACT_CAPACITY,
-      scalingSteps: [
-        { lower: 1, change: 1 }, // QueueDepth >= 1: at least 1 instance
-      ],
-      cooldown: cdk.Duration.minutes(3),
     });
+    scaleFromZero.addAdjustment({ lowerBound: 0, adjustment: 1 });
+    this.queueDepthAlarm.addAlarmAction(new cw_actions.AutoScalingAction(scaleFromZero));
 
     // Target tracking 1 -> N: BacklogPerInstance target
     const backlogMetric = new cloudwatch.Metric({

@@ -5,9 +5,9 @@ Launch a single GPU instance with the ComfyUI web UI accessible from the interne
 ## Prerequisites
 
 - **AWS CLI** configured with credentials (`aws configure`)
-  - Your AWS identity must be able to use **EC2** (launch/stop instances, create security groups) and read **SSM Parameter Store** (to resolve the AMI from `/bp/ami/<workflow-slug>`).
+  - Your AWS identity must be able to use **EC2** (launch/stop instances, create security groups) and read **SSM Parameter Store** (to resolve the AMI from `/bp/ami/fleets/<stage>/<fleet_slug>`).
 - **S3 read access** to the models bucket (required only if you plan to apply bundles via the GitHub Action)
-- **Production AMI** built via Packer and registered in SSM at `/bp/ami/<workflow-slug>` (or pass `AMI_ID` directly)
+- **Production AMI** built via Packer and registered in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>` (or pass `AMI_ID` directly)
 - **EC2 key pair** (optional — only needed for SSH)
 - **Session Manager** (optional) requires an instance profile with `AmazonSSMManagedInstanceCore`
 
@@ -39,7 +39,7 @@ If you’re iterating on models/LoRAs/VAEs, you can sync a bundle onto the **run
 1. Ensure the instance has an **SSM-enabled** instance profile (e.g. `AmazonSSMManagedInstanceCore`).
 2. Ensure the instance role has **S3 read** to the models bucket (`bp-models-<account>-<stage>`).
 3. Run the workflow `.github/workflows/apply-comfyui-bundle.yml` with:
-   - `instance_id`, `workflow_slug`, `bundle_id`, `models_bucket`
+   - `instance_id`, `fleet_slug`, `bundle_prefix`, `models_bucket`
 
 The workflow will `aws s3 sync` the bundle to `/opt/comfyui` and restart `comfyui.service`.
 
@@ -73,9 +73,10 @@ Prerequisite (one-time): configure GitHub Actions → AWS auth (OIDC) and set th
 
 1. Go to **Actions → Build GPU AMI**.
 2. Run workflow with:
-   - `workflow_slug`: e.g. `image-to-video`
+   - `fleet_slug`: e.g. `gpu-default`
+   - `stage`: `staging` or `production`
    - `instance_type`: e.g. `g4dn.xlarge`
-3. The workflow writes the AMI ID to SSM at `/bp/ami/<workflow_slug>`.
+3. The workflow writes the AMI ID to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
 
 If the workflow fails at **Configure AWS credentials** with:
 
@@ -89,7 +90,7 @@ Then `AWS_DEPLOY_ROLE_ARN` is missing/empty or the IAM role trust policy doesn�
 cd infrastructure/packer
 packer init .
 packer build \
-  -var "workflow_slug=image-to-video" \
+  -var "fleet_slug=gpu-default" \
   -var "instance_type=g4dn.xlarge" \
   -var "aws_region=us-east-1" \
   .
@@ -99,8 +100,9 @@ Then write the AMI ID to SSM:
 
 ```bash
 aws ssm put-parameter \
-  --name "/bp/ami/image-to-video" \
+  --name "/bp/ami/fleets/staging/gpu-default" \
   --value "ami-xxxxxxxx" \
+  --data-type "aws:ec2:image" \
   --type String \
   --overwrite
 ```
@@ -145,8 +147,11 @@ All settings are via environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | `AWS_REGION` | `us-east-1` | AWS region |
+| `STAGE` | `staging` | SSM stage for fleet AMI lookup |
+| `FLEET_SLUG` | `gpu-default` | Fleet slug for AMI lookup |
+| `AMI_SSM_PARAM` | *(none)* | Override SSM parameter path for AMI lookup |
 | `INSTANCE_TYPE` | `g4dn.xlarge` | EC2 instance type (must have GPU) |
-| `WORKFLOW_SLUG` | `image-to-video` | SSM AMI path: `/bp/ami/<workflow-slug>` |
+| `WORKFLOW_SLUG` | `image-to-video` | Legacy fallback if `AMI_SSM_PARAM` is set to `/bp/ami/<workflow-slug>` |
 | `AMI_ID` | *(from SSM)* | Override AMI ID instead of SSM lookup |
 | `KEY_NAME` | *(none)* | EC2 key pair name for SSH access |
 | `INSTANCE_PROFILE` | *(none)* | IAM instance profile (Name or ARN) for SSM Session Manager |
@@ -250,9 +255,10 @@ sudo journalctl -u comfyui -f
 
 **ERROR: Could not resolve AMI**
 
-`./launch.sh` resolves the AMI ID from SSM at `/bp/ami/<workflow-slug>` (default slug: `image-to-video`).
+`./launch.sh` resolves the AMI ID from SSM at `/bp/ami/fleets/<stage>/<fleet_slug>` (defaults: `staging`, `gpu-default`).
 
 - If the parameter doesn’t exist, either create it (see “Build / Register the AMI”) or pass `AMI_ID=ami-...` when launching.
+- Alternatively, pass `AMI_SSM_PARAM=/bp/ami/<workflow-slug>` to use legacy per-workflow AMIs.
 - If you see `AccessDeniedException` for `ssm:GetParameter`, your AWS identity lacks SSM read permissions. You can fix it by attaching `AmazonSSMReadOnlyAccess`, or by adding this minimal inline policy:
 
 ```json
@@ -263,7 +269,10 @@ sudo journalctl -u comfyui -f
       "Sid": "ReadGpuAmiFromSsm",
       "Effect": "Allow",
       "Action": ["ssm:GetParameter"],
-      "Resource": "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/bp/ami/*"
+      "Resource": [
+        "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/bp/ami/*",
+        "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/bp/ami/fleets/*"
+      ]
     }
   ]
 }

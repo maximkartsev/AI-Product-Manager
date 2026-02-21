@@ -86,12 +86,14 @@ function UploadField({
   onChange,
   placeholder,
   accept,
+  workflowId,
 }: {
   kind: "workflow_json" | "property_asset";
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   accept?: string;
+  workflowId?: number | null;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -111,6 +113,7 @@ function UploadField({
         mime_type: file.type || "application/octet-stream",
         size: file.size,
         original_filename: file.name,
+        workflow_id: workflowId ?? undefined,
       });
 
       if (!init.upload_url) {
@@ -406,6 +409,7 @@ export default function AdminWorkflowsPage() {
           onChange={onChange}
           placeholder="resources/comfyui/workflows/..."
           accept=".json,application/json"
+          workflowId={editingItem?.id}
         />
       ),
     },

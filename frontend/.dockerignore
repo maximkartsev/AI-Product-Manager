@@ -1,0 +1,19 @@
+# Dependencies / build outputs
+node_modules
+.next
+out
+
+# Local env files (avoid baking into images)
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / IDE noise
+.DS_Store
+Thumbs.db

@@ -34,17 +34,28 @@ export class ComputeStack extends cdk.Stack {
   public backendServiceName: string;
   public frontendServiceName: string;
   public apiBaseUrl: string;
+  private readonly backendRepo: ecr.IRepository;
+  private readonly frontendRepo: ecr.IRepository;
+  private readonly appKeySecret: secretsmanager.ISecret;
+  private readonly fleetSecretParam: ssm.IStringParameter;
+  private readonly assetOpsSecret: secretsmanager.ISecret;
+  private readonly modelsBucket: s3.IBucket;
+  private readonly logsBucket: s3.IBucket;
+  private readonly logRetention: logs.RetentionDays;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
 
     const { config, vpc, sgAlb, sgBackend, sgFrontend, dbSecret, redisSecret, assetOpsSecret, redisEndpoint, mediaBucket, modelsBucket, logsBucket } = props;
     const stage = config.stage;
-    const backendRepo = ecr.Repository.fromRepositoryName(this, 'BackendRepo', `bp-backend-${stage}`);
-    const frontendRepo = ecr.Repository.fromRepositoryName(this, 'FrontendRepo', `bp-frontend-${stage}`);
-    const logRetention = stage === 'production' ? logs.RetentionDays.ONE_MONTH : logs.RetentionDays.ONE_WEEK;
-    const appKeySecret = secretsmanager.Secret.fromSecretNameV2(this, 'LaravelAppKey', `/bp/${stage}/laravel/app-key`);
-    const fleetSecretParam = ssm.StringParameter.fromStringParameterName(this, 'FleetSecret', `/bp/${stage}/fleet-secret`);
+    this.backendRepo = ecr.Repository.fromRepositoryName(this, 'BackendRepo', `bp-backend-${stage}`);
+    this.frontendRepo = ecr.Repository.fromRepositoryName(this, 'FrontendRepo', `bp-frontend-${stage}`);
+    this.logRetention = stage === 'production' ? logs.RetentionDays.ONE_MONTH : logs.RetentionDays.ONE_WEEK;
+    this.appKeySecret = secretsmanager.Secret.fromSecretNameV2(this, 'LaravelAppKey', `/bp/${stage}/laravel/app-key`);
+    this.fleetSecretParam = ssm.StringParameter.fromStringParameterName(this, 'FleetSecret', `/bp/${stage}/fleet-secret`);
+    this.assetOpsSecret = assetOpsSecret;
+    this.modelsBucket = modelsBucket;
+    this.logsBucket = logsBucket;
 
     // ========================================
     // ECS Cluster
@@ -158,8 +169,8 @@ export class ComputeStack extends cdk.Stack {
 
     // Grant task role access to S3 buckets
     mediaBucket.grantReadWrite(backendTaskDef.taskRole);
-    modelsBucket.grantReadWrite(backendTaskDef.taskRole);
-    logsBucket.grantRead(backendTaskDef.taskRole);
+    this.modelsBucket.grantReadWrite(backendTaskDef.taskRole);
+    this.logsBucket.grantRead(backendTaskDef.taskRole);
 
     // Grant CloudWatch PutMetricData for workers:publish-metrics
     backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
@@ -180,13 +191,13 @@ export class ComputeStack extends cdk.Stack {
 
     const backendLogGroup = new logs.LogGroup(this, 'BackendLogs', {
       logGroupName: `/ecs/bp-backend-${stage}`,
-      retention: logRetention,
+      retention: this.logRetention,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     // Container 1: Nginx (reverse proxy to PHP-FPM)
     const nginxContainer = backendTaskDef.addContainer('nginx', {
-      image: ecs.ContainerImage.fromEcrRepository(backendRepo, 'nginx-latest'),
+      image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'nginx-latest'),
       essential: true,
       portMappings: [{ containerPort: 80, protocol: ecs.Protocol.TCP }],
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'nginx', logGroup: backendLogGroup }),
@@ -222,14 +233,14 @@ export class ComputeStack extends cdk.Stack {
       AWS_DEFAULT_REGION: cdk.Aws.REGION,
       COMFYUI_AWS_REGION: cdk.Aws.REGION,
       AWS_BUCKET: mediaBucket.bucketName,
-      COMFYUI_MODELS_BUCKET: modelsBucket.bucketName,
+      COMFYUI_MODELS_BUCKET: this.modelsBucket.bucketName,
       COMFYUI_MODELS_DISK: 'comfyui_models',
-      COMFYUI_LOGS_BUCKET: logsBucket.bucketName,
+      COMFYUI_LOGS_BUCKET: this.logsBucket.bucketName,
       COMFYUI_LOGS_DISK: 'comfyui_logs',
     };
 
     const phpSecrets: Record<string, ecs.Secret> = {
-      APP_KEY: ecs.Secret.fromSecretsManager(appKeySecret),
+      APP_KEY: ecs.Secret.fromSecretsManager(this.appKeySecret),
       CENTRAL_DB_HOST: ecs.Secret.fromSecretsManager(dbSecret, 'host'),
       CENTRAL_DB_USERNAME: ecs.Secret.fromSecretsManager(dbSecret, 'username'),
       CENTRAL_DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
@@ -239,13 +250,13 @@ export class ComputeStack extends cdk.Stack {
       TENANT_POOL_2_DB_HOST: ecs.Secret.fromSecretsManager(dbSecret, 'host'),
       TENANT_POOL_2_DB_USERNAME: ecs.Secret.fromSecretsManager(dbSecret, 'username'),
       TENANT_POOL_2_DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
-      COMFYUI_FLEET_SECRET: ecs.Secret.fromSsmParameter(fleetSecretParam),
-      COMFYUI_ASSET_OPS_SECRET: ecs.Secret.fromSecretsManager(assetOpsSecret),
+      COMFYUI_FLEET_SECRET: ecs.Secret.fromSsmParameter(this.fleetSecretParam),
+      COMFYUI_ASSET_OPS_SECRET: ecs.Secret.fromSecretsManager(this.assetOpsSecret),
     };
 
     // Container 2: PHP-FPM (Laravel app)
     backendTaskDef.addContainer('php-fpm', {
-      image: ecs.ContainerImage.fromEcrRepository(backendRepo, 'php-latest'),
+      image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'php-latest'),
       essential: true,
       environment: phpEnvironment,
       secrets: phpSecrets,
@@ -254,7 +265,7 @@ export class ComputeStack extends cdk.Stack {
 
     // Container 3: Scheduler sidecar
     backendTaskDef.addContainer('scheduler', {
-      image: ecs.ContainerImage.fromEcrRepository(backendRepo, 'php-latest'),
+      image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'php-latest'),
       essential: false,
       command: ['php', 'artisan', 'schedule:work'],
       environment: phpEnvironment,
@@ -264,7 +275,7 @@ export class ComputeStack extends cdk.Stack {
 
     // Container 4: Queue worker sidecar
     backendTaskDef.addContainer('queue-worker', {
-      image: ecs.ContainerImage.fromEcrRepository(backendRepo, 'php-latest'),
+      image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'php-latest'),
       essential: false,
       command: ['php', 'artisan', 'queue:work', '--sleep=3', '--tries=3', '--max-time=3600'],
       environment: phpEnvironment,
@@ -329,12 +340,12 @@ export class ComputeStack extends cdk.Stack {
 
     const frontendLogGroup = new logs.LogGroup(this, 'FrontendLogs', {
       logGroupName: `/ecs/bp-frontend-${stage}`,
-      retention: logRetention,
+      retention: this.logRetention,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     frontendTaskDef.addContainer('nextjs', {
-      image: ecs.ContainerImage.fromEcrRepository(frontendRepo, 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(this.frontendRepo, 'latest'),
       essential: true,
       portMappings: [{ containerPort: 3000, protocol: ecs.Protocol.TCP }],
       environment: {

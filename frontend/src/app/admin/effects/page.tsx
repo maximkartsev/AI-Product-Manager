@@ -548,6 +548,12 @@ export default function AdminEffectsPage() {
       const v = String(formState[key] || "").trim();
       return v || null;
     };
+    const stripQuery = (value: string | null) => {
+      if (!value) return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      return trimmed.split(/[?#]/)[0] || null;
+    };
 
     const rawTags = String(formState.tags || "").trim();
     const tags = rawTags
@@ -579,8 +585,8 @@ export default function AdminEffectsPage() {
       is_active: parseBoolean(String(formState.is_active || "")),
       is_premium: parseBoolean(String(formState.is_premium || "")),
       is_new: parseBoolean(String(formState.is_new || "")),
-      thumbnail_url: str("thumbnail_url"),
-      preview_video_url: str("preview_video_url"),
+      thumbnail_url: stripQuery(str("thumbnail_url")),
+      preview_video_url: stripQuery(str("preview_video_url")),
     };
   };
 

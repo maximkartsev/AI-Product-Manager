@@ -144,10 +144,13 @@ export default function EffectConfigFields({
             <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
               <span>{positiveProp?.name || "Positive prompt"}</span>
             </div>
+            {positiveProp?.description ? (
+              <div className="mt-1 text-[11px] text-white/45">{positiveProp.description}</div>
+            ) : null}
             <Textarea
               value={typeof value.positive_prompt === "string" ? value.positive_prompt : ""}
               onChange={(event) => updateValue("positive_prompt", event.target.value)}
-              placeholder={positiveProp?.description || "Describe the look, style, or details to add..."}
+              placeholder={positiveProp?.default_value || "Enter value..."}
               className="mt-2 min-h-[84px] text-xs"
             />
           </div>
@@ -155,10 +158,13 @@ export default function EffectConfigFields({
             <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
               <span>{negativeProp?.name || "Negative prompt"}</span>
             </div>
+            {negativeProp?.description ? (
+              <div className="mt-1 text-[11px] text-white/45">{negativeProp.description}</div>
+            ) : null}
             <Textarea
               value={typeof value.negative_prompt === "string" ? value.negative_prompt : ""}
               onChange={(event) => updateValue("negative_prompt", event.target.value)}
-              placeholder={negativeProp?.description || "Describe elements to avoid..."}
+              placeholder={negativeProp?.default_value || "Enter value..."}
               className="mt-2 min-h-[84px] text-xs"
             />
           </div>
@@ -182,14 +188,14 @@ export default function EffectConfigFields({
                 <Textarea
                   value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
                   onChange={(event) => updateValue(prop.key, event.target.value)}
-                  placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
+                  placeholder={prop.default_value || "Enter value..."}
                   className="mt-2 min-h-[84px] text-xs"
                 />
               ) : (
                 <Input
                   value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
                   onChange={(event) => updateValue(prop.key, event.target.value)}
-                  placeholder={prop.default_value ? `Default: ${prop.default_value}` : "Enter value..."}
+                  placeholder={prop.default_value || "Enter value..."}
                   className="mt-2 text-xs"
                 />
               )}

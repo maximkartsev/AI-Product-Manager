@@ -49,11 +49,14 @@ export class DataStack extends cdk.Stack {
       },
     });
 
+    const rdsInstanceType = (config.rdsInstanceClass ?? 't4g.small').replace(/^db\./, '');
+    const enablePerformanceInsights = !/\.(micro|small)$/.test(rdsInstanceType);
+
     const dbInstance = new rds.DatabaseInstance(this, 'Database', {
       engine: rds.DatabaseInstanceEngine.mariaDb({
         version: rds.MariaDbEngineVersion.VER_10_11,
       }),
-      instanceType: new ec2.InstanceType((config.rdsInstanceClass ?? 't4g.small').replace(/^db\./, '')),
+      instanceType: new ec2.InstanceType(rdsInstanceType),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [sgRds],
@@ -73,8 +76,10 @@ export class DataStack extends cdk.Stack {
         ? cdk.RemovalPolicy.RETAIN
         : cdk.RemovalPolicy.SNAPSHOT,
       monitoringInterval: cdk.Duration.seconds(60),
-      enablePerformanceInsights: true,
-      performanceInsightRetention: rds.PerformanceInsightRetention.DEFAULT,
+      enablePerformanceInsights,
+      performanceInsightRetention: enablePerformanceInsights
+        ? rds.PerformanceInsightRetention.DEFAULT
+        : undefined,
     });
 
     this.dbSecret = dbInstance.secret!;

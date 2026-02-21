@@ -25,7 +25,7 @@ export interface BpEnvironmentConfig {
   /** Tenant pool database names */
   readonly tenantPoolDbNames: string[];
 
-  /** RDS instance class (e.g. 'db.t4g.small') */
+  /** RDS instance class (e.g. 't4g.small') */
   readonly rdsInstanceClass?: string;
 
   /** Whether to enable Multi-AZ for RDS */
@@ -59,7 +59,7 @@ export const STAGING_CONFIG: BpEnvironmentConfig = {
   alertEmail: process.env.ALERT_EMAIL,
   centralDbName: 'bp',
   tenantPoolDbNames: ['tenant_pool_1', 'tenant_pool_2'],
-  rdsInstanceClass: 'db.t4g.small',
+  rdsInstanceClass: 't4g.small',
   rdsMultiAz: false,
   redisNodeType: 'cache.t4g.micro',
   natGateways: 1,
@@ -78,7 +78,7 @@ export const PRODUCTION_CONFIG: BpEnvironmentConfig = {
   alertEmail: process.env.ALERT_EMAIL,
   centralDbName: 'bp',
   tenantPoolDbNames: ['tenant_pool_1', 'tenant_pool_2'],
-  rdsInstanceClass: 'db.t4g.medium',
+  rdsInstanceClass: 't4g.medium',
   rdsMultiAz: true,
   redisNodeType: 'cache.t4g.small',
   natGateways: 2,

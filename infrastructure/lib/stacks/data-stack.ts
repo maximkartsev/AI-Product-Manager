@@ -53,7 +53,7 @@ export class DataStack extends cdk.Stack {
       engine: rds.DatabaseInstanceEngine.mariaDb({
         version: rds.MariaDbEngineVersion.VER_10_11,
       }),
-      instanceType: new ec2.InstanceType(config.rdsInstanceClass ?? 'db.t4g.small'),
+      instanceType: new ec2.InstanceType((config.rdsInstanceClass ?? 't4g.small').replace(/^db\./, '')),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [sgRds],

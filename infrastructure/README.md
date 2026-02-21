@@ -156,7 +156,7 @@ aws secretsmanager put-secret-value \
 
 | Parameter | Staging | Production |
 |-----------|---------|------------|
-| `rdsInstanceClass` | db.t4g.small | db.t4g.medium |
+| `rdsInstanceClass` | t4g.small | t4g.medium |
 | `rdsMultiAz` | false | true |
 | `redisNodeType` | cache.t4g.micro | cache.t4g.small |
 | `natGateways` | 1 | 2 |

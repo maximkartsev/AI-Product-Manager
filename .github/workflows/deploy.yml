@@ -41,6 +41,17 @@ on:
           - backend
           - frontend
           - none
+      run_tests:
+        description: 'Which test suites to run'
+        required: true
+        type: choice
+        default: auto
+        options:
+          - auto
+          - all
+          - backend
+          - frontend
+          - none
 
 permissions:
   id-token: write
@@ -79,7 +90,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Skip backend tests
+        if: inputs.run_tests == 'none' || inputs.run_tests == 'frontend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'frontend' || inputs.build_images == 'none'))
+        run: echo "Skipping backend tests (run_tests=${{ inputs.run_tests }}, build_images=${{ inputs.build_images }})"
+
       - name: Setup PHP
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'backend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'backend'))
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
@@ -87,10 +103,12 @@ jobs:
           coverage: none
 
       - name: Install Composer dependencies
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'backend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'backend'))
         working-directory: backend
         run: composer install --no-interaction --prefer-dist
 
       - name: Prepare environment
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'backend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'backend'))
         working-directory: backend
         run: |
           cp .env.example .env
@@ -98,6 +116,7 @@ jobs:
           php artisan config:clear
 
       - name: Run migrations
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'backend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'backend'))
         working-directory: backend
         env:
           DB_CONNECTION: mysql
@@ -109,6 +128,7 @@ jobs:
         run: php artisan migrate --force
 
       - name: Run tests
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'backend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'backend'))
         working-directory: backend
         env:
           DB_CONNECTION: mysql
@@ -128,21 +148,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Skip frontend tests
+        if: inputs.run_tests == 'none' || inputs.run_tests == 'backend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'backend' || inputs.build_images == 'none'))
+        run: echo "Skipping frontend tests (run_tests=${{ inputs.run_tests }}, build_images=${{ inputs.build_images }})"
+
       - name: Setup Node.js
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'frontend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'frontend'))
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install pnpm
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'frontend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'frontend'))
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
       - name: Install dependencies
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'frontend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'frontend'))
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
       - name: Build
+        if: inputs.run_tests == 'all' || inputs.run_tests == 'frontend' || (inputs.run_tests == 'auto' && (inputs.build_images == 'all' || inputs.build_images == 'frontend'))
         working-directory: frontend
         run: pnpm build
 

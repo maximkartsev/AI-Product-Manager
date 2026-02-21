@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import EffectTextarea from "@/components/effects/EffectTextarea";
 import {
   Select,
   SelectContent,
@@ -147,7 +147,7 @@ export default function EffectConfigFields({
             {positiveProp?.description ? (
               <div className="mt-1 text-[11px] text-white/45">{positiveProp.description}</div>
             ) : null}
-            <Textarea
+            <EffectTextarea
               value={typeof value.positive_prompt === "string" ? value.positive_prompt : ""}
               onChange={(event) => updateValue("positive_prompt", event.target.value)}
               placeholder={positiveProp?.default_value || "Enter value..."}
@@ -161,7 +161,7 @@ export default function EffectConfigFields({
             {negativeProp?.description ? (
               <div className="mt-1 text-[11px] text-white/45">{negativeProp.description}</div>
             ) : null}
-            <Textarea
+            <EffectTextarea
               value={typeof value.negative_prompt === "string" ? value.negative_prompt : ""}
               onChange={(event) => updateValue("negative_prompt", event.target.value)}
               placeholder={negativeProp?.default_value || "Enter value..."}
@@ -185,7 +185,7 @@ export default function EffectConfigFields({
                 <div className="mt-1 text-[11px] text-white/45">{prop.description}</div>
               ) : null}
               {prop.key.endsWith("_prompt") ? (
-                <Textarea
+                <EffectTextarea
                   value={typeof value[prop.key] === "string" ? (value[prop.key] as string) : ""}
                   onChange={(event) => updateValue(prop.key, event.target.value)}
                   placeholder={prop.default_value || "Enter value..."}

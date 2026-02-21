@@ -16,3 +16,15 @@ test("configurable effect allows spaces in prompts", async ({ page }) => {
   await prompt.fill("hello world");
   await expect(prompt).toHaveValue("hello world");
 });
+
+test("effect textarea shows custom scrollbar when content overflows", async ({ page }) => {
+  await page.goto("/effects/bunny-character");
+
+  const prompt = page.locator("textarea").first();
+  await expect(prompt).toBeVisible();
+
+  await prompt.fill("line\n".repeat(80));
+
+  const track = page.locator('[data-testid="effect-textarea-scroll-track"]');
+  await expect(track).toBeVisible();
+});

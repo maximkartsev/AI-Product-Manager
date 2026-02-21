@@ -15,7 +15,7 @@ import {
   deleteAdminEffect,
   getAdminEffects,
   getAdminWorkflows,
-  initEffectAssetUpload,
+  initAdminEffectUpload,
   updateAdminEffect,
   type AdminEffect,
   type AdminEffectPayload,
@@ -111,7 +111,7 @@ function UploadField({
     setError(null);
 
     try {
-      const init = await initEffectAssetUpload({
+      const init = await initAdminEffectUpload({
         kind,
         mime_type: file.type || "application/octet-stream",
         size: file.size,

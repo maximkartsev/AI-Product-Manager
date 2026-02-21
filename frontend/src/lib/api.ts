@@ -1073,7 +1073,7 @@ export function deleteAdminCategory(id: number): Promise<void> {
   return apiRequest<void>(`/admin/categories/${id}`, { method: "DELETE" });
 }
 
-export function initEffectAssetUpload(payload: EffectUploadInitRequest): Promise<EffectUploadInitData> {
+export function initAdminEffectUpload(payload: EffectUploadInitRequest): Promise<EffectUploadInitData> {
   return apiPost<EffectUploadInitData>("/admin/effects/uploads", payload);
 }
 

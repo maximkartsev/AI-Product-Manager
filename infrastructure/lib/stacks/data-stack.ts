@@ -153,12 +153,37 @@ export class DataStack extends cdk.Stack {
     });
 
     // ========================================
+    // S3 Access Logs Bucket (server access logs destination)
+    // ========================================
+
+    const accessLogsBucket = new s3.Bucket(this, 'AccessLogsBucket', {
+      bucketName: `bp-access-logs-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      lifecycleRules: [
+        {
+          transitions: [
+            { storageClass: s3.StorageClass.INFREQUENT_ACCESS, transitionAfter: cdk.Duration.days(30) },
+          ],
+          expiration: cdk.Duration.days(90),
+        },
+      ],
+      removalPolicy: stage === 'production'
+        ? cdk.RemovalPolicy.RETAIN
+        : cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: stage !== 'production',
+    });
+
+    // ========================================
     // S3 ComfyUI Models Bucket (model/LoRA/VAE assets)
     // ========================================
 
     this.modelsBucket = new s3.Bucket(this, 'ModelsBucket', {
       bucketName: `bp-models-${cdk.Aws.ACCOUNT_ID}-${stage}`,
       encryption: s3.BucketEncryption.S3_MANAGED,
+      serverAccessLogsBucket: accessLogsBucket,
+      serverAccessLogsPrefix: 's3-access-logs/models/',
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
       versioned: true,
@@ -286,6 +311,9 @@ export class DataStack extends cdk.Stack {
     ]);
     NagSuppressions.addResourceSuppressions(this.mediaBucket, [
       { id: 'AwsSolutions-S1', reason: 'Access logs go to separate logs bucket via CloudFront' },
+    ]);
+    NagSuppressions.addResourceSuppressions(accessLogsBucket, [
+      { id: 'AwsSolutions-S1', reason: 'This is the access logs bucket (no recursive logging)' },
     ]);
     NagSuppressions.addResourceSuppressions(logsBucket, [
       { id: 'AwsSolutions-S1', reason: 'This IS the logs bucket, no recursive logging' },

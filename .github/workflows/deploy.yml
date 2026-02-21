@@ -1,19 +1,40 @@
 name: Deploy
 
+run-name: Deploy (${{ inputs.stage }}) by @${{ github.actor }}
+
 on:
   workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Stage to deploy'
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      aws_region:
+        description: 'AWS region'
+        required: true
+        type: choice
+        default: us-east-1
+        options:
+          - us-east-1
+          - us-west-2
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  AWS_REGION: us-east-1
-  ECR_BACKEND_REPO: bp-backend-staging
-  ECR_FRONTEND_REPO: bp-frontend-staging
-  ECS_CLUSTER: bp-staging
-  ECS_BACKEND_SERVICE: bp-staging-backend
-  ECS_FRONTEND_SERVICE: bp-staging-frontend
+  AWS_REGION: ${{ inputs.aws_region }}
+  STAGE: ${{ inputs.stage }}
+  ECR_BACKEND_REPO: bp-backend-${{ inputs.stage }}
+  ECR_FRONTEND_REPO: bp-frontend-${{ inputs.stage }}
+  ECS_CLUSTER: bp-${{ inputs.stage }}
+  ECS_BACKEND_SERVICE: bp-${{ inputs.stage }}-backend
+  ECS_FRONTEND_SERVICE: bp-${{ inputs.stage }}-frontend
+  ECS_BACKEND_TASK_DEFINITION: bp-${{ inputs.stage }}-backend
 
 jobs:
   # ==========================================
@@ -41,7 +62,7 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
+          php-version: '8.4'
           extensions: pdo_mysql, mbstring, bcmath, gd, zip, redis, pcntl
           coverage: none
 
@@ -90,7 +111,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -118,7 +139,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          # For production (separate AWS account), require AWS_DEPLOY_ROLE_ARN_PRODUCTION.
+          # For staging, prefer AWS_DEPLOY_ROLE_ARN_STAGING, fallback to legacy AWS_DEPLOY_ROLE_ARN.
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
@@ -173,19 +196,19 @@ jobs:
   # ==========================================
   # Job 4: Deploy Infrastructure (manual gate)
   # ==========================================
-  deploy-infrastructure:
-    name: Deploy Infrastructure
+  deploy-infrastructure-staging:
+    name: Deploy Infrastructure (staging)
     runs-on: ubuntu-latest
     needs: [build-and-push]
-    if: github.event_name == 'workflow_dispatch'
     environment: staging-infra
+    if: inputs.stage == 'staging'
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install CDK dependencies
         working-directory: infrastructure
@@ -194,16 +217,48 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: CDK diff
         working-directory: infrastructure
-        run: npx cdk diff --all
+        run: npx cdk diff --context stage=${{ env.STAGE }} --all
 
       - name: CDK deploy
         working-directory: infrastructure
-        run: npx cdk deploy --all --require-approval never
+        run: npx cdk deploy --context stage=${{ env.STAGE }} --all --require-approval never
+
+  deploy-infrastructure-production:
+    name: Deploy Infrastructure (production)
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    environment: production-infra
+    if: inputs.stage == 'production'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK diff
+        working-directory: infrastructure
+        run: npx cdk diff --context stage=${{ env.STAGE }} --all
+
+      - name: CDK deploy
+        working-directory: infrastructure
+        run: npx cdk deploy --context stage=${{ env.STAGE }} --all --require-approval never
 
   # ==========================================
   # Job 5: Deploy ECS Services
@@ -216,7 +271,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy backend service
@@ -248,24 +303,24 @@ jobs:
   # ==========================================
   # Job 6: Run Migrations (manual gate)
   # ==========================================
-  run-migrations:
-    name: Run Migrations
+  run-migrations-staging:
+    name: Run Migrations (staging)
     runs-on: ubuntu-latest
     needs: [deploy-services]
-    if: github.event_name == 'workflow_dispatch'
     environment: staging-migrations
+    if: inputs.stage == 'staging'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Run central migrations
         run: |
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --task-definition bp-staging-backend \
+            --task-definition ${{ env.ECS_BACKEND_TASK_DEFINITION }} \
             --overrides '{
               "containerOverrides": [{
                 "name": "php-fpm",
@@ -287,7 +342,64 @@ jobs:
         run: |
           TASK_ARN=$(aws ecs run-task \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --task-definition bp-staging-backend \
+            --task-definition ${{ env.ECS_BACKEND_TASK_DEFINITION }} \
+            --overrides '{
+              "containerOverrides": [{
+                "name": "php-fpm",
+                "command": ["php", "artisan", "tenancy:pools-migrate", "--force"]
+              }]
+            }' \
+            --launch-type FARGATE \
+            --network-configuration '{
+              "awsvpcConfiguration": {
+                "subnets": ${{ secrets.PRIVATE_SUBNET_IDS }},
+                "securityGroups": ["${{ secrets.BACKEND_SG_ID }}"]
+              }
+            }' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Tenant migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks "$TASK_ARN"
+
+  run-migrations-production:
+    name: Run Migrations (production)
+    runs-on: ubuntu-latest
+    needs: [deploy-services]
+    environment: production-migrations
+    if: inputs.stage == 'production'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run central migrations
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_BACKEND_TASK_DEFINITION }} \
+            --overrides '{
+              "containerOverrides": [{
+                "name": "php-fpm",
+                "command": ["php", "artisan", "migrate", "--force"]
+              }]
+            }' \
+            --launch-type FARGATE \
+            --network-configuration '{
+              "awsvpcConfiguration": {
+                "subnets": ${{ secrets.PRIVATE_SUBNET_IDS }},
+                "securityGroups": ["${{ secrets.BACKEND_SG_ID }}"]
+              }
+            }' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }} --tasks "$TASK_ARN"
+
+      - name: Run tenant pool migrations
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_BACKEND_TASK_DEFINITION }} \
             --overrides '{
               "containerOverrides": [{
                 "name": "php-fpm",

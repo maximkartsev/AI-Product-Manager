@@ -1,0 +1,124 @@
+name: DB Seed
+
+run-name: DB Seed (${{ inputs.stage }}) by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Stage to seed'
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+      aws_region:
+        description: 'AWS region'
+        required: true
+        type: choice
+        default: us-east-1
+        options:
+          - us-east-1
+          - us-west-2
+      seed_class:
+        description: 'Optional seeder class (e.g. UsersSeeder or Database\\Seeders\\UsersSeeder). Leave blank to run DatabaseSeeder.'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ inputs.aws_region }}
+  STAGE: ${{ inputs.stage }}
+  ECS_CLUSTER: bp-${{ inputs.stage }}
+  ECS_BACKEND_TASK_DEFINITION: bp-${{ inputs.stage }}-backend
+
+jobs:
+  db-seed-staging:
+    name: DB Seed (staging)
+    runs-on: ubuntu-latest
+    environment: staging-migrations
+    if: inputs.stage == 'staging'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run db seed task (ECS one-off)
+        shell: bash
+        env:
+          SEED_CLASS: ${{ inputs.seed_class }}
+        run: |
+          set -euo pipefail
+
+          OVERRIDES=$(python3 - <<'PY'
+          import json, os, re, sys
+
+          seed_class = (os.environ.get("SEED_CLASS") or "").strip()
+          if seed_class and not re.match(r'^[A-Za-z0-9_\\\\]+$', seed_class):
+              print("seed_class must be a PHP class name (letters/numbers/_/\\\\ only).", file=sys.stderr)
+              sys.exit(1)
+
+          cmd = ["php", "artisan", "db:seed", "--force"]
+          if seed_class:
+              cmd.append(f"--class={seed_class}")
+
+          print(json.dumps({
+              "containerOverrides": [{
+                  "name": "php-fpm",
+                  "command": cmd,
+              }],
+          }))
+          PY
+          )
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${ECS_CLUSTER}" \
+            --task-definition "${ECS_BACKEND_TASK_DEFINITION}" \
+            --overrides "${OVERRIDES}" \
+            --launch-type FARGATE \
+            --network-configuration '{
+              "awsvpcConfiguration": {
+                "subnets": ${{ secrets.PRIVATE_SUBNET_IDS }},
+                "securityGroups": ["${{ secrets.BACKEND_SG_ID }}"]
+              }
+            }' \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Seed task: ${TASK_ARN}"
+          aws ecs wait tasks-stopped --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "${ECS_CLUSTER}" \
+            --tasks "${TASK_ARN}" \
+            --query "tasks[0].containers[?name=='php-fpm'].exitCode | [0]" \
+            --output text)
+
+          STOPPED_REASON=$(aws ecs describe-tasks \
+            --cluster "${ECS_CLUSTER}" \
+            --tasks "${TASK_ARN}" \
+            --query "tasks[0].stoppedReason" \
+            --output text)
+
+          echo "php-fpm exit code: ${EXIT_CODE}"
+          echo "Stopped reason: ${STOPPED_REASON}"
+
+          {
+            echo "## DB seed"
+            echo ""
+            echo "- **Stage:** ${STAGE}"
+            echo "- **Region:** ${AWS_REGION}"
+            echo "- **Task ARN:** ${TASK_ARN}"
+            echo "- **php-fpm exit code:** ${EXIT_CODE}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${EXIT_CODE}" != "0" ]]; then
+            echo "db:seed failed (exit code ${EXIT_CODE})." >&2
+            exit 1
+          fi
+

@@ -202,7 +202,7 @@ export class ComputeStack extends cdk.Stack {
       portMappings: [{ containerPort: 80, protocol: ecs.Protocol.TCP }],
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'nginx', logGroup: backendLogGroup }),
       healthCheck: {
-        command: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost/up || exit 1'],
+        command: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/up || exit 1'],
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
         retries: 3,
@@ -356,11 +356,16 @@ export class ComputeStack extends cdk.Stack {
       },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'nextjs', logGroup: frontendLogGroup }),
       healthCheck: {
-        command: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:3000/ || exit 1'],
+        command: [
+          'CMD',
+          'node',
+          '-e',
+          'const os=require("os");const http=require("http");const nets=os.networkInterfaces();const addrs=Object.values(nets).flat().filter(n=>n&&n.family==="IPv4"&&!n.internal&&!n.address.startsWith("169.254."));const ip=(addrs.find(n=>n.address.startsWith("10."))||addrs[0])?.address;if(!ip){process.exit(1);}const req=http.get("http://"+ip+":3000/",res=>{process.exit(res.statusCode&&res.statusCode<400?0:1);});req.on("error",()=>process.exit(1));req.setTimeout(2000,()=>{req.destroy();process.exit(1);});',
+        ],
         interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(5),
+        timeout: cdk.Duration.seconds(10),
         retries: 3,
-        startPeriod: cdk.Duration.seconds(30),
+        startPeriod: cdk.Duration.seconds(60),
       },
     });
 
@@ -373,6 +378,7 @@ export class ComputeStack extends cdk.Stack {
       cluster,
       taskDefinition: frontendTaskDef,
       desiredCount: 1,
+      healthCheckGracePeriod: cdk.Duration.seconds(120),
       securityGroups: [sgFrontend],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       capacityProviderStrategies: [
@@ -397,6 +403,8 @@ export class ComputeStack extends cdk.Stack {
       healthCheck: {
         path: '/',
         interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(10),
+        healthyHttpCodes: '200-399',
         healthyThresholdCount: 2,
         unhealthyThresholdCount: 3,
       },

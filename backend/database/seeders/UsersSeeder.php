@@ -28,7 +28,7 @@ class UsersSeeder extends Seeder
         foreach ($usersData as $input) {
             $user = User::query()->where('email', $input['email'])->first();
             if (!$user) {
-                $user = User::factory()->create($input);
+                $user = User::query()->create($input);
             }
 
             if (array_key_exists('is_admin', $input) && (bool) $user->is_admin !== (bool) $input['is_admin']) {

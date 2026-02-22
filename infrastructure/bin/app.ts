@@ -81,6 +81,7 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
   assetOpsSecret: data.assetOpsSecret,
   redisEndpoint: data.redisEndpoint,
   mediaBucket: data.mediaBucket,
+  mediaCdnDomain: data.mediaCdnDomain,
   modelsBucket: data.modelsBucket,
   logsBucket: data.logsBucket,
   description: 'ECS Fargate cluster, ALB, backend + frontend services',

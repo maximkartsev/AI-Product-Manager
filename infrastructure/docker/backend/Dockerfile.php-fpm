@@ -35,8 +35,12 @@ RUN echo "opcache.enable=1" >> /usr/local/etc/php/conf.d/opcache.ini \
     && echo "opcache.validate_timestamps=0" >> /usr/local/etc/php/conf.d/opcache.ini
 
 # PHP-FPM pool configuration
-RUN echo "[www]" > /usr/local/etc/php-fpm.d/zz-docker.conf \
-    && echo "listen = 9000" >> /usr/local/etc/php-fpm.d/zz-docker.conf \
+RUN rm -f /usr/local/etc/php-fpm.d/www.conf \
+    && echo "[global]" > /usr/local/etc/php-fpm.d/zz-docker.conf \
+    && echo "daemonize = no" >> /usr/local/etc/php-fpm.d/zz-docker.conf \
+    && echo "" >> /usr/local/etc/php-fpm.d/zz-docker.conf \
+    && echo "[www]" >> /usr/local/etc/php-fpm.d/zz-docker.conf \
+    && echo "listen = 127.0.0.1:9000" >> /usr/local/etc/php-fpm.d/zz-docker.conf \
     && echo "pm = dynamic" >> /usr/local/etc/php-fpm.d/zz-docker.conf \
     && echo "pm.max_children = 20" >> /usr/local/etc/php-fpm.d/zz-docker.conf \
     && echo "pm.start_servers = 4" >> /usr/local/etc/php-fpm.d/zz-docker.conf \

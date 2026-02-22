@@ -51,6 +51,16 @@ on:
         required: true
         type: boolean
         default: true
+      domain_name:
+        description: 'Optional: custom domain (e.g. dzzzs.com)'
+        required: false
+        type: string
+        default: ''
+      certificate_arn:
+        description: 'Optional: ACM certificate ARN (same region as ALB)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   id-token: write
@@ -122,13 +132,44 @@ jobs:
             echo "- **Stacks:** ${stacks[*]}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build CDK context args
+        shell: bash
+        env:
+          DOMAIN_NAME: ${{ inputs.domain_name }}
+          CERTIFICATE_ARN: ${{ inputs.certificate_arn }}
+        run: |
+          set -euo pipefail
+
+          context_args="--context stage=${STAGE}"
+          if [[ -n "${DOMAIN_NAME}" || -n "${CERTIFICATE_ARN}" ]]; then
+            if [[ -z "${DOMAIN_NAME}" || -z "${CERTIFICATE_ARN}" ]]; then
+              echo "Both domain_name and certificate_arn are required when enabling HTTPS." >&2
+              exit 1
+            fi
+            if [[ "${DOMAIN_NAME}" == http://* || "${DOMAIN_NAME}" == https://* ]]; then
+              echo "domain_name must be a hostname only (no http/https)." >&2
+              exit 1
+            fi
+            if [[ "${CERTIFICATE_ARN}" != *":${AWS_REGION}:"* ]]; then
+              echo "certificate_arn must be in the same region as the deploy (${AWS_REGION})." >&2
+              exit 1
+            fi
+            context_args="${context_args} --context domainName=${DOMAIN_NAME} --context certificateArn=${CERTIFICATE_ARN}"
+            echo "Custom domain: enabled" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Domain:** ${DOMAIN_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Custom domain: not set" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "CDK_CONTEXT_ARGS=${context_args}" >> "$GITHUB_ENV"
+
       - name: CDK diff
         working-directory: infrastructure
-        run: npx cdk diff --context stage=${STAGE} $CDK_STACKS
+        run: npx cdk diff $CDK_CONTEXT_ARGS $CDK_STACKS
 
       - name: CDK deploy
         working-directory: infrastructure
-        run: npx cdk deploy --context stage=${STAGE} $CDK_STACKS --require-approval never
+        run: npx cdk deploy $CDK_CONTEXT_ARGS $CDK_STACKS --require-approval never
 
   deploy-infra-production:
     name: Deploy Infrastructure (production)
@@ -191,11 +232,42 @@ jobs:
             echo "- **Stacks:** ${stacks[*]}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build CDK context args
+        shell: bash
+        env:
+          DOMAIN_NAME: ${{ inputs.domain_name }}
+          CERTIFICATE_ARN: ${{ inputs.certificate_arn }}
+        run: |
+          set -euo pipefail
+
+          context_args="--context stage=${STAGE}"
+          if [[ -n "${DOMAIN_NAME}" || -n "${CERTIFICATE_ARN}" ]]; then
+            if [[ -z "${DOMAIN_NAME}" || -z "${CERTIFICATE_ARN}" ]]; then
+              echo "Both domain_name and certificate_arn are required when enabling HTTPS." >&2
+              exit 1
+            fi
+            if [[ "${DOMAIN_NAME}" == http://* || "${DOMAIN_NAME}" == https://* ]]; then
+              echo "domain_name must be a hostname only (no http/https)." >&2
+              exit 1
+            fi
+            if [[ "${CERTIFICATE_ARN}" != *":${AWS_REGION}:"* ]]; then
+              echo "certificate_arn must be in the same region as the deploy (${AWS_REGION})." >&2
+              exit 1
+            fi
+            context_args="${context_args} --context domainName=${DOMAIN_NAME} --context certificateArn=${CERTIFICATE_ARN}"
+            echo "Custom domain: enabled" >> "$GITHUB_STEP_SUMMARY"
+            echo "- **Domain:** ${DOMAIN_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Custom domain: not set" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "CDK_CONTEXT_ARGS=${context_args}" >> "$GITHUB_ENV"
+
       - name: CDK diff
         working-directory: infrastructure
-        run: npx cdk diff --context stage=${STAGE} $CDK_STACKS
+        run: npx cdk diff $CDK_CONTEXT_ARGS $CDK_STACKS
 
       - name: CDK deploy
         working-directory: infrastructure
-        run: npx cdk deploy --context stage=${STAGE} $CDK_STACKS --require-approval never
+        run: npx cdk deploy $CDK_CONTEXT_ARGS $CDK_STACKS --require-approval never
 

@@ -53,8 +53,70 @@ jobs:
         shell: bash
         env:
           SEED_CLASS: ${{ inputs.seed_class }}
+          PRIVATE_SUBNET_IDS: ${{ secrets.PRIVATE_SUBNET_IDS }}
+          BACKEND_SG_ID: ${{ secrets.BACKEND_SG_ID }}
         run: |
           set -euo pipefail
+
+          # Network config for awsvpc tasks (required for Fargate run-task).
+          # Prefer environment secrets (staging-migrations), but fall back to the running ECS service config.
+          SERVICE_NAME="bp-${STAGE}-backend"
+
+          if [[ -z "${PRIVATE_SUBNET_IDS:-}" ]]; then
+            PRIVATE_SUBNET_IDS=$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${SERVICE_NAME}" \
+              --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' \
+              --output json)
+            echo "PRIVATE_SUBNET_IDS not set; derived from ECS service ${SERVICE_NAME}."
+          fi
+
+          if [[ -z "${BACKEND_SG_ID:-}" ]]; then
+            BACKEND_SG_ID=$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${SERVICE_NAME}" \
+              --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]' \
+              --output text)
+            echo "BACKEND_SG_ID not set; derived from ECS service ${SERVICE_NAME}."
+          fi
+
+          if [[ -z "${BACKEND_SG_ID:-}" || "${BACKEND_SG_ID}" == "None" ]]; then
+            echo "Missing BACKEND_SG_ID. Set GitHub Environment secret staging-migrations/BACKEND_SG_ID to an sg-... value." >&2
+            exit 1
+          fi
+
+          NETWORK_CONFIGURATION=$(python3 - <<'PY'
+          import json, os, sys
+
+          subnets_raw = (os.environ.get("PRIVATE_SUBNET_IDS") or "").strip()
+          sg_id = (os.environ.get("BACKEND_SG_ID") or "").strip()
+
+          if not subnets_raw:
+              print('Missing PRIVATE_SUBNET_IDS. Set GitHub Environment secret staging-migrations/PRIVATE_SUBNET_IDS to JSON array like ["subnet-...","subnet-..."].', file=sys.stderr)
+              sys.exit(1)
+
+          try:
+              subnets = json.loads(subnets_raw)
+          except Exception:
+              print('PRIVATE_SUBNET_IDS must be valid JSON array like ["subnet-...","subnet-..."].', file=sys.stderr)
+              sys.exit(1)
+
+          if not isinstance(subnets, list) or not subnets or not all(isinstance(s, str) and s for s in subnets):
+              print('PRIVATE_SUBNET_IDS must be a non-empty JSON array of subnet ids.', file=sys.stderr)
+              sys.exit(1)
+
+          if not sg_id or sg_id == "None":
+              print("Missing BACKEND_SG_ID (sg-...).", file=sys.stderr)
+              sys.exit(1)
+
+          print(json.dumps({
+              "awsvpcConfiguration": {
+                  "subnets": subnets,
+                  "securityGroups": [sg_id],
+              }
+          }))
+          PY
+          )
 
           OVERRIDES=$(python3 - <<'PY'
           import json, os, re, sys
@@ -82,12 +144,7 @@ jobs:
             --task-definition "${ECS_BACKEND_TASK_DEFINITION}" \
             --overrides "${OVERRIDES}" \
             --launch-type FARGATE \
-            --network-configuration '{
-              "awsvpcConfiguration": {
-                "subnets": ${{ secrets.PRIVATE_SUBNET_IDS }},
-                "securityGroups": ["${{ secrets.BACKEND_SG_ID }}"]
-              }
-            }' \
+            --network-configuration "${NETWORK_CONFIGURATION}" \
             --query 'tasks[0].taskArn' --output text)
 
           echo "Seed task: ${TASK_ARN}"

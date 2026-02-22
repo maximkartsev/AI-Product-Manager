@@ -22,9 +22,11 @@ class ComfyUiAssetsController extends BaseController
 {
     private const ASSET_KIND_PATHS = [
         'checkpoint' => 'models/checkpoints',
+        'diffusion_model' => 'models/diffusion_models',
         'lora' => 'models/loras',
         'vae' => 'models/vae',
         'embedding' => 'models/embeddings',
+        'text_encoder' => 'models/text_encoders',
         'controlnet' => 'models/controlnet',
         'custom_node' => 'custom_nodes',
         'other' => 'models/other',

@@ -20,9 +20,11 @@ import {
 
 const ASSET_KIND_OPTIONS = [
   { value: "checkpoint", label: "Checkpoint" },
+  { value: "diffusion_model", label: "Diffusion Model" },
   { value: "lora", label: "LoRA" },
   { value: "vae", label: "VAE" },
   { value: "embedding", label: "Embedding" },
+  { value: "text_encoder", label: "Text Encoder" },
   { value: "controlnet", label: "ControlNet" },
   { value: "custom_node", label: "Custom Node" },
   { value: "other", label: "Other" },

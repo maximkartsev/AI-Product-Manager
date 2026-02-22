@@ -126,6 +126,40 @@ class AdminComfyUiAssetsTest extends TestCase
         $this->assertFalse((bool) $response->json('data.already_exists'));
     }
 
+    public function test_assets_upload_init_accepts_text_encoder_kind(): void
+    {
+        $sha256 = str_repeat('c', 64);
+        $response = $this->adminPost('/api/admin/comfyui-assets/uploads', [
+            'kind' => 'text_encoder',
+            'mime_type' => 'application/octet-stream',
+            'size_bytes' => 1024,
+            'original_filename' => 'text-encoder.safetensors',
+            'sha256' => $sha256,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $this->assertSame("assets/text_encoder/{$sha256}", $response->json('data.path'));
+    }
+
+    public function test_assets_upload_init_accepts_diffusion_model_kind(): void
+    {
+        $sha256 = str_repeat('d', 64);
+        $response = $this->adminPost('/api/admin/comfyui-assets/uploads', [
+            'kind' => 'diffusion_model',
+            'mime_type' => 'application/octet-stream',
+            'size_bytes' => 1024,
+            'original_filename' => 'diffusion-model.safetensors',
+            'sha256' => $sha256,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $this->assertSame("assets/diffusion_model/{$sha256}", $response->json('data.path'));
+    }
+
     public function test_assets_files_store_creates_asset_record(): void
     {
         $sha256 = str_repeat('b', 64);

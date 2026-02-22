@@ -84,6 +84,23 @@ export class ComputeStack extends cdk.Stack {
     // HTTP -> HTTPS redirect (or HTTP listener if no cert)
     const hasCert = !!config.certificateArn;
 
+    // Always create a single port-80 listener (stable logical ID).
+    // When HTTPS is enabled, it redirects to 443. Otherwise, it serves the app over HTTP.
+    const httpListener = alb.addListener('Http', {
+      port: 80,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      defaultAction: hasCert
+        ? elbv2.ListenerAction.redirect({
+          protocol: 'HTTPS',
+          port: '443',
+          permanent: true,
+        })
+        : elbv2.ListenerAction.fixedResponse(404, {
+          contentType: 'text/plain',
+          messageBody: 'Not Found',
+        }),
+    });
+
     if (hasCert) {
       // HTTPS listener
       const httpsListener = alb.addListener('Https', {
@@ -98,29 +115,9 @@ export class ComputeStack extends cdk.Stack {
         }),
       });
 
-      // HTTP redirect to HTTPS
-      alb.addListener('HttpRedirect', {
-        port: 80,
-        defaultAction: elbv2.ListenerAction.redirect({
-          protocol: 'HTTPS',
-          port: '443',
-          permanent: true,
-        }),
-      });
-
       this.apiBaseUrl = `https://${config.domainName}`;
       this.setupTargetGroups(httpsListener, cluster, config, vpc, sgBackend, sgFrontend, dbSecret, redisSecret, redisEndpoint, mediaBucket);
     } else {
-      // HTTP-only listener (no cert yet)
-      const httpListener = alb.addListener('Http', {
-        port: 80,
-        protocol: elbv2.ApplicationProtocol.HTTP,
-        defaultAction: elbv2.ListenerAction.fixedResponse(404, {
-          contentType: 'text/plain',
-          messageBody: 'Not Found',
-        }),
-      });
-
       this.apiBaseUrl = `http://${alb.loadBalancerDnsName}`;
       this.setupTargetGroups(httpListener, cluster, config, vpc, sgBackend, sgFrontend, dbSecret, redisSecret, redisEndpoint, mediaBucket);
     }

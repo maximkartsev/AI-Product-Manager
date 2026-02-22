@@ -24,6 +24,7 @@ export class DataStack extends cdk.Stack {
   public readonly assetOpsSecret: secretsmanager.ISecret;
   public readonly redisEndpoint: string;
   public readonly mediaBucket: s3.IBucket;
+  public readonly mediaCdnDomain: string;
   public readonly modelsBucket: s3.IBucket;
   public readonly logsBucket: s3.IBucket;
   public readonly dbInstanceId: string;
@@ -249,6 +250,7 @@ export class DataStack extends cdk.Stack {
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
     });
+    this.mediaCdnDomain = distribution.distributionDomainName;
 
     // ========================================
     // Secrets for Laravel app

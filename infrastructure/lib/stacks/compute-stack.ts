@@ -23,6 +23,7 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly assetOpsSecret: secretsmanager.ISecret;
   readonly redisEndpoint: string;
   readonly mediaBucket: s3.IBucket;
+  readonly mediaCdnDomain: string;
   readonly modelsBucket: s3.IBucket;
   readonly logsBucket: s3.IBucket;
 }
@@ -39,6 +40,7 @@ export class ComputeStack extends cdk.Stack {
   private readonly appKeySecret: secretsmanager.ISecret;
   private readonly fleetSecretParam: ssm.IStringParameter;
   private readonly assetOpsSecret: secretsmanager.ISecret;
+  private readonly mediaCdnDomain: string;
   private readonly modelsBucket: s3.IBucket;
   private readonly logsBucket: s3.IBucket;
   private readonly logRetention: logs.RetentionDays;
@@ -46,7 +48,7 @@ export class ComputeStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
 
-    const { config, vpc, sgAlb, sgBackend, sgFrontend, dbSecret, redisSecret, assetOpsSecret, redisEndpoint, mediaBucket, modelsBucket, logsBucket } = props;
+    const { config, vpc, sgAlb, sgBackend, sgFrontend, dbSecret, redisSecret, assetOpsSecret, redisEndpoint, mediaBucket, mediaCdnDomain, modelsBucket, logsBucket } = props;
     const stage = config.stage;
     this.backendRepo = ecr.Repository.fromRepositoryName(this, 'BackendRepo', `bp-backend-${stage}`);
     this.frontendRepo = ecr.Repository.fromRepositoryName(this, 'FrontendRepo', `bp-frontend-${stage}`);
@@ -54,6 +56,7 @@ export class ComputeStack extends cdk.Stack {
     this.appKeySecret = secretsmanager.Secret.fromSecretNameV2(this, 'LaravelAppKey', `/bp/${stage}/laravel/app-key`);
     this.fleetSecretParam = ssm.StringParameter.fromStringParameterName(this, 'FleetSecret', `/bp/${stage}/fleet-secret`);
     this.assetOpsSecret = assetOpsSecret;
+    this.mediaCdnDomain = mediaCdnDomain;
     this.modelsBucket = modelsBucket;
     this.logsBucket = logsBucket;
 
@@ -228,6 +231,7 @@ export class ComputeStack extends cdk.Stack {
       QUEUE_CONNECTION: 'database',
       FILESYSTEM_DISK: 's3',
       AWS_DEFAULT_REGION: cdk.Aws.REGION,
+      AWS_URL: `https://${this.mediaCdnDomain}`,
       COMFYUI_AWS_REGION: cdk.Aws.REGION,
       AWS_BUCKET: mediaBucket.bucketName,
       COMFYUI_MODELS_BUCKET: this.modelsBucket.bucketName,

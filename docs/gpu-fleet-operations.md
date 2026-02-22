@@ -201,7 +201,8 @@ How to configure the role in AWS (outline):
         "StringLike": {
           "token.actions.githubusercontent.com:sub": [
             "repo:<ORG>/<REPO>:ref:refs/heads/main",
-            "repo:<ORG>/<REPO>:environment:staging-infra"
+            "repo:<ORG>/<REPO>:environment:staging-infra",
+            "repo:<ORG>/<REPO>:environment:staging-migrations"
           ]
         }
       }
@@ -281,7 +282,7 @@ Even if stacks deploy, the app may not function until these are set:
 
 You must run both:
 - Central migrations: `php artisan migrate --force`
-- Tenant pool migrations: `php artisan tenancy:pools-migrate --force`
+- Tenant pool migrations: `php artisan tenancy:pools-migrate`
 
 Recommended: run the GitHub Actions **Deploy → Run Migrations** job (it uses `aws ecs run-task`).
 
@@ -290,6 +291,14 @@ To use that job you must set these GitHub **Environment** secrets for `staging-m
 - `BACKEND_SG_ID`: the backend service security group id like `sg-...`
 
 Manual alternative (CLI) is possible but requires you to provide the same subnet + SG values to `aws ecs run-task`.
+
+##### 6) Database seeding (staging only, optional)
+
+To seed staging data:
+- Full seed: `php artisan db:seed --force` (runs `DatabaseSeeder`)
+- Single seeder: `php artisan db:seed --force --class=UsersSeeder` (or a fully-qualified class)
+
+Recommended: run the GitHub Actions **DB Seed** workflow (`.github/workflows/db-seed.yml`). It uses the same `staging-migrations` environment secrets as the migrations job.
 
 Check required SSM parameters:
 

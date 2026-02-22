@@ -339,7 +339,7 @@ jobs:
             --overrides '{
               "containerOverrides": [{
                 "name": "php-fpm",
-                "command": ["php", "artisan", "tenancy:pools-migrate", "--force"]
+                "command": ["php", "artisan", "tenancy:pools-migrate"]
               }]
             }' \
             --launch-type FARGATE \
@@ -396,7 +396,7 @@ jobs:
             --overrides '{
               "containerOverrides": [{
                 "name": "php-fpm",
-                "command": ["php", "artisan", "tenancy:pools-migrate", "--force"]
+                "command": ["php", "artisan", "tenancy:pools-migrate"]
               }]
             }' \
             --launch-type FARGATE \

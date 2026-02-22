@@ -196,6 +196,7 @@ export class DataStack extends cdk.Stack {
           allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.POST],
           allowedOrigins: ['*'],
           allowedHeaders: ['*'],
+          exposedHeaders: ['ETag'],
           maxAge: 3600,
         },
       ],

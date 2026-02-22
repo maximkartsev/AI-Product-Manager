@@ -9,13 +9,18 @@ import { useDataTable } from "@/hooks/useDataTable";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 import {
   createComfyUiAssetFile,
+  abortComfyUiAssetMultipartUpload,
+  completeComfyUiAssetMultipartUpload,
   deleteComfyUiAssetFile,
   getComfyUiAssetFiles,
   initComfyUiAssetUpload,
+  initComfyUiAssetMultipartUpload,
   updateComfyUiAssetFile,
   ApiError,
   type ComfyUiAssetFile,
@@ -72,12 +77,20 @@ function normalizeUploadHeaders(
   return normalized;
 }
 
+const HASH_CHUNK_SIZE = 8 * 1024 * 1024;
+const MULTIPART_THRESHOLD_BYTES = 5 * 1024 * 1024 * 1024;
+
 async function computeSha256(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const hasher = sha256.create();
+  let offset = 0;
+  while (offset < file.size) {
+    const end = Math.min(offset + HASH_CHUNK_SIZE, file.size);
+    const chunk = file.slice(offset, end);
+    const buffer = await chunk.arrayBuffer();
+    hasher.update(new Uint8Array(buffer));
+    offset = end;
+  }
+  return bytesToHex(hasher.digest());
 }
 
 function formatBytes(value?: number | null): string {
@@ -315,35 +328,86 @@ export default function AdminComfyUiAssetsPage() {
     const sha256 = await computeSha256(file);
     const kind = String(formState.kind || "checkpoint");
     const notes = formState.notes ? String(formState.notes).trim() || null : null;
+    const contentType = file.type || "application/octet-stream";
 
-    const init = await initComfyUiAssetUpload({
+    const initPayload = {
       kind,
-      mime_type: file.type || "application/octet-stream",
+      mime_type: contentType,
       size_bytes: file.size,
       original_filename: file.name,
       sha256,
       notes: notes || undefined,
-    });
+    };
 
-    if (init.already_exists) {
-      toast.info("Asset already exists; updating metadata.");
-    }
+    let multipartKey: string | null = null;
+    let multipartUploadId: string | null = null;
 
-    const headers = normalizeUploadHeaders(init.upload_headers, file.type || "application/octet-stream");
-    const uploadResponse = await fetch(init.upload_url, {
-      method: "PUT",
-      headers,
-      body: file,
-    });
+    try {
+      if (file.size > MULTIPART_THRESHOLD_BYTES) {
+        const init = await initComfyUiAssetMultipartUpload(initPayload);
+        if (init.already_exists) {
+          toast.info("Asset already exists; updating metadata.");
+        }
+        multipartKey = init.key;
+        multipartUploadId = init.upload_id;
 
-    if (!uploadResponse.ok) {
-      throw new Error(`Upload failed (${uploadResponse.status}).`);
+        const parts: Array<{ part_number: number; etag: string }> = [];
+        for (const part of init.part_urls) {
+          const start = (part.part_number - 1) * init.part_size;
+          const end = Math.min(start + init.part_size, file.size);
+          const chunk = file.slice(start, end);
+          const response = await fetch(part.url, {
+            method: "PUT",
+            headers: { "Content-Type": contentType },
+            body: chunk,
+          });
+          if (!response.ok) {
+            throw new Error(`Part ${part.part_number} upload failed (${response.status}).`);
+          }
+          const etag = response.headers.get("ETag");
+          if (!etag) {
+            throw new Error(`Missing ETag for part ${part.part_number}.`);
+          }
+          parts.push({ part_number: part.part_number, etag: etag.replace(/"/g, "") });
+        }
+
+        await completeComfyUiAssetMultipartUpload({
+          key: init.key,
+          upload_id: init.upload_id,
+          parts,
+        });
+      } else {
+        const init = await initComfyUiAssetUpload(initPayload);
+        if (init.already_exists) {
+          toast.info("Asset already exists; updating metadata.");
+        }
+
+        const headers = normalizeUploadHeaders(init.upload_headers, contentType);
+        const uploadResponse = await fetch(init.upload_url, {
+          method: "PUT",
+          headers,
+          body: file,
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error(`Upload failed (${uploadResponse.status}).`);
+        }
+      }
+    } catch (error) {
+      if (multipartKey && multipartUploadId) {
+        try {
+          await abortComfyUiAssetMultipartUpload({ key: multipartKey, upload_id: multipartUploadId });
+        } catch {
+          // ignore abort failures
+        }
+      }
+      throw error;
     }
 
     const payload: ComfyUiAssetFileCreateRequest = {
       kind,
       original_filename: file.name,
-      content_type: file.type || "application/octet-stream",
+      content_type: contentType,
       size_bytes: file.size,
       sha256,
       notes: notes || undefined,

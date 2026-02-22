@@ -20,6 +20,10 @@ use Illuminate\Support\Str;
 
 class ComfyUiAssetsController extends BaseController
 {
+    private const MULTIPART_MIN_PART_SIZE = 5 * 1024 * 1024;
+    private const MULTIPART_TARGET_PART_SIZE = 100 * 1024 * 1024;
+    private const MULTIPART_MAX_PARTS = 10000;
+
     private const ASSET_KIND_PATHS = [
         'checkpoint' => 'models/checkpoints',
         'diffusion_model' => 'models/diffusion_models',
@@ -103,6 +107,129 @@ class ComfyUiAssetsController extends BaseController
             'expires_in' => $ttlSeconds,
             'already_exists' => $alreadyExists,
         ], 'Upload initialized');
+    }
+
+    public function createMultipartUpload(Request $request, PresignedUrlService $presigned): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'kind' => 'string|required|in:' . implode(',', array_keys(self::ASSET_KIND_PATHS)),
+            'mime_type' => 'string|required|max:255',
+            'size_bytes' => 'integer|required|min:1',
+            'original_filename' => 'string|required|max:512',
+            'sha256' => 'string|required|max:128',
+            'notes' => 'string|nullable|max:2000',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $originalFilename = (string) $request->input('original_filename');
+        if ($this->hasUnsafePathChars($originalFilename)) {
+            return $this->sendError('Invalid filename.', [], 422);
+        }
+
+        $sizeBytes = (int) $request->input('size_bytes');
+        $sha256 = strtolower(trim((string) $request->input('sha256')));
+        $uploadPrefix = (string) config('services.comfyui.asset_upload_prefix', 'assets');
+        $key = sprintf('%s/%s/%s', $uploadPrefix, $request->input('kind'), $sha256);
+        $disk = (string) config('services.comfyui.models_disk', 'comfyui_models');
+        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+        $alreadyExists = ComfyUiAssetFile::query()
+            ->where('kind', $request->input('kind'))
+            ->where('sha256', $sha256)
+            ->exists();
+
+        $partSize = max(self::MULTIPART_MIN_PART_SIZE, self::MULTIPART_TARGET_PART_SIZE);
+        $partCount = (int) ceil($sizeBytes / $partSize);
+        if ($partCount > self::MULTIPART_MAX_PARTS) {
+            $partSize = (int) ceil($sizeBytes / self::MULTIPART_MAX_PARTS);
+            $partSize = max($partSize, self::MULTIPART_MIN_PART_SIZE);
+            $partCount = (int) ceil($sizeBytes / $partSize);
+        }
+        if ($partCount > self::MULTIPART_MAX_PARTS) {
+            return $this->sendError('File is too large for multipart upload.', [], 422);
+        }
+
+        try {
+            $uploadId = $presigned->createMultipartUpload(
+                $disk,
+                $key,
+                (string) $request->input('mime_type')
+            );
+            $partUrls = $presigned->createMultipartUploadPartUrls(
+                $disk,
+                $key,
+                $uploadId,
+                $partCount,
+                $ttlSeconds
+            );
+        } catch (\Throwable $e) {
+            return $this->sendError('Upload URL generation failed.', [], 500);
+        }
+
+        return $this->sendResponse([
+            'key' => $key,
+            'upload_id' => $uploadId,
+            'part_size' => $partSize,
+            'part_urls' => $partUrls,
+            'expires_in' => $ttlSeconds,
+            'already_exists' => $alreadyExists,
+        ], 'Multipart upload initialized');
+    }
+
+    public function completeMultipartUpload(Request $request, PresignedUrlService $presigned): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'upload_id' => 'string|required|max:255',
+            'key' => 'string|required|max:2048',
+            'parts' => 'array|required|min:1',
+            'parts.*.part_number' => 'integer|required|min:1',
+            'parts.*.etag' => 'string|required',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $disk = (string) config('services.comfyui.models_disk', 'comfyui_models');
+        $key = (string) $request->input('key');
+        $uploadId = (string) $request->input('upload_id');
+        $parts = (array) $request->input('parts');
+
+        try {
+            $presigned->completeMultipartUpload($disk, $key, $uploadId, $parts);
+        } catch (\Throwable $e) {
+            return $this->sendError('Multipart upload completion failed.', [], 500);
+        }
+
+        return $this->sendResponse([
+            'key' => $key,
+        ], 'Multipart upload completed');
+    }
+
+    public function abortMultipartUpload(Request $request, PresignedUrlService $presigned): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'upload_id' => 'string|required|max:255',
+            'key' => 'string|required|max:2048',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $disk = (string) config('services.comfyui.models_disk', 'comfyui_models');
+        $key = (string) $request->input('key');
+        $uploadId = (string) $request->input('upload_id');
+
+        try {
+            $presigned->abortMultipartUpload($disk, $key, $uploadId);
+        } catch (\Throwable $e) {
+            return $this->sendError('Multipart upload abort failed.', [], 500);
+        }
+
+        return $this->sendNoContent();
     }
 
     public function filesStore(Request $request, ComfyUiAssetAuditService $audit): JsonResponse

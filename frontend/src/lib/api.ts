@@ -1472,6 +1472,21 @@ export type ComfyUiAssetUploadInitData = {
   already_exists?: boolean;
 };
 
+export type ComfyUiAssetMultipartUploadInitData = {
+  key: string;
+  upload_id: string;
+  part_size: number;
+  part_urls: Array<{ part_number: number; url: string }>;
+  expires_in: number;
+  already_exists?: boolean;
+};
+
+export type ComfyUiAssetMultipartUploadCompleteRequest = {
+  key: string;
+  upload_id: string;
+  parts: Array<{ part_number: number; etag: string }>;
+};
+
 export type ComfyUiAssetFileCreateRequest = {
   kind: string;
   original_filename: string;
@@ -1522,6 +1537,22 @@ export type ComfyUiFleetActivateBundleRequest = {
 
 export function initComfyUiAssetUpload(payload: ComfyUiAssetUploadInitRequest): Promise<ComfyUiAssetUploadInitData> {
   return apiPost<ComfyUiAssetUploadInitData>("/admin/comfyui-assets/uploads", payload);
+}
+
+export function initComfyUiAssetMultipartUpload(
+  payload: ComfyUiAssetUploadInitRequest,
+): Promise<ComfyUiAssetMultipartUploadInitData> {
+  return apiPost<ComfyUiAssetMultipartUploadInitData>("/admin/comfyui-assets/uploads/multipart", payload);
+}
+
+export function completeComfyUiAssetMultipartUpload(
+  payload: ComfyUiAssetMultipartUploadCompleteRequest,
+): Promise<{ key: string }> {
+  return apiPost<{ key: string }>("/admin/comfyui-assets/uploads/multipart/complete", payload);
+}
+
+export function abortComfyUiAssetMultipartUpload(payload: { key: string; upload_id: string }): Promise<void> {
+  return apiPost<void>("/admin/comfyui-assets/uploads/multipart/abort", payload);
 }
 
 export function createComfyUiAssetFile(payload: ComfyUiAssetFileCreateRequest): Promise<ComfyUiAssetFile> {

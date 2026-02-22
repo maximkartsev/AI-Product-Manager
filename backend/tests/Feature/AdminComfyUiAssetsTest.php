@@ -21,6 +21,7 @@ class AdminComfyUiAssetsTest extends TestCase
 
     private User $adminUser;
     private Tenant $tenant;
+    private $presignedStub;
 
     protected function setUp(): void
     {
@@ -52,7 +53,11 @@ class AdminComfyUiAssetsTest extends TestCase
         Storage::fake('comfyui_models');
         config(['services.comfyui.models_disk' => 'comfyui_models']);
 
-        app()->instance(PresignedUrlService::class, new class extends PresignedUrlService {
+        $this->presignedStub = new class extends PresignedUrlService {
+            public array $multipartCreated = [];
+            public array $multipartCompleted = [];
+            public array $multipartAborted = [];
+
             public function downloadUrl(string $disk, string $path, int $ttlSeconds): string
             {
                 return 'https://example.com/download';
@@ -62,7 +67,46 @@ class AdminComfyUiAssetsTest extends TestCase
             {
                 return ['url' => 'https://example.com/upload', 'headers' => ['Content-Type' => $contentType]];
             }
-        });
+
+            public function createMultipartUpload(string $disk, string $key, ?string $contentType = null): string
+            {
+                $this->multipartCreated = [
+                    'disk' => $disk,
+                    'key' => $key,
+                    'content_type' => $contentType,
+                ];
+                return 'upload-123';
+            }
+
+            public function createMultipartUploadPartUrls(string $disk, string $key, string $uploadId, int $partCount, int $ttlSeconds): array
+            {
+                $urls = [];
+                for ($i = 1; $i <= $partCount; $i++) {
+                    $urls[] = ['part_number' => $i, 'url' => "https://example.com/upload/part-{$i}"];
+                }
+                return $urls;
+            }
+
+            public function completeMultipartUpload(string $disk, string $key, string $uploadId, array $parts): void
+            {
+                $this->multipartCompleted = [
+                    'disk' => $disk,
+                    'key' => $key,
+                    'upload_id' => $uploadId,
+                    'parts' => $parts,
+                ];
+            }
+
+            public function abortMultipartUpload(string $disk, string $key, string $uploadId): void
+            {
+                $this->multipartAborted = [
+                    'disk' => $disk,
+                    'key' => $key,
+                    'upload_id' => $uploadId,
+                ];
+            }
+        };
+        app()->instance(PresignedUrlService::class, $this->presignedStub);
     }
 
     private function resetState(): void
@@ -124,6 +168,51 @@ class AdminComfyUiAssetsTest extends TestCase
         $this->assertSame("assets/checkpoint/{$sha256}", $response->json('data.path'));
         $this->assertSame('https://example.com/upload', $response->json('data.upload_url'));
         $this->assertFalse((bool) $response->json('data.already_exists'));
+    }
+
+    public function test_assets_multipart_upload_init_returns_part_urls(): void
+    {
+        $sha256 = str_repeat('e', 64);
+        $sizeBytes = 200 * 1024 * 1024;
+        $response = $this->adminPost('/api/admin/comfyui-assets/uploads/multipart', [
+            'kind' => 'checkpoint',
+            'mime_type' => 'application/octet-stream',
+            'size_bytes' => $sizeBytes,
+            'original_filename' => 'big-model.safetensors',
+            'sha256' => $sha256,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.upload_id', 'upload-123')
+            ->assertJsonPath('data.key', "assets/checkpoint/{$sha256}");
+
+        $partUrls = $response->json('data.part_urls');
+        $this->assertIsArray($partUrls);
+        $this->assertCount(2, $partUrls);
+        $this->assertSame(1, $partUrls[0]['part_number']);
+        $this->assertSame('https://example.com/upload/part-1', $partUrls[0]['url']);
+    }
+
+    public function test_assets_multipart_upload_complete_records_parts(): void
+    {
+        $payload = [
+            'upload_id' => 'upload-123',
+            'key' => 'assets/checkpoint/abc123',
+            'parts' => [
+                ['part_number' => 1, 'etag' => 'etag-1'],
+                ['part_number' => 2, 'etag' => 'etag-2'],
+            ],
+        ];
+
+        $response = $this->adminPost('/api/admin/comfyui-assets/uploads/multipart/complete', $payload);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $this->assertSame('assets/checkpoint/abc123', $this->presignedStub->multipartCompleted['key'] ?? null);
+        $this->assertSame('upload-123', $this->presignedStub->multipartCompleted['upload_id'] ?? null);
+        $this->assertCount(2, $this->presignedStub->multipartCompleted['parts'] ?? []);
     }
 
     public function test_assets_upload_init_accepts_text_encoder_kind(): void

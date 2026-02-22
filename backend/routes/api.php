@@ -161,6 +161,9 @@ Route::middleware([
             // ComfyUI Assets
             Route::get('/comfyui-assets/files', [AdminComfyUiAssetsController::class, 'filesIndex']);
             Route::post('/comfyui-assets/uploads', [AdminComfyUiAssetsController::class, 'createUpload']);
+            Route::post('/comfyui-assets/uploads/multipart', [AdminComfyUiAssetsController::class, 'createMultipartUpload']);
+            Route::post('/comfyui-assets/uploads/multipart/complete', [AdminComfyUiAssetsController::class, 'completeMultipartUpload']);
+            Route::post('/comfyui-assets/uploads/multipart/abort', [AdminComfyUiAssetsController::class, 'abortMultipartUpload']);
             Route::post('/comfyui-assets/files', [AdminComfyUiAssetsController::class, 'filesStore']);
             Route::patch('/comfyui-assets/files/{id}', [AdminComfyUiAssetsController::class, 'filesUpdate']);
             Route::get('/comfyui-assets/bundles', [AdminComfyUiAssetsController::class, 'bundlesIndex']);

@@ -371,12 +371,33 @@ class ComfyUiAssetsController extends BaseController
             return $this->sendError('Asset not found.', [], 404);
         }
 
-        $isReferenced = ComfyUiAssetBundleFile::query()
+        $bundleRefs = ComfyUiAssetBundleFile::query()
             ->where('asset_file_id', $asset->id)
-            ->exists();
+            ->with(['bundle:id,bundle_id,name'])
+            ->get();
 
-        if ($isReferenced) {
-            return $this->sendError('Asset is referenced by a bundle and cannot be deleted.', [], 409);
+        if ($bundleRefs->isNotEmpty()) {
+            $bundles = $bundleRefs
+                ->map(fn (ComfyUiAssetBundleFile $ref) => $ref->bundle)
+                ->filter()
+                ->unique('id')
+                ->values()
+                ->map(fn (ComfyUiAssetBundle $bundle) => [
+                    'id' => $bundle->id,
+                    'bundle_id' => $bundle->bundle_id,
+                    'name' => $bundle->name,
+                ])
+                ->values()
+                ->all();
+
+            return $this->sendError(
+                'Asset is referenced by one or more bundles and cannot be deleted.',
+                [
+                    'bundles' => $bundles,
+                    'bundle_count' => count($bundles),
+                ],
+                409
+            );
         }
 
         $disk = (string) config('services.comfyui.models_disk', 'comfyui_models');

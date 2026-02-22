@@ -182,6 +182,40 @@ class AdminComfyUiAssetsTest extends TestCase
         $this->assertSame("assets/lora/{$sha256}", $asset->s3_key);
     }
 
+    public function test_assets_delete_is_blocked_when_used_in_bundle(): void
+    {
+        $asset = ComfyUiAssetFile::query()->create([
+            'kind' => 'checkpoint',
+            'original_filename' => 'sdxl.safetensors',
+            's3_key' => 'assets/checkpoint/abc123',
+            'content_type' => 'application/octet-stream',
+            'size_bytes' => 1234,
+            'sha256' => 'abc123',
+        ]);
+
+        $bundle = ComfyUiAssetBundle::query()->create([
+            'bundle_id' => (string) Str::uuid(),
+            'name' => 'Used Bundle',
+            's3_prefix' => 'bundles/used-bundle',
+        ]);
+
+        ComfyUiAssetBundleFile::query()->create([
+            'bundle_id' => $bundle->id,
+            'asset_file_id' => $asset->id,
+            'target_path' => 'models/checkpoints/custom.safetensors',
+            'position' => 0,
+        ]);
+
+        $this->actAsAdmin();
+        $response = $this->deleteJson("/api/admin/comfyui-assets/files/{$asset->id}");
+
+        $response->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data.bundles.0.id', $bundle->id)
+            ->assertJsonPath('data.bundles.0.bundle_id', $bundle->bundle_id)
+            ->assertJsonPath('data.bundles.0.name', $bundle->name);
+    }
+
     public function test_bundles_store_writes_manifest_and_bundle_files(): void
     {
         $asset = ComfyUiAssetFile::query()->create([

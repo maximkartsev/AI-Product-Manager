@@ -4,16 +4,20 @@ import { useMemo, useRef, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTableView, type DataTableFormField } from "@/components/ui/DataTable";
 import { EntityFormSheet } from "@/components/ui/EntityFormSheet";
+import { DeleteConfirmDialog } from "@/components/ui/DeleteConfirmDialog";
 import { useDataTable } from "@/hooks/useDataTable";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 import {
   createComfyUiAssetFile,
+  deleteComfyUiAssetFile,
   getComfyUiAssetFiles,
   initComfyUiAssetUpload,
   updateComfyUiAssetFile,
+  ApiError,
   type ComfyUiAssetFile,
   type ComfyUiAssetFileCreateRequest,
 } from "@/lib/api";
@@ -91,6 +95,11 @@ function formatBytes(value?: number | null): string {
 export default function AdminComfyUiAssetsPage() {
   const [showPanel, setShowPanel] = useState(false);
   const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, any> } | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<ComfyUiAssetFile | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [blockedBundles, setBlockedBundles] = useState<{ id: number; bundle_id: string; name: string | null }[]>([]);
+  const [showBlockedDialog, setShowBlockedDialog] = useState(false);
 
   const handleEdit = (item: ComfyUiAssetFile) => {
     setEditingItem({
@@ -107,8 +116,17 @@ export default function AdminComfyUiAssetsPage() {
     setShowPanel(true);
   };
 
+  const handleDelete = (item: ComfyUiAssetFile) => {
+    setItemToDelete(item);
+    setShowDeleteModal(true);
+  };
+
+  const deletingIdRef = useRef(deletingId);
+  deletingIdRef.current = deletingId;
   const handleEditRef = useRef(handleEdit);
   handleEditRef.current = handleEdit;
+  const handleDeleteRef = useRef(handleDelete);
+  handleDeleteRef.current = handleDelete;
 
   const actionsColumn = useMemo<ColumnDef<ComfyUiAssetFile>[]>(
     () => [
@@ -132,6 +150,18 @@ export default function AdminComfyUiAssetsPage() {
               }}
             >
               Edit
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-500/60 text-red-400 hover:bg-red-500/10 text-sm px-3"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleDeleteRef.current(row.original);
+              }}
+              disabled={deletingIdRef.current === row.original.id}
+            >
+              {deletingIdRef.current === row.original.id ? "Deleting..." : "Delete"}
             </Button>
           </div>
         ),
@@ -338,17 +368,31 @@ export default function AdminComfyUiAssetsPage() {
   };
 
   const renderMobileRowActions = (item: ComfyUiAssetFile) => (
-    <Button
-      variant="outline"
-      size="sm"
-      className="text-xs flex-1"
-      onClick={(event) => {
-        event.stopPropagation();
-        handleEdit(item);
-      }}
-    >
-      Edit
-    </Button>
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="text-xs flex-1"
+        onClick={(event) => {
+          event.stopPropagation();
+          handleEdit(item);
+        }}
+      >
+        Edit
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="border-red-500/60 text-red-400 hover:bg-red-500/10 text-xs flex-1"
+        onClick={(event) => {
+          event.stopPropagation();
+          handleDelete(item);
+        }}
+        disabled={deletingId === item.id}
+      >
+        {deletingId === item.id ? "Deleting..." : "Delete"}
+      </Button>
+    </>
   );
 
   return (
@@ -391,6 +435,65 @@ export default function AdminComfyUiAssetsPage() {
         onCreate={handleCreate}
         onUpdate={handleUpdate}
         onSaved={handleSaved}
+      />
+
+      <Dialog open={showBlockedDialog} onOpenChange={setShowBlockedDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cannot Delete Asset</DialogTitle>
+            <DialogDescription className="pb-2">
+              This asset is used by {blockedBundles.length} bundle(s) and cannot be deleted.
+              Remove the asset from these bundles first:
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="list-disc pl-5 space-y-1 text-sm text-foreground max-h-60 overflow-y-auto">
+            {blockedBundles.map((bundle) => (
+              <li key={bundle.id}>
+                {bundle.name || "Bundle"} <span className="text-muted-foreground">({bundle.bundle_id})</span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-end pt-2">
+            <Button variant="outline" onClick={() => setShowBlockedDialog(false)}>OK</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <DeleteConfirmDialog
+        entityName="Asset"
+        open={showDeleteModal}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowDeleteModal(false);
+            setItemToDelete(null);
+          }
+        }}
+        itemTitle={itemToDelete?.original_filename || undefined}
+        itemId={itemToDelete?.id}
+        onConfirm={async () => {
+          if (!itemToDelete) return;
+          setDeletingId(itemToDelete.id);
+          try {
+            await deleteComfyUiAssetFile(itemToDelete.id);
+            await state.loadItems();
+            setShowDeleteModal(false);
+            setItemToDelete(null);
+            toast.success("Asset deleted");
+          } catch (error) {
+            if (error instanceof ApiError && error.status === 409) {
+              const bundles = (error.data as any)?.data?.bundles ?? [];
+              setBlockedBundles(bundles);
+              setShowDeleteModal(false);
+              setItemToDelete(null);
+              setShowBlockedDialog(true);
+            } else {
+              console.error("Failed to delete Asset.", error);
+              toast.error("Failed to delete Asset. Please try again.");
+            }
+          } finally {
+            setDeletingId(null);
+          }
+        }}
       />
     </>
   );

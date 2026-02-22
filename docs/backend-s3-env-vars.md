@@ -32,6 +32,8 @@ In AWS, the backend uses:
 This ensures `Storage::url(...)` points to the **CloudFront** distribution, not a private S3 URL.
 
 Presigned upload URLs still go directly to S3 and continue to work.
+Browser-based uploads to the **models bucket** (Admin → Assets) require S3 CORS rules
+to allow the `OPTIONS` preflight before the `PUT` to the presigned URL.
 
 ## How to add backend environment variables
 

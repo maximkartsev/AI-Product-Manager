@@ -76,3 +76,37 @@ test('backend task definition sets AWS_URL to CloudFront domain', () => {
     ]),
   });
 });
+
+test('models bucket allows browser presigned uploads via CORS', () => {
+  const app = new cdk.App();
+  const network = new NetworkStack(app, 'bp-test-network-models-cors', {
+    env: baseConfig.env,
+    config: baseConfig,
+    description: 'Test network',
+  });
+
+  const data = new DataStack(app, 'bp-test-data-models-cors', {
+    env: baseConfig.env,
+    config: baseConfig,
+    vpc: network.vpc,
+    sgRds: network.sgRds,
+    sgRedis: network.sgRedis,
+    description: 'Test data',
+  });
+
+  const template = Template.fromStack(data);
+  template.hasResourceProperties('AWS::S3::Bucket', {
+    VersioningConfiguration: {
+      Status: 'Enabled',
+    },
+    CorsConfiguration: {
+      CorsRules: Match.arrayWith([
+        Match.objectLike({
+          AllowedMethods: Match.arrayWith(['PUT', 'POST']),
+          AllowedOrigins: Match.arrayWith(['*']),
+          AllowedHeaders: Match.arrayWith(['*']),
+        }),
+      ]),
+    },
+  });
+});

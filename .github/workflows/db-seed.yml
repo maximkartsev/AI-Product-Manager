@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: 'Stage to migrate'
+        description: 'Stage to seed'
         required: true
         type: choice
         default: staging
@@ -22,8 +22,8 @@ on:
         options:
           - us-east-1
           - us-west-2
-      pools:
-        description: 'Optional: comma-separated tenant pool connection names (e.g. tenant_pool_1,tenant_pool_2). Leave blank for all configured pools.'
+      seed_class:
+        description: 'Optional seeder class (e.g. UsersSeeder or Database\\Seeders\\UsersSeeder). Leave blank to run DatabaseSeeder.'
         required: false
         type: string
         default: ''
@@ -39,7 +39,7 @@ env:
   ECS_BACKEND_TASK_DEFINITION: bp-${{ inputs.stage }}-backend
 
 jobs:
-  db-migrate:
+  db-seed:
     name: DB Seed (${{ inputs.stage }})
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage == 'production' && 'production-migrations' || 'staging-migrations' }}
@@ -50,10 +50,10 @@ jobs:
           role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Run migrations task (ECS one-off)
+      - name: Run db seed task (ECS one-off)
         shell: bash
         env:
-          POOLS: ${{ inputs.pools }}
+          SEED_CLASS: ${{ inputs.seed_class }}
           PRIVATE_SUBNET_IDS: ${{ secrets.PRIVATE_SUBNET_IDS }}
           BACKEND_SG_ID: ${{ secrets.BACKEND_SG_ID }}
         run: |
@@ -129,14 +129,14 @@ jobs:
           OVERRIDES=$(python3 - <<'PY'
           import json, os, re, sys
 
-          pools = (os.environ.get("POOLS") or "").strip()
-          if pools and not re.match(r'^[A-Za-z0-9_,\\-]+$', pools):
-              print("pools must be a comma-separated list of connection names (letters/numbers/_/-/comma only).", file=sys.stderr)
+          seed_class = (os.environ.get("SEED_CLASS") or "").strip()
+          if seed_class and not re.match(r'^[A-Za-z0-9_\\\\]+$', seed_class):
+              print("seed_class must be a PHP class name (letters/numbers/_/\\\\ only).", file=sys.stderr)
               sys.exit(1)
 
-          cmd = ["php", "artisan", "tenancy:pools-migrate", "-vvv"]
-          if pools:
-              cmd.append(f"--pools={pools}")
+          cmd = ["php", "artisan", "db:seed", "--force", "-vvv"]
+          if seed_class:
+              cmd.append(f"--class={seed_class}")
 
           print(json.dumps({
               "containerOverrides": [{
@@ -155,7 +155,7 @@ jobs:
             --network-configuration "${NETWORK_CONFIGURATION}" \
             --query 'tasks[0].taskArn' --output text)
 
-          echo "Migration task: ${TASK_ARN}"
+          echo "Seed task: ${TASK_ARN}"
           aws ecs wait tasks-stopped --cluster "${ECS_CLUSTER}" --tasks "${TASK_ARN}"
 
           EXIT_CODE=$(aws ecs describe-tasks \
@@ -204,7 +204,7 @@ jobs:
           set -e
 
           {
-            echo "## DB migrations"
+            echo "## DB seed"
             echo ""
             echo "- **Stage:** ${STAGE}"
             echo "- **Region:** ${AWS_REGION}"
@@ -213,6 +213,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "${EXIT_CODE}" != "0" ]]; then
-            echo "tenancy:pools-migrate failed (exit code ${EXIT_CODE})." >&2
+            echo "db:seed failed (exit code ${EXIT_CODE})." >&2
             exit 1
           fi

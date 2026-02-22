@@ -196,6 +196,25 @@ class AdminComfyUiAssetsTest extends TestCase
         $this->assertSame('https://example.com/upload/part-1', $partUrls[0]['url']);
     }
 
+    public function test_assets_multipart_upload_init_uses_multipart_ttl_config(): void
+    {
+        config(['services.comfyui.multipart_presigned_ttl_seconds' => 3600]);
+
+        $sha256 = str_repeat('f', 64);
+        $sizeBytes = 200 * 1024 * 1024;
+        $response = $this->adminPost('/api/admin/comfyui-assets/uploads/multipart', [
+            'kind' => 'checkpoint',
+            'mime_type' => 'application/octet-stream',
+            'size_bytes' => $sizeBytes,
+            'original_filename' => 'ttl-model.safetensors',
+            'sha256' => $sha256,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.expires_in', 3600);
+    }
+
     public function test_assets_multipart_upload_complete_records_parts(): void
     {
         $payload = [

@@ -61,6 +61,7 @@ return [
         'lease_ttl_seconds' => env('COMFYUI_LEASE_TTL_SECONDS', 900),
         'max_attempts' => env('COMFYUI_MAX_ATTEMPTS', 3),
         'presigned_ttl_seconds' => env('COMFYUI_PRESIGNED_TTL_SECONDS', 900),
+        'multipart_presigned_ttl_seconds' => env('COMFYUI_MULTIPART_PRESIGNED_TTL_SECONDS', 3600),
         'upload_max_bytes' => env('COMFYUI_UPLOAD_MAX_BYTES', 1073741824),
         'workflow_disk' => env('COMFYUI_WORKFLOW_DISK', 's3'),
       'models_disk' => env('COMFYUI_MODELS_DISK', 'comfyui_models'),

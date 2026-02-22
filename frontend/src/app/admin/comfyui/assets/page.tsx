@@ -13,6 +13,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { uploadMultipartParts } from "@/lib/multipartUpload";
 import {
   createComfyUiAssetFile,
   abortComfyUiAssetMultipartUpload,
@@ -79,6 +80,7 @@ function normalizeUploadHeaders(
 
 const HASH_CHUNK_SIZE = 8 * 1024 * 1024;
 const MULTIPART_THRESHOLD_BYTES = 5 * 1024 * 1024 * 1024;
+const MULTIPART_CONCURRENCY = 4;
 
 async function computeSha256(file: File): Promise<string> {
   const hasher = sha256.create();
@@ -351,25 +353,13 @@ export default function AdminComfyUiAssetsPage() {
         multipartKey = init.key;
         multipartUploadId = init.upload_id;
 
-        const parts: Array<{ part_number: number; etag: string }> = [];
-        for (const part of init.part_urls) {
-          const start = (part.part_number - 1) * init.part_size;
-          const end = Math.min(start + init.part_size, file.size);
-          const chunk = file.slice(start, end);
-          const response = await fetch(part.url, {
-            method: "PUT",
-            headers: { "Content-Type": contentType },
-            body: chunk,
-          });
-          if (!response.ok) {
-            throw new Error(`Part ${part.part_number} upload failed (${response.status}).`);
-          }
-          const etag = response.headers.get("ETag");
-          if (!etag) {
-            throw new Error(`Missing ETag for part ${part.part_number}.`);
-          }
-          parts.push({ part_number: part.part_number, etag: etag.replace(/"/g, "") });
-        }
+        const parts = await uploadMultipartParts({
+          file,
+          partSize: init.part_size,
+          partUrls: init.part_urls,
+          contentType,
+          concurrency: MULTIPART_CONCURRENCY,
+        });
 
         await completeComfyUiAssetMultipartUpload({
           key: init.key,

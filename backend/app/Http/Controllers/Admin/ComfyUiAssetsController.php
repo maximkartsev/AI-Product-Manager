@@ -134,7 +134,10 @@ class ComfyUiAssetsController extends BaseController
         $uploadPrefix = (string) config('services.comfyui.asset_upload_prefix', 'assets');
         $key = sprintf('%s/%s/%s', $uploadPrefix, $request->input('kind'), $sha256);
         $disk = (string) config('services.comfyui.models_disk', 'comfyui_models');
-        $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+        $ttlSeconds = (int) config('services.comfyui.multipart_presigned_ttl_seconds', 0);
+        if ($ttlSeconds <= 0) {
+            $ttlSeconds = (int) config('services.comfyui.presigned_ttl_seconds', 900);
+        }
         $alreadyExists = ComfyUiAssetFile::query()
             ->where('kind', $request->input('kind'))
             ->where('sha256', $sha256)

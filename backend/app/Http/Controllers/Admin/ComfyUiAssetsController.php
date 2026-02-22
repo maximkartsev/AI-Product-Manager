@@ -446,14 +446,24 @@ class ComfyUiAssetsController extends BaseController
             return $this->sendError('Bundle not found.', [], 404);
         }
 
-        $activeFleetCount = ComfyUiGpuFleet::query()
+        $activeFleets = ComfyUiGpuFleet::query()
             ->where('active_bundle_id', $bundle->id)
             ->orWhere('active_bundle_s3_prefix', $bundle->s3_prefix)
-            ->count();
+            ->get(['id', 'name', 'slug']);
 
-        if ($activeFleetCount > 0) {
-            return $this->sendError('Bundle is active in a fleet and cannot be deleted.', [
-                'active_fleets' => $activeFleetCount,
+        if ($activeFleets->isNotEmpty()) {
+            $fleets = $activeFleets
+                ->map(fn (ComfyUiGpuFleet $fleet) => [
+                    'id' => $fleet->id,
+                    'name' => $fleet->name,
+                    'slug' => $fleet->slug,
+                ])
+                ->values()
+                ->all();
+
+            return $this->sendError('Bundle is active in one or more fleets and cannot be deleted.', [
+                'fleets' => $fleets,
+                'fleet_count' => count($fleets),
             ], 409);
         }
 

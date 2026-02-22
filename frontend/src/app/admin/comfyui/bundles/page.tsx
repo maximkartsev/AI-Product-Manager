@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTableView, type DataTableFormField } from "@/components/ui/DataTable";
 import { EntityFormSheet } from "@/components/ui/EntityFormSheet";
+import { DeleteConfirmDialog } from "@/components/ui/DeleteConfirmDialog";
 import { useDataTable } from "@/hooks/useDataTable";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -14,6 +16,7 @@ import { Info } from "lucide-react";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 import {
   createComfyUiAssetBundle,
+  deleteComfyUiAssetBundle,
   getComfyUiAssetBundles,
   getComfyUiAssetFiles,
   getComfyUiAssetBundleManifest,
@@ -21,6 +24,7 @@ import {
   type ComfyUiAssetBundle,
   type ComfyUiAssetBundleCreateRequest,
   type ComfyUiAssetFile,
+  ApiError,
 } from "@/lib/api";
 
 const ACTION_OPTIONS = [
@@ -68,6 +72,11 @@ function formatAssetLabel(asset: ComfyUiAssetFile): string {
 export default function AdminComfyUiBundlesPage() {
   const [showPanel, setShowPanel] = useState(false);
   const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, any> } | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<ComfyUiAssetBundle | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [blockedFleets, setBlockedFleets] = useState<{ id: number; name: string; slug: string }[]>([]);
+  const [showBlockedDialog, setShowBlockedDialog] = useState(false);
   const [bundleDraft, setBundleDraft] = useState<BundleFormState>(emptyBundleState);
   const [assetOptions, setAssetOptions] = useState<ComfyUiAssetFile[]>([]);
 
@@ -118,10 +127,19 @@ export default function AdminComfyUiBundlesPage() {
     setShowPanel(true);
   };
 
+  const handleDelete = (bundle: ComfyUiAssetBundle) => {
+    setItemToDelete(bundle);
+    setShowDeleteModal(true);
+  };
+
   const handleEditRef = useRef(handleEdit);
   handleEditRef.current = handleEdit;
   const handleCloneRef = useRef(handleClone);
   handleCloneRef.current = handleClone;
+  const handleDeleteRef = useRef(handleDelete);
+  handleDeleteRef.current = handleDelete;
+  const deletingIdRef = useRef(deletingId);
+  deletingIdRef.current = deletingId;
 
   const actionsColumn = useMemo<ColumnDef<ComfyUiAssetBundle>[]>(
     () => [
@@ -131,8 +149,8 @@ export default function AdminComfyUiBundlesPage() {
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
-        size: 220,
-        minSize: 220,
+        size: 280,
+        minSize: 280,
         cell: ({ row }: { row: { original: ComfyUiAssetBundle } }) => {
           const bundle = row.original;
           return (
@@ -174,6 +192,18 @@ export default function AdminComfyUiBundlesPage() {
                 }}
               >
                 Edit
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-red-500/60 text-red-400 hover:bg-red-500/10 text-sm px-3"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleDeleteRef.current(bundle);
+                }}
+                disabled={deletingIdRef.current === bundle.id}
+              >
+                {deletingIdRef.current === bundle.id ? "Deleting..." : "Delete"}
               </Button>
             </div>
           );
@@ -467,6 +497,18 @@ export default function AdminComfyUiBundlesPage() {
       >
         Clone
       </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="border-red-500/60 text-red-400 hover:bg-red-500/10 text-xs"
+        onClick={(event) => {
+          event.stopPropagation();
+          handleDelete(item);
+        }}
+        disabled={deletingId === item.id}
+      >
+        {deletingId === item.id ? "Deleting..." : "Delete"}
+      </Button>
     </div>
   );
 
@@ -511,6 +553,67 @@ export default function AdminComfyUiBundlesPage() {
         onCreate={handleCreate}
         onUpdate={handleUpdate}
         onSaved={handleSaved}
+      />
+
+      <Dialog open={showBlockedDialog} onOpenChange={setShowBlockedDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cannot Delete Bundle</DialogTitle>
+            <DialogDescription className="pb-2">
+              This bundle is active in {blockedFleets.length} fleet(s) and cannot be deleted.
+              Deactivate it in these fleets first:
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="list-disc pl-5 space-y-1 text-sm text-foreground max-h-60 overflow-y-auto">
+            {blockedFleets.map((fleet) => (
+              <li key={fleet.id}>
+                {fleet.name || "Fleet"} <span className="text-muted-foreground">({fleet.slug})</span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-end pt-2">
+            <Button variant="outline" onClick={() => setShowBlockedDialog(false)}>
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <DeleteConfirmDialog
+        entityName="Bundle"
+        open={showDeleteModal}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowDeleteModal(false);
+            setItemToDelete(null);
+          }
+        }}
+        itemTitle={itemToDelete?.name || undefined}
+        itemId={itemToDelete?.id}
+        onConfirm={async () => {
+          if (!itemToDelete) return;
+          setDeletingId(itemToDelete.id);
+          try {
+            await deleteComfyUiAssetBundle(itemToDelete.id);
+            await state.loadItems();
+            setShowDeleteModal(false);
+            setItemToDelete(null);
+            toast.success("Bundle deleted");
+          } catch (error) {
+            if (error instanceof ApiError && error.status === 409) {
+              const fleets = (error.data as any)?.data?.fleets ?? [];
+              setBlockedFleets(fleets);
+              setShowDeleteModal(false);
+              setItemToDelete(null);
+              setShowBlockedDialog(true);
+            } else {
+              console.error("Failed to delete Bundle.", error);
+              toast.error("Failed to delete Bundle. Please try again.");
+            }
+          } finally {
+            setDeletingId(null);
+          }
+        }}
       />
     </>
   );

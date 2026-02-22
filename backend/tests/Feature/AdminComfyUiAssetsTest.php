@@ -115,6 +115,8 @@ class AdminComfyUiAssetsTest extends TestCase
         DB::connection('central')->table('users')->truncate();
         DB::connection('central')->table('tenants')->truncate();
         DB::connection('central')->table('personal_access_tokens')->truncate();
+        DB::connection('central')->table('comfyui_workflow_fleets')->truncate();
+        DB::connection('central')->table('comfyui_gpu_fleets')->truncate();
         DB::connection('central')->table('comfyui_asset_bundle_files')->truncate();
         DB::connection('central')->table('comfyui_asset_bundles')->truncate();
         DB::connection('central')->table('comfyui_asset_files')->truncate();
@@ -392,5 +394,31 @@ class AdminComfyUiAssetsTest extends TestCase
         $response->assertStatus(200)
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.download_url', 'https://example.com/download');
+    }
+
+    public function test_bundles_delete_is_blocked_when_active_in_fleet(): void
+    {
+        $bundle = ComfyUiAssetBundle::query()->create([
+            'bundle_id' => (string) Str::uuid(),
+            'name' => 'Active Bundle',
+            's3_prefix' => 'bundles/active-bundle',
+        ]);
+
+        $fleet = \App\Models\ComfyUiGpuFleet::query()->create([
+            'stage' => 'staging',
+            'slug' => 'fleet-alpha',
+            'name' => 'Fleet Alpha',
+            'active_bundle_id' => $bundle->id,
+            'active_bundle_s3_prefix' => $bundle->s3_prefix,
+        ]);
+
+        $this->actAsAdmin();
+        $response = $this->deleteJson("/api/admin/comfyui-assets/bundles/{$bundle->id}");
+
+        $response->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data.fleets.0.id', $fleet->id)
+            ->assertJsonPath('data.fleets.0.name', $fleet->name)
+            ->assertJsonPath('data.fleets.0.slug', $fleet->slug);
     }
 }

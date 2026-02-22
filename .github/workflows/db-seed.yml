@@ -1,7 +1,7 @@
 ---
-name: DB Migrate
+name: DB Seed
 
-run-name: DB Migrate (${{ inputs.stage }}) by @${{ github.actor }}
+run-name: DB Seed (${{ inputs.stage }}) by @${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -40,7 +40,7 @@ env:
 
 jobs:
   db-migrate:
-    name: DB Migrate (${{ inputs.stage }})
+    name: DB Seed (${{ inputs.stage }})
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage == 'production' && 'production-migrations' || 'staging-migrations' }}
     steps:

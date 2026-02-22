@@ -579,6 +579,25 @@ class ComfyUiAssetsController extends BaseController
             'notes' => 'string|nullable|max:2000',
         ]);
 
+        $validator->after(function ($validator) use ($request) {
+            $overrides = (array) $request->input('asset_overrides', []);
+            foreach ($overrides as $index => $override) {
+                if (!is_array($override)) {
+                    continue;
+                }
+                $targetPath = $override['target_path'] ?? null;
+                if ($targetPath === null || trim((string) $targetPath) === '') {
+                    continue;
+                }
+                if (!$this->isSafeBundleTargetPath((string) $targetPath)) {
+                    $validator->errors()->add(
+                        "asset_overrides.{$index}.target_path",
+                        'Target path must be a relative path without ".." segments or backslashes.'
+                    );
+                }
+            }
+        });
+
         if ($validator->fails()) {
             return $this->sendError('Validation error.', $validator->errors(), 422);
         }
@@ -834,6 +853,26 @@ class ComfyUiAssetsController extends BaseController
             return true;
         }
         return basename($filename) !== $filename;
+    }
+
+    private function isSafeBundleTargetPath(string $path): bool
+    {
+        if ($path === '') {
+            return false;
+        }
+        if (Str::startsWith($path, '/')) {
+            return false;
+        }
+        if (Str::contains($path, '\\')) {
+            return false;
+        }
+        $parts = array_values(array_filter(explode('/', $path), static fn ($part) => $part !== ''));
+        foreach ($parts as $part) {
+            if ($part === '.' || $part === '..') {
+                return false;
+            }
+        }
+        return !empty($parts);
     }
 
     private function parseOrder(string $orderStr): array

@@ -342,6 +342,42 @@ class AdminComfyUiAssetsTest extends TestCase
         $this->assertSame($bundle->bundle_id, $manifest['bundle_id']);
         $this->assertCount(1, $manifest['assets']);
         $this->assertSame('models/checkpoints/custom.safetensors', $manifest['assets'][0]['target_path']);
+        $this->assertSame('copy', $manifest['assets'][0]['action']);
+    }
+
+    public function test_bundles_store_rejects_unsafe_target_paths(): void
+    {
+        $asset = ComfyUiAssetFile::query()->create([
+            'kind' => 'checkpoint',
+            'original_filename' => 'sdxl.safetensors',
+            's3_key' => 'assets/checkpoint/abc123',
+            'content_type' => 'application/octet-stream',
+            'size_bytes' => 1234,
+            'sha256' => 'abc123',
+        ]);
+
+        $invalidTargets = [
+            '/models/checkpoints/custom.safetensors',
+            '../models/checkpoints/custom.safetensors',
+            'models\\checkpoints\\custom.safetensors',
+        ];
+
+        foreach ($invalidTargets as $targetPath) {
+            $response = $this->adminPost('/api/admin/comfyui-assets/bundles', [
+                'name' => 'Invalid Bundle',
+                'asset_file_ids' => [$asset->id],
+                'asset_overrides' => [
+                    [
+                        'asset_file_id' => $asset->id,
+                        'target_path' => $targetPath,
+                        'action' => 'copy',
+                    ],
+                ],
+            ]);
+
+            $response->assertStatus(422)
+                ->assertJsonPath('success', false);
+        }
     }
 
     public function test_bundle_manifest_returns_presigned_download_url(): void

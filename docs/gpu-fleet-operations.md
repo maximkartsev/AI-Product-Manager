@@ -376,6 +376,9 @@ Path: **Admin → ComfyUI → Bundles** (`/admin/comfyui/bundles`)
 3. Optional overrides:
    - `target_path` (relative to `/opt/comfyui/`)
    - `action` (`copy`, `extract_zip`, `extract_tar_gz`) for archives (custom nodes)
+   - Examples:
+     - `copy`: `models/checkpoints/sdxl.safetensors`
+     - `extract_zip`: `custom_nodes/ComfyUI-Manager` (archive extracts into that folder)
 
 The backend writes `bundles/<bundle_id>/manifest.json` to the models bucket.
 

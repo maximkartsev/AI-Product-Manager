@@ -44,6 +44,12 @@ Each `assets[]` entry describes how to install one S3 object into the ComfyUI fi
   - `extract_zip`: download object and unzip into `target_path` directory (for custom nodes shipped as zip)
   - `extract_tar_gz`: download object and untar into `target_path` directory
 
+#### target_path guidance
+
+- Always relative to `/opt/comfyui/` (no leading `/`).
+- `copy`: include the filename (e.g. `models/checkpoints/sdxl.safetensors`).
+- `extract_*`: point to a directory (e.g. `custom_nodes/ComfyUI-Manager`) and ensure the archive contents are relative to that folder.
+
 #### Example
 
 ```json

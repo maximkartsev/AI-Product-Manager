@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { Info } from "lucide-react";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 import {
   createComfyUiAssetBundle,
@@ -27,6 +28,18 @@ const ACTION_OPTIONS = [
   { value: "extract_zip", label: "Extract ZIP" },
   { value: "extract_tar_gz", label: "Extract TAR.GZ" },
  ] as const;
+
+const ASSET_KIND_PATHS: Record<string, string> = {
+  checkpoint: "models/checkpoints",
+  diffusion_model: "models/diffusion_models",
+  lora: "models/loras",
+  vae: "models/vae",
+  embedding: "models/embeddings",
+  text_encoder: "models/text_encoders",
+  controlnet: "models/controlnet",
+  custom_node: "custom_nodes",
+  other: "models/other",
+};
 
 type BundleAssetAction = (typeof ACTION_OPTIONS)[number]["value"];
 
@@ -304,29 +317,70 @@ export default function AdminComfyUiBundlesPage() {
                 {Array.from(selectedIds).map((assetId) => {
                   const asset = assetOptions.find((item) => item.id === assetId);
                   const override = overrides[assetId] || {};
+                  const defaultTargetPath = asset
+                    ? `${ASSET_KIND_PATHS[asset.kind] ?? ASSET_KIND_PATHS.other}/${asset.original_filename}`
+                    : null;
                   return (
                     <div key={assetId} className="rounded-lg border border-border p-3 space-y-2">
                       <p className="text-sm text-foreground">{asset ? formatAssetLabel(asset) : `Asset ${assetId}`}</p>
-                      <Input
-                        value={override.target_path || ""}
-                        onChange={(e) => updateOverride(assetId, { target_path: e.target.value })}
-                        placeholder="Override target path (optional)"
-                      />
-                      <Select
-                        value={override.action || "copy"}
-                        onValueChange={(value) => updateOverride(assetId, { action: value as BundleAssetAction })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select action" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ACTION_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={override.target_path || ""}
+                            onChange={(e) => updateOverride(assetId, { target_path: e.target.value })}
+                            placeholder="Override target path (optional)"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10 shrink-0"
+                            title={`target_path is relative to /opt/comfyui.\n${defaultTargetPath ? `Default: ${defaultTargetPath}\n` : ""}Copy example: models/checkpoints/sdxl.safetensors\nExtract example: custom_nodes/ComfyUI-Manager/`}
+                            aria-label="Target path info"
+                          >
+                            <Info className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        {defaultTargetPath ? (
+                          <p className="text-xs text-muted-foreground">
+                            Default: <span className="font-mono">{defaultTargetPath}</span> (relative to /opt/comfyui/)
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <div className="min-w-0 flex-1">
+                            <Select
+                              value={override.action || "copy"}
+                              onValueChange={(value) => updateOverride(assetId, { action: value as BundleAssetAction })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select action" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {ACTION_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10 shrink-0"
+                            title={`Action controls how the asset is installed when the bundle is applied.\nCopy: downloads to target_path (file).\nExtract ZIP/TAR.GZ: extracts into target_path (directory).`}
+                            aria-label="Bundle asset action info"
+                          >
+                            <Info className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Extract actions unpack into <span className="font-mono">target_path/</span> (a directory).
+                        </p>
+                      </div>
                     </div>
                   );
                 })}

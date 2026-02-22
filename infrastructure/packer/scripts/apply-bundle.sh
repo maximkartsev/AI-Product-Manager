@@ -90,11 +90,23 @@ while IFS=$'\t' read -r action s3_key target_path; do
       aws s3 cp "s3://${MODELS_BUCKET}/${s3_key}" "$tmp"
       mkdir -p "$dest"
       python3 - "$tmp" "$dest" <<'PY'
+import os
 import sys
 import zipfile
 
 archive, dest = sys.argv[1], sys.argv[2]
+dest_real = os.path.realpath(dest)
+
+def is_safe_path(base: str, target: str) -> bool:
+    base_real = os.path.realpath(base)
+    target_real = os.path.realpath(target)
+    return target_real.startswith(base_real + os.sep)
+
 with zipfile.ZipFile(archive, "r") as handle:
+    for member in handle.infolist():
+        member_path = os.path.join(dest, member.filename)
+        if not is_safe_path(dest_real, member_path):
+            raise SystemExit(f"unsafe path in zip: {member.filename}")
     handle.extractall(dest)
 PY
       ;;
@@ -103,11 +115,23 @@ PY
       aws s3 cp "s3://${MODELS_BUCKET}/${s3_key}" "$tmp"
       mkdir -p "$dest"
       python3 - "$tmp" "$dest" <<'PY'
+import os
 import sys
 import tarfile
 
 archive, dest = sys.argv[1], sys.argv[2]
+dest_real = os.path.realpath(dest)
+
+def is_safe_path(base: str, target: str) -> bool:
+    base_real = os.path.realpath(base)
+    target_real = os.path.realpath(target)
+    return target_real.startswith(base_real + os.sep)
+
 with tarfile.open(archive, "r:gz") as handle:
+    for member in handle.getmembers():
+        member_path = os.path.join(dest, member.name)
+        if not is_safe_path(dest_real, member_path):
+            raise SystemExit(f"unsafe path in tar.gz: {member.name}")
     handle.extractall(dest)
 PY
       ;;

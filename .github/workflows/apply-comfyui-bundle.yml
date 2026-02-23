@@ -7,6 +7,14 @@ on:
         description: 'EC2 instance ID (dev GPU node)'
         required: true
         type: string
+      stage:
+        description: 'Stage (staging or production)'
+        required: false
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
       fleet_slug:
         description: 'Fleet slug (e.g. gpu-default)'
         required: true
@@ -17,7 +25,7 @@ on:
         type: string
       models_bucket:
         description: 'S3 bucket with asset bundles (bp-models-<account>-<stage>)'
-        required: true
+        required: false
         type: string
       logs_bucket:
         description: 'Optional: S3 bucket for logs (bp-logs-<account>-<stage>)'
@@ -43,12 +51,44 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: ${{ inputs.aws_region }}
+      STAGE: ${{ inputs.stage }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify instance is SSM-managed
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTANCE_ID="${{ inputs.instance_id }}"
+          FOUND=$(aws ssm describe-instance-information \
+            --filters "Key=InstanceIds,Values=${INSTANCE_ID}" \
+            --query "InstanceInformationList[0].InstanceId" \
+            --output text)
+          if [[ -z "${FOUND}" || "${FOUND}" == "None" ]]; then
+            echo "Instance ${INSTANCE_ID} is not SSM-managed. Ensure it has an SSM-enabled instance profile." >&2
+            exit 1
+          fi
+
+      - name: Resolve models bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODELS_BUCKET="${{ inputs.models_bucket }}"
+          if [[ -z "${MODELS_BUCKET}" ]]; then
+            MODELS_BUCKET=$(aws ssm get-parameter \
+              --name "/bp/${STAGE}/models/bucket" \
+              --query "Parameter.Value" \
+              --output text)
+          fi
+          if [[ -z "${MODELS_BUCKET}" || "${MODELS_BUCKET}" == "None" ]]; then
+            echo "models_bucket is required (input empty and SSM lookup failed)." >&2
+            exit 1
+          fi
+          echo "MODELS_BUCKET=${MODELS_BUCKET}" >> "$GITHUB_ENV"
 
       - name: Send SSM command
         id: send
@@ -59,7 +99,7 @@ jobs:
             --instance-ids "${{ inputs.instance_id }}" \
             --document-name "AWS-RunShellScript" \
             --comment "Apply ComfyUI asset bundle" \
-            --parameters commands="MODELS_BUCKET=${{ inputs.models_bucket }} BUNDLE_PREFIX=$BUNDLE_PREFIX /opt/comfyui/bin/apply-bundle.sh && sudo systemctl restart comfyui.service && (sudo systemctl restart comfyui-worker.service || true)" \
+            --parameters commands="if [ ! -x /opt/comfyui/bin/apply-bundle.sh ]; then echo 'apply-bundle.sh missing (wrong AMI)'; exit 1; fi; MODELS_BUCKET=${MODELS_BUCKET} BUNDLE_PREFIX=$BUNDLE_PREFIX /opt/comfyui/bin/apply-bundle.sh && sudo systemctl restart comfyui.service && (sudo systemctl restart comfyui-worker.service || true)" \
             --query "Command.CommandId" --output text)
           echo "command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
           echo "SSM command ID: $COMMAND_ID"

@@ -17,9 +17,11 @@ import {
   createComfyUiFleet,
   getComfyUiAssetBundles,
   getComfyUiFleets,
+  getComfyUiFleetTemplates,
   updateComfyUiFleet,
   type ComfyUiAssetBundle,
   type ComfyUiFleetCreateRequest,
+  type ComfyUiFleetTemplate,
   type ComfyUiGpuFleet,
 } from "@/lib/api";
 
@@ -27,30 +29,9 @@ type FleetFormState = {
   stage: "staging" | "production";
   slug: string;
   name: string;
-  instance_types: string;
-  max_size: string;
-  warmup_seconds: string;
-  backlog_target: string;
-  scale_to_zero_minutes: string;
-  ami_ssm_parameter: string;
+  template_slug: string;
+  instance_type: string;
 };
-
-const initialFormState: FleetFormState = {
-  stage: "staging",
-  slug: "",
-  name: "",
-  instance_types: "g4dn.xlarge,g5.xlarge",
-  max_size: "10",
-  warmup_seconds: "300",
-  backlog_target: "2",
-  scale_to_zero_minutes: "15",
-  ami_ssm_parameter: "",
-};
-
-function parseNumber(value: string): number | null {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-}
 
 export default function AdminComfyUiFleetsPage() {
   const [showPanel, setShowPanel] = useState(false);
@@ -58,35 +39,47 @@ export default function AdminComfyUiFleetsPage() {
   const [detailFleet, setDetailFleet] = useState<ComfyUiGpuFleet | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [bundleOptions, setBundleOptions] = useState<ComfyUiAssetBundle[]>([]);
+  const [fleetTemplates, setFleetTemplates] = useState<ComfyUiFleetTemplate[]>([]);
   const [selectedBundleId, setSelectedBundleId] = useState<string>("");
   const [activateNotes, setActivateNotes] = useState("");
   const [savingDetail, setSavingDetail] = useState(false);
 
   const [detailName, setDetailName] = useState("");
-  const [detailInstanceTypes, setDetailInstanceTypes] = useState("");
-  const [detailMaxSize, setDetailMaxSize] = useState("");
-  const [detailWarmup, setDetailWarmup] = useState("");
-  const [detailBacklogTarget, setDetailBacklogTarget] = useState("");
-  const [detailScaleToZero, setDetailScaleToZero] = useState("");
-  const [detailAmiParam, setDetailAmiParam] = useState("");
+  const [detailTemplateSlug, setDetailTemplateSlug] = useState("");
+  const [detailInstanceType, setDetailInstanceType] = useState("");
 
   useEffect(() => {
     getComfyUiAssetBundles({ perPage: 200 }).then((data) => setBundleOptions(data.items ?? [])).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    getComfyUiFleetTemplates().then((data) => setFleetTemplates(data.items ?? [])).catch(() => {});
+  }, []);
+
+  const templatesBySlug = useMemo(() => {
+    const map = new Map<string, ComfyUiFleetTemplate>();
+    fleetTemplates.forEach((template) => {
+      map.set(template.template_slug, template);
+    });
+    return map;
+  }, [fleetTemplates]);
+
+  const initialFormState: FleetFormState = useMemo(() => {
+    const defaultTemplate = fleetTemplates[0];
+    return {
+      stage: "staging",
+      slug: "",
+      name: "",
+      template_slug: defaultTemplate?.template_slug ?? "",
+      instance_type: defaultTemplate?.allowed_instance_types?.[0] ?? "",
+    };
+  }, [fleetTemplates]);
+
   const openDetail = useCallback((fleet: ComfyUiGpuFleet) => {
     setDetailFleet(fleet);
     setDetailName(fleet.name || "");
-    setDetailInstanceTypes((fleet.instance_types || []).join(", "));
-    setDetailMaxSize(String(fleet.max_size ?? 0));
-    setDetailWarmup(fleet.warmup_seconds !== null && fleet.warmup_seconds !== undefined ? String(fleet.warmup_seconds) : "");
-    setDetailBacklogTarget(fleet.backlog_target !== null && fleet.backlog_target !== undefined ? String(fleet.backlog_target) : "");
-    setDetailScaleToZero(
-      fleet.scale_to_zero_minutes !== null && fleet.scale_to_zero_minutes !== undefined
-        ? String(fleet.scale_to_zero_minutes)
-        : "",
-    );
-    setDetailAmiParam(fleet.ami_ssm_parameter || "");
+    setDetailTemplateSlug(fleet.template_slug || "");
+    setDetailInstanceType(fleet.instance_types?.[0] || "");
     setSelectedBundleId(fleet.active_bundle_id ? String(fleet.active_bundle_id) : "");
     setActivateNotes("");
     setDetailOpen(true);
@@ -200,22 +193,58 @@ export default function AdminComfyUiFleetsPage() {
     },
     { key: "name", label: "Name", type: "text", required: true, placeholder: "Default GPU Fleet" },
     {
-      key: "instance_types",
-      label: "Instance Types (comma separated)",
-      type: "text",
-      fullWidth: true,
-      placeholder: "g4dn.xlarge,g5.xlarge",
+      key: "template_slug",
+      label: "Template",
+      type: "select",
+      required: true,
+      render: ({ value, onChange, formState, setFormState }) => (
+        <Select
+          value={value}
+          onValueChange={(next) => {
+            onChange(next);
+            const template = templatesBySlug.get(next);
+            const allowed = template?.allowed_instance_types ?? [];
+            if (allowed.length > 0 && !allowed.includes(formState.instance_type)) {
+              setFormState((prev) => ({ ...prev, instance_type: allowed[0] }));
+            }
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select template" />
+          </SelectTrigger>
+          <SelectContent>
+            {fleetTemplates.map((template) => (
+              <SelectItem key={template.template_slug} value={template.template_slug}>
+                {template.display_name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ),
     },
-    { key: "max_size", label: "Max Size", type: "number", required: true, placeholder: "10" },
-    { key: "warmup_seconds", label: "Warmup (seconds)", type: "number", placeholder: "300" },
-    { key: "backlog_target", label: "Backlog Target", type: "number", placeholder: "2" },
-    { key: "scale_to_zero_minutes", label: "Scale to Zero (minutes)", type: "number", placeholder: "15" },
     {
-      key: "ami_ssm_parameter",
-      label: "AMI SSM Parameter (optional)",
-      type: "text",
-      fullWidth: true,
-      placeholder: "/bp/ami/fleets/staging/gpu-default",
+      key: "instance_type",
+      label: "Instance Type",
+      type: "select",
+      required: true,
+      render: ({ value, onChange, formState }) => {
+        const template = templatesBySlug.get(formState.template_slug);
+        const instanceTypes = template?.allowed_instance_types ?? [];
+        return (
+          <Select value={value} onValueChange={onChange} disabled={instanceTypes.length === 0}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select instance type" />
+            </SelectTrigger>
+            <SelectContent>
+              {instanceTypes.map((instanceType) => (
+                <SelectItem key={instanceType} value={instanceType}>
+                  {instanceType}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+      },
     },
   ];
 
@@ -223,44 +252,29 @@ export default function AdminComfyUiFleetsPage() {
     if (!formState.stage) return "Stage is required.";
     if (!formState.slug?.trim()) return "Slug is required.";
     if (!formState.name?.trim()) return "Name is required.";
-    if (parseNumber(String(formState.max_size || "")) === null) return "Max size must be a number.";
+    if (!formState.template_slug?.trim()) return "Template is required.";
+    if (!formState.instance_type?.trim()) return "Instance type is required.";
     return null;
   };
 
   const getCreatePayload = (formState: Record<string, any>): ComfyUiFleetCreateRequest => {
-    const instanceTypes = String(formState.instance_types || "")
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
     return {
       stage: formState.stage,
       slug: String(formState.slug || "").trim(),
       name: String(formState.name || "").trim(),
-      instance_types: instanceTypes.length > 0 ? instanceTypes : undefined,
-      max_size: parseNumber(String(formState.max_size || "")) ?? 0,
-      warmup_seconds: parseNumber(String(formState.warmup_seconds || "")) ?? undefined,
-      backlog_target: parseNumber(String(formState.backlog_target || "")) ?? undefined,
-      scale_to_zero_minutes: parseNumber(String(formState.scale_to_zero_minutes || "")) ?? undefined,
-      ami_ssm_parameter: String(formState.ami_ssm_parameter || "").trim() || undefined,
+      template_slug: String(formState.template_slug || "").trim(),
+      instance_type: String(formState.instance_type || "").trim(),
     };
   };
 
   const handleUpdateDetail = async () => {
     if (!detailFleet) return;
-    const instanceTypes = detailInstanceTypes
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
     setSavingDetail(true);
     try {
       const updated = await updateComfyUiFleet(detailFleet.id, {
         name: detailName.trim(),
-        instance_types: instanceTypes.length > 0 ? instanceTypes : null,
-        max_size: parseNumber(detailMaxSize) ?? detailFleet.max_size,
-        warmup_seconds: parseNumber(detailWarmup) ?? null,
-        backlog_target: parseNumber(detailBacklogTarget) ?? null,
-        scale_to_zero_minutes: parseNumber(detailScaleToZero) ?? null,
-        ami_ssm_parameter: detailAmiParam.trim() || null,
+        template_slug: detailTemplateSlug.trim() || undefined,
+        instance_type: detailInstanceType.trim() || undefined,
       });
       setDetailFleet(updated);
       toast.success("Fleet updated.");
@@ -328,7 +342,7 @@ export default function AdminComfyUiFleetsPage() {
           entityClass: "ComfyUiGpuFleet",
           entityName: "Fleet",
           title: "ComfyUI Fleets",
-          description: "Manage GPU fleet configuration, activation, and ops pointers.",
+          description: "Manage fleet templates and instance types. Provisioning is done via GitHub Actions.",
         }}
         renderRowActions={renderMobileRowActions}
         toolbarActions={
@@ -380,28 +394,64 @@ export default function AdminComfyUiFleetsPage() {
                   <Input value={detailName} onChange={(e) => setDetailName(e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase text-muted-foreground">Instance Types</label>
-                  <Input value={detailInstanceTypes} onChange={(e) => setDetailInstanceTypes(e.target.value)} />
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Template</label>
+                  <Select
+                    value={detailTemplateSlug}
+                    onValueChange={(next) => {
+                      setDetailTemplateSlug(next);
+                      const template = templatesBySlug.get(next);
+                      const allowed = template?.allowed_instance_types ?? [];
+                      if (allowed.length > 0 && !allowed.includes(detailInstanceType)) {
+                        setDetailInstanceType(allowed[0]);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {fleetTemplates.map((template) => (
+                        <SelectItem key={template.template_slug} value={template.template_slug}>
+                          {template.display_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Instance Type</label>
+                  <Select
+                    value={detailInstanceType}
+                    onValueChange={setDetailInstanceType}
+                    disabled={!detailTemplateSlug}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select instance type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(templatesBySlug.get(detailTemplateSlug)?.allowed_instance_types ?? []).map((instanceType) => (
+                        <SelectItem key={instanceType} value={instanceType}>
+                          {instanceType}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Max Size</label>
-                  <Input value={detailMaxSize} onChange={(e) => setDetailMaxSize(e.target.value)} />
+                  <Input value={String(detailFleet.max_size ?? 0)} disabled />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Warmup (seconds)</label>
-                  <Input value={detailWarmup} onChange={(e) => setDetailWarmup(e.target.value)} />
+                  <Input value={String(detailFleet.warmup_seconds ?? "")} disabled />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Backlog Target</label>
-                  <Input value={detailBacklogTarget} onChange={(e) => setDetailBacklogTarget(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase text-muted-foreground">Scale to Zero (minutes)</label>
-                  <Input value={detailScaleToZero} onChange={(e) => setDetailScaleToZero(e.target.value)} />
+                  <Input value={String(detailFleet.backlog_target ?? "")} disabled />
                 </div>
                 <div className="md:col-span-2 space-y-2">
-                  <label className="text-xs font-semibold uppercase text-muted-foreground">AMI SSM Parameter</label>
-                  <Input value={detailAmiParam} onChange={(e) => setDetailAmiParam(e.target.value)} />
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Scale to Zero (minutes)</label>
+                  <Input value={String(detailFleet.scale_to_zero_minutes ?? "")} disabled />
                 </div>
                 <div className="md:col-span-2">
                   <Button onClick={handleUpdateDetail} disabled={savingDetail}>

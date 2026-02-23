@@ -21,4 +21,20 @@ class ComfyUiFleetSsmService
             'Overwrite' => true,
         ]);
     }
+
+    public function putDesiredFleetConfig(string $stage, string $fleetSlug, array $payload): void
+    {
+        $region = (string) config('services.comfyui.aws_region', 'us-east-1');
+        $client = new SsmClient([
+            'version' => 'latest',
+            'region' => $region,
+        ]);
+
+        $client->putParameter([
+            'Name' => "/bp/{$stage}/fleets/{$fleetSlug}/desired_config",
+            'Value' => json_encode($payload, JSON_UNESCAPED_SLASHES),
+            'Type' => 'String',
+            'Overwrite' => true,
+        ]);
+    }
 }

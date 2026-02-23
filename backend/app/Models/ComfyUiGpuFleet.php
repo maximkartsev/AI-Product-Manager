@@ -9,6 +9,7 @@ class ComfyUiGpuFleet extends CentralModel
     protected $fillable = [
         'stage',
         'slug',
+        'template_slug',
         'name',
         'instance_types',
         'max_size',

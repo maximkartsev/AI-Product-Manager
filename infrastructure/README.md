@@ -37,11 +37,13 @@ Internet
 | **NetworkStack** | `bp-<stage>-network` | VPC (10.0.0.0/16, 2 AZs), subnets (public/private/isolated), NAT Gateway, 6 security groups, S3 gateway endpoint |
 | **DataStack** | `bp-<stage>-data` | RDS MariaDB 10.11, ElastiCache Redis 7.1, S3 media bucket, S3 logs bucket, CloudFront CDN, secrets (APP_KEY, fleet, OAuth) |
 | **ComputeStack** | `bp-<stage>-compute` | ECS Fargate cluster, ALB (HTTP/HTTPS), backend service (4 containers), frontend service, auto-scaling |
-| **GpuWorkerStack** | `bp-<stage>-gpu` | Per-fleet EC2 ASGs (100% Spot), step scaling 0→1, backlog tracking 1→N, scale-to-zero Lambda |
+| **GpuSharedStack** | `bp-<stage>-gpu-shared` | Shared scale-to-zero SNS + Lambda for per-fleet ASGs |
+| **GpuFleetStack** | `bp-<stage>-gpu-fleet-<fleet_slug>` | Per-fleet EC2 ASG (100% Spot), step scaling 0→1, backlog tracking 1→N |
+| **GpuWorkerStack** (legacy) | `bp-<stage>-gpu` | Monolithic per-fleet ASGs (legacy path; superseded by per-fleet stacks) |
 | **MonitoringStack** | `bp-<stage>-monitoring` | CloudWatch dashboard, P1/P2/P3 alarms, SNS alert topic, GPU worker log groups |
 | **CiCdStack** | `bp-<stage>-cicd` | ECR repositories (backend + frontend) with lifecycle policies (keep last 10 images) |
 
-Dependency chain: `Network → Data → Compute → GPU → Monitoring`. CiCd is standalone.
+Dependency chain: `Network → Data → Compute → GPU-Shared → GPU-Fleet → Monitoring`. CiCd is standalone.
 
 ### Cost Estimates (us-east-1, staging)
 

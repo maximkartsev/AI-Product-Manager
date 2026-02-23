@@ -14,13 +14,14 @@ export interface GpuWorkerStackProps extends cdk.StackProps {
   readonly fleets: FleetConfig[];
   readonly apiBaseUrl: string;
   readonly modelsBucket: s3.IBucket;
+  readonly scaleToZeroTopicArn?: string;
 }
 
 export class GpuWorkerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: GpuWorkerStackProps) {
     super(scope, id, props);
 
-    const { config, vpc, sgGpuWorkers, fleets, apiBaseUrl, modelsBucket } = props;
+    const { config, vpc, sgGpuWorkers, fleets, apiBaseUrl, modelsBucket, scaleToZeroTopicArn } = props;
     const stage = config.stage;
 
     // Create per-fleet ASGs
@@ -38,6 +39,7 @@ export class GpuWorkerStack extends cdk.Stack {
         apiBaseUrl,
         stage,
         modelsBucket,
+        scaleToZeroTopicArn,
       });
 
       fleetAsgs.push({
@@ -47,11 +49,13 @@ export class GpuWorkerStack extends cdk.Stack {
       });
     }
 
-    // Shared scale-to-zero Lambda (one Lambda for all fleets)
-    new ScaleToZeroLambda(this, 'ScaleToZero', {
-      stage,
-      fleets: fleetAsgs,
-    });
+    // Shared scale-to-zero Lambda (one Lambda for all fleets) when no shared topic is provided
+    if (!scaleToZeroTopicArn) {
+      new ScaleToZeroLambda(this, 'ScaleToZero', {
+        stage,
+        fleets: fleetAsgs,
+      });
+    }
 
     // ========================================
     // Outputs

@@ -4,7 +4,7 @@ import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cw_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as sns from 'aws-cdk-lib/aws-sns';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
@@ -93,13 +93,6 @@ export class FleetAsg extends Construct {
       actions: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
       resources: [`arn:aws:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:log-group:/gpu-workers/${fleetSlug}:*`],
     }));
-
-    // Active bundle pointer for this fleet
-    new ssm.StringParameter(this, 'ActiveBundleParam', {
-      parameterName: `/bp/${stage}/fleets/${fleetSlug}/active_bundle`,
-      stringValue: 'none',
-      description: `Active ComfyUI asset bundle for fleet ${fleetSlug} (${stage})`,
-    });
 
     // User data script
     const userData = ec2.UserData.forLinux();
@@ -286,6 +279,11 @@ export class FleetAsg extends Construct {
       comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.BREACHING,
     });
+
+    if (props.scaleToZeroTopicArn) {
+      const topic = sns.Topic.fromTopicArn(this, 'ScaleToZeroTopic', props.scaleToZeroTopicArn);
+      this.queueEmptyAlarm.addAlarmAction(new cw_actions.SnsAction(topic));
+    }
 
     NagSuppressions.addResourceSuppressions(workerRole, [
       { id: 'AwsSolutions-IAM4', reason: 'Uses AWS managed policies for SSM' },

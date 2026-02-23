@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
 /**
  * Fleet configuration for GPU worker ASGs.
  *
@@ -33,6 +36,72 @@ export interface FleetConfig {
   readonly scaleToZeroMinutes?: number;
 }
 
+export interface FleetTemplate {
+  readonly templateSlug: string;
+  readonly displayName: string;
+  readonly allowedInstanceTypes: string[];
+  readonly maxSize: number;
+  readonly warmupSeconds?: number;
+  readonly backlogTarget?: number;
+  readonly scaleToZeroMinutes?: number;
+}
+
+type FleetTemplateRecord = {
+  template_slug: string;
+  display_name: string;
+  allowed_instance_types: string[];
+  max_size: number;
+  warmup_seconds?: number | null;
+  backlog_target?: number | null;
+  scale_to_zero_minutes?: number | null;
+};
+
+const TEMPLATES_PATH = path.resolve(
+  __dirname,
+  '../../../backend/resources/comfyui/fleet-templates.json'
+);
+
+function loadFleetTemplates(): FleetTemplate[] {
+  if (!fs.existsSync(TEMPLATES_PATH)) {
+    throw new Error(`Fleet templates file not found: ${TEMPLATES_PATH}`);
+  }
+
+  const raw = fs.readFileSync(TEMPLATES_PATH, 'utf-8');
+  const parsed = JSON.parse(raw) as FleetTemplateRecord[];
+  if (!Array.isArray(parsed)) {
+    throw new Error('Fleet templates must be a JSON array.');
+  }
+
+  const seen = new Set<string>();
+  return parsed.map((item) => {
+    if (!item.template_slug || !item.display_name) {
+      throw new Error('Fleet template missing template_slug or display_name.');
+    }
+    if (!Array.isArray(item.allowed_instance_types) || item.allowed_instance_types.length === 0) {
+      throw new Error(`Fleet template ${item.template_slug} must define allowed_instance_types.`);
+    }
+    if (typeof item.max_size !== 'number') {
+      throw new Error(`Fleet template ${item.template_slug} must define max_size.`);
+    }
+    if (seen.has(item.template_slug)) {
+      throw new Error(`Duplicate fleet template slug: ${item.template_slug}`);
+    }
+    seen.add(item.template_slug);
+
+    return {
+      templateSlug: item.template_slug,
+      displayName: item.display_name,
+      allowedInstanceTypes: item.allowed_instance_types,
+      maxSize: item.max_size,
+      warmupSeconds: item.warmup_seconds ?? undefined,
+      backlogTarget: item.backlog_target ?? undefined,
+      scaleToZeroMinutes: item.scale_to_zero_minutes ?? undefined,
+    };
+  });
+}
+
+export const FLEET_TEMPLATES: FleetTemplate[] = loadFleetTemplates();
+
 /**
  * Active fleet configurations.
  *
@@ -40,14 +109,16 @@ export interface FleetConfig {
  * Packer build pipeline. If amiSsmParameter is not provided, the
  * Fleet ASG construct will default to: /bp/ami/fleets/<stage>/<fleet-slug>
  */
-export const FLEETS: FleetConfig[] = [
-  {
-    slug: 'gpu-default',
-    displayName: 'Default GPU Fleet',
-    instanceTypes: ['g4dn.xlarge', 'g5.xlarge'],
-    maxSize: 10,
-    warmupSeconds: 300,
-    backlogTarget: 2,
-    scaleToZeroMinutes: 15,
-  },
-];
+export const FLEETS: FleetConfig[] = FLEET_TEMPLATES.map((template) => ({
+  slug: template.templateSlug,
+  displayName: template.displayName,
+  instanceTypes: template.allowedInstanceTypes,
+  maxSize: template.maxSize,
+  warmupSeconds: template.warmupSeconds,
+  backlogTarget: template.backlogTarget,
+  scaleToZeroMinutes: template.scaleToZeroMinutes,
+}));
+
+export function getFleetTemplateBySlug(slug: string): FleetTemplate | undefined {
+  return FLEET_TEMPLATES.find((template) => template.templateSlug === slug);
+}

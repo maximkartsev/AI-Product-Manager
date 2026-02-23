@@ -9,6 +9,8 @@ use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Workflow;
 use App\Services\ComfyUiAssetAuditService;
 use App\Services\ComfyUiFleetSsmService;
+use App\Services\ComfyUiFleetTemplateService;
+use InvalidArgumentException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -48,6 +50,13 @@ class ComfyUiFleetsController extends BaseController
         ], 'GPU fleets retrieved successfully');
     }
 
+    public function templates(ComfyUiFleetTemplateService $templates): JsonResponse
+    {
+        return $this->sendResponse([
+            'items' => $templates->all(),
+        ], 'Fleet templates retrieved successfully');
+    }
+
     public function show($id): JsonResponse
     {
         $fleet = ComfyUiGpuFleet::query()
@@ -60,19 +69,31 @@ class ComfyUiFleetsController extends BaseController
         return $this->sendResponse($fleet, 'Fleet retrieved successfully');
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, ComfyUiFleetTemplateService $templates, ComfyUiFleetSsmService $ssm): JsonResponse
     {
+        $forbiddenFields = [
+            'instance_types',
+            'max_size',
+            'warmup_seconds',
+            'backlog_target',
+            'scale_to_zero_minutes',
+            'ami_ssm_parameter',
+        ];
+        $forbiddenTouched = array_filter($forbiddenFields, fn ($field) => $request->has($field));
+        if (!empty($forbiddenTouched)) {
+            $errors = [];
+            foreach ($forbiddenTouched as $field) {
+                $errors[$field] = ['This field cannot be set via the API.'];
+            }
+            return $this->sendError('Validation Error', $errors, 422);
+        }
+
         $validator = Validator::make($request->all(), [
             'stage' => 'string|required|in:staging,production',
             'slug' => 'string|required|max:128',
             'name' => 'string|required|max:255',
-            'instance_types' => 'array|nullable',
-            'instance_types.*' => 'string|max:64',
-            'max_size' => 'integer|required|min:0',
-            'warmup_seconds' => 'integer|nullable|min:0',
-            'backlog_target' => 'integer|nullable|min:0',
-            'scale_to_zero_minutes' => 'integer|nullable|min:0',
-            'ami_ssm_parameter' => 'string|nullable|max:255',
+            'template_slug' => 'string|required|max:128',
+            'instance_type' => 'string|required|max:64',
         ]);
 
         if ($validator->fails()) {
@@ -81,53 +102,124 @@ class ComfyUiFleetsController extends BaseController
 
         $stage = $request->input('stage');
         $slug = $request->input('slug');
-        $amiParam = $request->input('ami_ssm_parameter')
-            ?: "/bp/ami/fleets/{$stage}/{$slug}";
+        $templateSlug = $request->input('template_slug');
+        $instanceType = $request->input('instance_type');
+
+        try {
+            $template = $templates->requireTemplate($templateSlug);
+        } catch (InvalidArgumentException $e) {
+            return $this->sendError('Validation Error', ['template_slug' => [$e->getMessage()]], 422);
+        }
+
+        if (!in_array($instanceType, $template['allowed_instance_types'], true)) {
+            return $this->sendError('Validation Error', [
+                'instance_type' => ['Instance type is not allowed for this template.'],
+            ], 422);
+        }
+
+        $amiParam = "/bp/ami/fleets/{$stage}/{$slug}";
 
         $fleet = ComfyUiGpuFleet::query()->create([
             'stage' => $stage,
             'slug' => $slug,
+            'template_slug' => $templateSlug,
             'name' => $request->input('name'),
-            'instance_types' => $request->input('instance_types'),
-            'max_size' => $request->input('max_size'),
-            'warmup_seconds' => $request->input('warmup_seconds'),
-            'backlog_target' => $request->input('backlog_target'),
-            'scale_to_zero_minutes' => $request->input('scale_to_zero_minutes'),
+            'instance_types' => [$instanceType],
+            'max_size' => $template['max_size'],
+            'warmup_seconds' => $template['warmup_seconds'],
+            'backlog_target' => $template['backlog_target'],
+            'scale_to_zero_minutes' => $template['scale_to_zero_minutes'],
             'ami_ssm_parameter' => $amiParam,
+        ]);
+
+        $ssm->putDesiredFleetConfig($stage, $slug, [
+            'version' => 1,
+            'template_slug' => $templateSlug,
+            'instance_type' => $instanceType,
+            'ami_ssm_parameter' => $amiParam,
+            'enabled' => true,
         ]);
 
         return $this->sendResponse($fleet, 'Fleet created successfully', [], 201);
     }
 
-    public function update(Request $request, $id): JsonResponse
+    public function update(Request $request, $id, ComfyUiFleetTemplateService $templates, ComfyUiFleetSsmService $ssm): JsonResponse
     {
         $fleet = ComfyUiGpuFleet::query()->find($id);
         if (!$fleet) {
             return $this->sendError('Fleet not found', [], 404);
         }
 
+        $forbiddenFields = [
+            'instance_types',
+            'max_size',
+            'warmup_seconds',
+            'backlog_target',
+            'scale_to_zero_minutes',
+            'ami_ssm_parameter',
+        ];
+        $forbiddenTouched = array_filter($forbiddenFields, fn ($field) => $request->has($field));
+        if (!empty($forbiddenTouched)) {
+            $errors = [];
+            foreach ($forbiddenTouched as $field) {
+                $errors[$field] = ['This field cannot be updated via the API.'];
+            }
+            return $this->sendError('Validation Error', $errors, 422);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'string|nullable|max:255',
-            'instance_types' => 'array|nullable',
-            'instance_types.*' => 'string|max:64',
-            'max_size' => 'integer|nullable|min:0',
-            'warmup_seconds' => 'integer|nullable|min:0',
-            'backlog_target' => 'integer|nullable|min:0',
-            'scale_to_zero_minutes' => 'integer|nullable|min:0',
-            'ami_ssm_parameter' => 'string|nullable|max:255',
+            'template_slug' => 'string|nullable|max:128',
+            'instance_type' => 'string|nullable|max:64',
         ]);
 
         if ($validator->fails()) {
             return $this->sendError('Validation Error', $validator->errors(), 422);
         }
 
-        foreach (['name', 'instance_types', 'max_size', 'warmup_seconds', 'backlog_target', 'scale_to_zero_minutes', 'ami_ssm_parameter'] as $field) {
-            if ($request->has($field)) {
-                $fleet->{$field} = $request->input($field);
+        if ($request->has('name')) {
+            $fleet->name = $request->input('name');
+        }
+
+        if ($request->has('template_slug') || $request->has('instance_type')) {
+            $templateSlug = $request->input('template_slug', $fleet->template_slug);
+            $instanceType = $request->input('instance_type', ($fleet->instance_types[0] ?? null));
+
+            if (!$instanceType) {
+                return $this->sendError('Validation Error', [
+                    'instance_type' => ['Instance type is required.'],
+                ], 422);
             }
+
+            try {
+                $template = $templates->requireTemplate($templateSlug);
+            } catch (InvalidArgumentException $e) {
+                return $this->sendError('Validation Error', ['template_slug' => [$e->getMessage()]], 422);
+            }
+
+            if (!in_array($instanceType, $template['allowed_instance_types'], true)) {
+                return $this->sendError('Validation Error', [
+                    'instance_type' => ['Instance type is not allowed for this template.'],
+                ], 422);
+            }
+
+            $fleet->template_slug = $templateSlug;
+            $fleet->instance_types = [$instanceType];
+            $fleet->max_size = $template['max_size'];
+            $fleet->warmup_seconds = $template['warmup_seconds'];
+            $fleet->backlog_target = $template['backlog_target'];
+            $fleet->scale_to_zero_minutes = $template['scale_to_zero_minutes'];
         }
 
         $fleet->save();
+
+        $ssm->putDesiredFleetConfig($fleet->stage, $fleet->slug, [
+            'version' => 1,
+            'template_slug' => $fleet->template_slug,
+            'instance_type' => $fleet->instance_types[0] ?? null,
+            'ami_ssm_parameter' => $fleet->ami_ssm_parameter,
+            'enabled' => true,
+        ]);
 
         return $this->sendResponse($fleet, 'Fleet updated successfully');
     }

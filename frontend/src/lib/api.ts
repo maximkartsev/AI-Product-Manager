@@ -1353,6 +1353,7 @@ export type ComfyUiGpuFleet = {
   id: number;
   stage: string;
   slug: string;
+  template_slug?: string | null;
   name: string;
   instance_types?: string[] | null;
   max_size: number;
@@ -1377,6 +1378,16 @@ export type ComfyUiGpuFleet = {
   };
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type ComfyUiFleetTemplate = {
+  template_slug: string;
+  display_name: string;
+  allowed_instance_types: string[];
+  max_size: number;
+  warmup_seconds?: number | null;
+  backlog_target?: number | null;
+  scale_to_zero_minutes?: number | null;
 };
 
 export type ComfyUiAssetAuditLog = {
@@ -1516,12 +1527,8 @@ export type ComfyUiFleetCreateRequest = {
   stage: "staging" | "production";
   slug: string;
   name: string;
-  instance_types?: string[] | null;
-  max_size: number;
-  warmup_seconds?: number | null;
-  backlog_target?: number | null;
-  scale_to_zero_minutes?: number | null;
-  ami_ssm_parameter?: string | null;
+  template_slug: string;
+  instance_type: string;
 };
 
 export type ComfyUiFleetUpdateRequest = Partial<Omit<ComfyUiFleetCreateRequest, "stage" | "slug">>;
@@ -1645,6 +1652,10 @@ export async function getComfyUiFleets(params: {
   if (params.order) query.set("order", params.order);
   appendFilterParams(query, params.filters);
   return apiRequest<ComfyUiFleetsIndexData>(`/admin/comfyui-fleets?${query.toString()}`, { method: "GET" });
+}
+
+export function getComfyUiFleetTemplates(): Promise<{ items: ComfyUiFleetTemplate[] }> {
+  return apiGet("/admin/comfyui-fleets/templates");
 }
 
 export function createComfyUiFleet(payload: ComfyUiFleetCreateRequest): Promise<ComfyUiGpuFleet> {

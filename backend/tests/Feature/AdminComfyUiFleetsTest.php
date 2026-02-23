@@ -52,10 +52,16 @@ class AdminComfyUiFleetsTest extends TestCase
 
         $this->fakeSsm = new class extends ComfyUiFleetSsmService {
             public array $calls = [];
+            public array $desiredCalls = [];
 
             public function putActiveBundle(string $stage, string $fleetSlug, string $bundlePrefix): void
             {
                 $this->calls[] = compact('stage', 'fleetSlug', 'bundlePrefix');
+            }
+
+            public function putDesiredFleetConfig(string $stage, string $fleetSlug, array $payload): void
+            {
+                $this->desiredCalls[] = compact('stage', 'fleetSlug', 'payload');
             }
         };
 
@@ -116,7 +122,8 @@ class AdminComfyUiFleetsTest extends TestCase
             'stage' => 'staging',
             'slug' => 'gpu-default',
             'name' => 'Default GPU Fleet',
-            'max_size' => 5,
+            'template_slug' => 'gpu-default',
+            'instance_type' => 'g4dn.xlarge',
         ]);
 
         $response->assertStatus(201)
@@ -126,6 +133,26 @@ class AdminComfyUiFleetsTest extends TestCase
         $this->assertNotNull($fleet);
         $this->assertSame('staging', $fleet->stage);
         $this->assertSame('/bp/ami/fleets/staging/gpu-default', $fleet->ami_ssm_parameter);
+        $this->assertSame('gpu-default', $fleet->template_slug);
+        $this->assertSame(['g4dn.xlarge'], $fleet->instance_types);
+        $this->assertSame(10, $fleet->max_size);
+
+        $this->assertCount(1, $this->fakeSsm->desiredCalls);
+        $this->assertSame('staging', $this->fakeSsm->desiredCalls[0]['stage']);
+        $this->assertSame('gpu-default', $this->fakeSsm->desiredCalls[0]['fleetSlug']);
+    }
+
+    public function test_fleets_store_rejects_invalid_instance_type(): void
+    {
+        $response = $this->adminPost('/api/admin/comfyui-fleets', [
+            'stage' => 'staging',
+            'slug' => 'gpu-invalid',
+            'name' => 'Invalid Fleet',
+            'template_slug' => 'gpu-default',
+            'instance_type' => 'p3.2xlarge',
+        ]);
+
+        $response->assertStatus(422);
     }
 
     public function test_fleets_update_persists_changes(): void
@@ -133,13 +160,15 @@ class AdminComfyUiFleetsTest extends TestCase
         $fleet = ComfyUiGpuFleet::query()->create([
             'stage' => 'staging',
             'slug' => 'gpu-default',
+            'template_slug' => 'gpu-default',
             'name' => 'Default GPU Fleet',
-            'max_size' => 5,
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 10,
         ]);
 
         $response = $this->adminPatch("/api/admin/comfyui-fleets/{$fleet->id}", [
             'name' => 'Updated Fleet',
-            'max_size' => 8,
+            'instance_type' => 'g5.xlarge',
         ]);
 
         $response->assertStatus(200)
@@ -147,7 +176,25 @@ class AdminComfyUiFleetsTest extends TestCase
 
         $fleet->refresh();
         $this->assertSame('Updated Fleet', $fleet->name);
-        $this->assertSame(8, $fleet->max_size);
+        $this->assertSame(['g5.xlarge'], $fleet->instance_types);
+    }
+
+    public function test_fleets_update_rejects_scaling_changes(): void
+    {
+        $fleet = ComfyUiGpuFleet::query()->create([
+            'stage' => 'staging',
+            'slug' => 'gpu-default',
+            'template_slug' => 'gpu-default',
+            'name' => 'Default GPU Fleet',
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 10,
+        ]);
+
+        $response = $this->adminPatch("/api/admin/comfyui-fleets/{$fleet->id}", [
+            'max_size' => 99,
+        ]);
+
+        $response->assertStatus(422);
     }
 
     public function test_fleets_assign_workflows_creates_mapping(): void
@@ -183,8 +230,10 @@ class AdminComfyUiFleetsTest extends TestCase
         $fleet = ComfyUiGpuFleet::query()->create([
             'stage' => 'staging',
             'slug' => 'gpu-default',
+            'template_slug' => 'gpu-default',
             'name' => 'Default GPU Fleet',
-            'max_size' => 5,
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 10,
         ]);
         $bundle = ComfyUiAssetBundle::query()->create([
             'bundle_id' => (string) Str::uuid(),

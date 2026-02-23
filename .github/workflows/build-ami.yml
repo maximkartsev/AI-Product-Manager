@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: 'staging'
+      aws_region:
+        description: 'AWS region'
+        required: false
+        type: string
+        default: 'us-east-1'
       instance_type:
         description: 'Instance type for AMI build'
         required: false
@@ -33,13 +38,18 @@ on:
         description: 'Optional: IAM instance profile for Packer build instance (S3 read)'
         required: false
         type: string
+      start_instance_refresh:
+        description: 'Optional: trigger ASG instance refresh after AMI update'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ${{ inputs.aws_region }}
 
 jobs:
   build-ami:
@@ -51,7 +61,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Packer
@@ -106,6 +116,22 @@ jobs:
             --overwrite
           echo "Updated SSM parameter /bp/ami/fleets/${{ inputs.stage }}/${{ inputs.fleet_slug }} = ${{ steps.build.outputs.ami_id }}"
 
+      - name: Start instance refresh (optional)
+        if: inputs.start_instance_refresh
+        run: |
+          set -euo pipefail
+          ASG_NAME="asg-${{ inputs.stage }}-${{ inputs.fleet_slug }}"
+          if ! aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names "$ASG_NAME" \
+            --query "AutoScalingGroups[0].AutoScalingGroupName" \
+            --output text >/dev/null 2>&1; then
+            echo "ASG $ASG_NAME not found. Provision the fleet ASG first." >&2
+            exit 1
+          fi
+
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name "$ASG_NAME"
+
       - name: Summary
         run: |
           echo "## AMI Build Complete" >> $GITHUB_STEP_SUMMARY
@@ -115,3 +141,6 @@ jobs:
           echo "- **AMI ID:** ${{ steps.build.outputs.ami_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "- **SSM Parameter:** /bp/ami/fleets/${{ inputs.stage }}/${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.start_instance_refresh }}" == "true" ]]; then
+            echo "- **Instance Refresh:** started for asg-${{ inputs.stage }}-${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY
+          fi

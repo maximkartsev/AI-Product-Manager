@@ -1,0 +1,11 @@
+[
+  {
+    "template_slug": "gpu-default",
+    "display_name": "Default GPU Fleet",
+    "allowed_instance_types": ["g4dn.xlarge", "g5.xlarge"],
+    "max_size": 10,
+    "warmup_seconds": 300,
+    "backlog_target": 2,
+    "scale_to_zero_minutes": 15
+  }
+]

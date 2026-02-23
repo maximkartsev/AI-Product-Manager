@@ -112,7 +112,7 @@ jobs:
           [[ "${DEPLOY_NETWORK}" == "true" ]] && stacks+=("${prefix}-network")
           [[ "${DEPLOY_DATA}" == "true" ]] && stacks+=("${prefix}-data")
           [[ "${DEPLOY_COMPUTE}" == "true" ]] && stacks+=("${prefix}-compute")
-          [[ "${DEPLOY_GPU}" == "true" ]] && stacks+=("${prefix}-gpu")
+          [[ "${DEPLOY_GPU}" == "true" ]] && stacks+=("${prefix}-gpu-shared")
           [[ "${DEPLOY_MONITORING}" == "true" ]] && stacks+=("${prefix}-monitoring")
           [[ "${DEPLOY_CICD}" == "true" ]] && stacks+=("${prefix}-cicd")
 
@@ -130,6 +130,9 @@ jobs:
             echo "- **Stage:** ${STAGE}"
             echo "- **Region:** ${AWS_REGION}"
             echo "- **Stacks:** ${stacks[*]}"
+            if [[ "${DEPLOY_GPU}" == "true" ]]; then
+              echo "- **GPU note:** Per-fleet ASGs are provisioned via provision-gpu-fleet.yml"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CDK context args
@@ -212,7 +215,7 @@ jobs:
           [[ "${DEPLOY_NETWORK}" == "true" ]] && stacks+=("${prefix}-network")
           [[ "${DEPLOY_DATA}" == "true" ]] && stacks+=("${prefix}-data")
           [[ "${DEPLOY_COMPUTE}" == "true" ]] && stacks+=("${prefix}-compute")
-          [[ "${DEPLOY_GPU}" == "true" ]] && stacks+=("${prefix}-gpu")
+          [[ "${DEPLOY_GPU}" == "true" ]] && stacks+=("${prefix}-gpu-shared")
           [[ "${DEPLOY_MONITORING}" == "true" ]] && stacks+=("${prefix}-monitoring")
           [[ "${DEPLOY_CICD}" == "true" ]] && stacks+=("${prefix}-cicd")
 
@@ -230,6 +233,9 @@ jobs:
             echo "- **Stage:** ${STAGE}"
             echo "- **Region:** ${AWS_REGION}"
             echo "- **Stacks:** ${stacks[*]}"
+            if [[ "${DEPLOY_GPU}" == "true" ]]; then
+              echo "- **GPU note:** Per-fleet ASGs are provisioned via provision-gpu-fleet.yml"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CDK context args

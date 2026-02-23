@@ -120,16 +120,17 @@ That is “above target”, so the ASG scales out.
 - **Add a new workflow**
   - Create workflow in Admin UI and assign it to a fleet
   - Ensure the fleet’s active bundle includes required assets
-  - Only update `fleets.ts` and deploy GPU stack if you need a **new fleet**
+  - Create the fleet in Admin UI (template + instance type), then run `provision-gpu-fleet.yml`
 
 ## How the infrastructure is wired (simple walkthrough)
 
 1. **NetworkStack** creates the private network (VPC), subnets, NAT, and security groups.
 2. **DataStack** creates RDS, Redis, S3 buckets, CloudFront, and secrets.
 3. **ComputeStack** creates ECS Fargate services and the ALB that routes traffic.
-4. **GpuWorkerStack** creates one ASG per fleet (from `FLEETS`).
-5. **MonitoringStack** creates dashboards, alarms, and alerts.
-6. **CiCdStack** creates ECR repositories for container images.
+4. **GpuSharedStack** creates the shared scale-to-zero SNS + Lambda.
+5. **GpuFleetStack** creates one ASG per fleet (provisioned via GitHub Actions).
+6. **MonitoringStack** creates dashboards, alarms, and alerts.
+7. **CiCdStack** creates ECR repositories for container images.
 
 These stacks are deployed in order so that later stacks can reference outputs from earlier ones.
 

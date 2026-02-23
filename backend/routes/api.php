@@ -178,6 +178,7 @@ Route::middleware([
             Route::get('/comfyui-assets/audit-logs/export', [AdminComfyUiAssetsController::class, 'auditLogsExport']);
 
             // ComfyUI Fleets
+            Route::get('/comfyui-fleets/templates', [AdminComfyUiFleetsController::class, 'templates']);
             Route::get('/comfyui-fleets', [AdminComfyUiFleetsController::class, 'index']);
             Route::post('/comfyui-fleets', [AdminComfyUiFleetsController::class, 'store']);
             Route::get('/comfyui-fleets/{id}', [AdminComfyUiFleetsController::class, 'show']);

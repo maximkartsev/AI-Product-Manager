@@ -8,10 +8,12 @@ import { NetworkStack } from '../lib/stacks/network-stack';
 import { DataStack } from '../lib/stacks/data-stack';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 import { GpuWorkerStack } from '../lib/stacks/gpu-worker-stack';
+import { GpuSharedStack } from '../lib/stacks/gpu-shared-stack';
+import { GpuFleetStack } from '../lib/stacks/gpu-fleet-stack';
 import { MonitoringStack } from '../lib/stacks/monitoring-stack';
 import { CiCdStack } from '../lib/stacks/cicd-stack';
 import { STAGING_CONFIG, PRODUCTION_CONFIG, type BpEnvironmentConfig } from '../lib/config/environment';
-import { FLEETS } from '../lib/config/fleets';
+import { FLEETS, getFleetTemplateBySlug } from '../lib/config/fleets';
 
 const app = new cdk.App();
 
@@ -22,6 +24,14 @@ const contextDomainName = app.node.tryGetContext('domainName');
 const contextCertArn = app.node.tryGetContext('certificateArn');
 const contextAlertEmail = app.node.tryGetContext('alertEmail');
 const contextBudgetUsdRaw = app.node.tryGetContext('budgetMonthlyUsd');
+const contextFleetSlug = app.node.tryGetContext('fleetSlug');
+const contextTemplateSlug = app.node.tryGetContext('templateSlug');
+const contextInstanceType = app.node.tryGetContext('instanceType');
+const wantsDynamicFleet = Boolean(contextFleetSlug || contextTemplateSlug || contextInstanceType);
+
+if (wantsDynamicFleet && (!contextFleetSlug || !contextTemplateSlug || !contextInstanceType)) {
+  throw new Error('fleetSlug, templateSlug, and instanceType are required for per-fleet GPU deployments.');
+}
 const contextBudgetUsd = contextBudgetUsdRaw !== undefined && contextBudgetUsdRaw !== ''
   ? Number(contextBudgetUsdRaw)
   : undefined;
@@ -48,7 +58,7 @@ if (owner) {
 }
 
 // --- Stack dependency chain ---
-// NetworkStack -> DataStack -> ComputeStack -> GpuWorkerStack -> MonitoringStack
+// NetworkStack -> DataStack -> ComputeStack -> GpuSharedStack -> GpuFleetStack -> MonitoringStack
 // CiCdStack is standalone
 
 const network = new NetworkStack(app, `${prefix}-network`, {
@@ -89,34 +99,78 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
 compute.addDependency(data);
 cdk.Tags.of(compute).add('Service', 'compute');
 
-const gpu = new GpuWorkerStack(app, `${prefix}-gpu`, {
+const gpuShared = new GpuSharedStack(app, `${prefix}-gpu-shared`, {
   env: config.env,
   config,
-  vpc: network.vpc,
-  sgGpuWorkers: network.sgGpuWorkers,
-  fleets: FLEETS,
-  apiBaseUrl: compute.apiBaseUrl,
-  modelsBucket: data.modelsBucket,
-  description: 'Per-fleet GPU ASGs with Spot instances and scale-to-zero',
+  description: 'Shared GPU scale-to-zero resources',
 });
-gpu.addDependency(compute);
-cdk.Tags.of(gpu).add('Service', 'gpu');
+cdk.Tags.of(gpuShared).add('Service', 'gpu-shared');
 
-const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
-  env: config.env,
-  config,
-  ecsCluster: compute.cluster,
-  albFullName: compute.albFullName,
-  albTargetGroupBackend: compute.tgBackendFullName,
-  backendServiceName: compute.backendServiceName,
-  frontendServiceName: compute.frontendServiceName,
-  dbInstanceId: data.dbInstanceId,
-  natGatewayIds: network.natGatewayIds,
-  fleets: FLEETS,
-  description: 'CloudWatch dashboard, alarms, SNS alerts',
-});
-monitoring.addDependency(gpu);
-cdk.Tags.of(monitoring).add('Service', 'monitoring');
+if (wantsDynamicFleet) {
+  const template = getFleetTemplateBySlug(contextTemplateSlug);
+  if (!template) {
+    throw new Error(`Unknown fleet template: ${contextTemplateSlug}`);
+  }
+  if (!template.allowedInstanceTypes.includes(contextInstanceType)) {
+    throw new Error(`Instance type ${contextInstanceType} is not allowed for template ${contextTemplateSlug}`);
+  }
+
+  const fleetConfig = {
+    slug: contextFleetSlug,
+    displayName: template.displayName,
+    instanceTypes: [contextInstanceType],
+    maxSize: template.maxSize,
+    warmupSeconds: template.warmupSeconds,
+    backlogTarget: template.backlogTarget,
+    scaleToZeroMinutes: template.scaleToZeroMinutes,
+  };
+
+  const gpuFleet = new GpuFleetStack(app, `${prefix}-gpu-fleet-${contextFleetSlug}`, {
+    env: config.env,
+    config,
+    vpc: network.vpc,
+    sgGpuWorkers: network.sgGpuWorkers,
+    fleet: fleetConfig,
+    apiBaseUrl: compute.apiBaseUrl,
+    modelsBucket: data.modelsBucket,
+    scaleToZeroTopicArn: gpuShared.scaleToZeroTopicArn,
+    description: `GPU ASG for fleet ${contextFleetSlug}`,
+  });
+  gpuFleet.addDependency(compute);
+  gpuFleet.addDependency(gpuShared);
+  cdk.Tags.of(gpuFleet).add('Service', 'gpu-fleet');
+} else {
+  const gpu = new GpuWorkerStack(app, `${prefix}-gpu`, {
+    env: config.env,
+    config,
+    vpc: network.vpc,
+    sgGpuWorkers: network.sgGpuWorkers,
+    fleets: FLEETS,
+    apiBaseUrl: compute.apiBaseUrl,
+    modelsBucket: data.modelsBucket,
+    scaleToZeroTopicArn: gpuShared.scaleToZeroTopicArn,
+    description: 'Per-fleet GPU ASGs with Spot instances and scale-to-zero',
+  });
+  gpu.addDependency(compute);
+  gpu.addDependency(gpuShared);
+  cdk.Tags.of(gpu).add('Service', 'gpu');
+
+  const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
+    env: config.env,
+    config,
+    ecsCluster: compute.cluster,
+    albFullName: compute.albFullName,
+    albTargetGroupBackend: compute.tgBackendFullName,
+    backendServiceName: compute.backendServiceName,
+    frontendServiceName: compute.frontendServiceName,
+    dbInstanceId: data.dbInstanceId,
+    natGatewayIds: network.natGatewayIds,
+    fleets: FLEETS,
+    description: 'CloudWatch dashboard, alarms, SNS alerts',
+  });
+  monitoring.addDependency(gpu);
+  cdk.Tags.of(monitoring).add('Service', 'monitoring');
+}
 
 const cicd = new CiCdStack(app, `${prefix}-cicd`, {
   env: config.env,

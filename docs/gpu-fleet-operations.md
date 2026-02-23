@@ -9,6 +9,7 @@ This system uses:
 - **Manifest-only bundles** in S3: `bundles/<bundle_id>/manifest.json`
 - **Shared GPU fleet** (e.g., `gpu-default`) that can run many workflows
 - **Active bundle pointers** in SSM: `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
+- **Desired fleet config** in SSM: `/bp/<stage>/fleets/<fleet_slug>/desired_config`
 
 Workers boot from a fleet AMI, apply the active bundle, then self-register to the backend and pull jobs.
 
@@ -19,7 +20,8 @@ Workers boot from a fleet AMI, apply the active bundle, then self-register to th
 Ensure the following are deployed for the target stage:
 - `bp-<stage>-data` (models/logs buckets + SSM pointers)
 - `bp-<stage>-compute` (backend/frontend services)
-- `bp-<stage>-gpu` (fleet ASG + user-data)
+- `bp-<stage>-gpu-shared` (scale-to-zero SNS + Lambda)
+- `bp-<stage>-gpu-fleet-<fleet_slug>` (per-fleet ASG + user-data)
 
 #### Check that the stacks exist
 
@@ -37,7 +39,7 @@ aws configure get region
 # Check each required stack directly (prints StackStatus; errors if missing)
 aws cloudformation describe-stacks --stack-name "bp-${STAGE}-data" --query "Stacks[0].StackStatus" --output text
 aws cloudformation describe-stacks --stack-name "bp-${STAGE}-compute" --query "Stacks[0].StackStatus" --output text
-aws cloudformation describe-stacks --stack-name "bp-${STAGE}-gpu" --query "Stacks[0].StackStatus" --output text
+aws cloudformation describe-stacks --stack-name "bp-${STAGE}-gpu-shared" --query "Stacks[0].StackStatus" --output text
 ```
 
 Optional (requires `cloudformation:ListStacks` permission):
@@ -53,11 +55,11 @@ If you get `AccessDenied` for CloudFormation APIs, you need additional IAM permi
 
 AWS Console:
 - Go to **CloudFormation → Stacks**
-- Search for: `bp-<stage>-data`, `bp-<stage>-compute`, `bp-<stage>-gpu`
+- Search for: `bp-<stage>-data`, `bp-<stage>-compute`, `bp-<stage>-gpu-shared`
 
 #### If a stack is missing: deploy it (or redeploy)
 
-Stacks have dependencies: `bp-<stage>-network` → `bp-<stage>-data` → `bp-<stage>-compute` → `bp-<stage>-gpu` (monitoring is optional).
+Stacks have dependencies: `bp-<stage>-network` → `bp-<stage>-data` → `bp-<stage>-compute` → `bp-<stage>-gpu-shared` (monitoring is optional).
 
 Deploy the chain (from repo root):
 
@@ -73,7 +75,9 @@ npx cdk deploy --context stage=${STAGE} \
   bp-${STAGE}-network \
   bp-${STAGE}-data \
   bp-${STAGE}-compute \
-  bp-${STAGE}-gpu
+  bp-${STAGE}-gpu-shared
+
+Per-fleet stacks (`bp-<stage>-gpu-fleet-<fleet_slug>`) are provisioned via GitHub Actions (see Step 9 below).
 ```
 
 If you want *all* stacks (including monitoring/cicd), you can deploy everything:
@@ -390,7 +394,7 @@ Inputs:
 - `instance_id`: dev GPU EC2 instance ID
 - `fleet_slug`: e.g. `gpu-default`
 - `bundle_prefix`: `bundles/<bundle_id>`
-- `models_bucket`: `bp-models-<account>-<stage>`
+- `models_bucket` (optional): `bp-models-<account>-<stage>` (derived from `/bp/<stage>/models/bucket` if omitted)
 
 This runs SSM to execute:
 `MODELS_BUCKET=... BUNDLE_PREFIX=... /opt/comfyui/bin/apply-bundle.sh`
@@ -418,7 +422,32 @@ Required fields:
   - text properties use placeholders (e.g., `{{PROMPT}}`) and are replaced server-side
   - image/video properties are handled by the worker asset pipeline
 
-### Step 8: Assign workflow to the shared fleet
+### Step 8: Create or update the fleet in Admin UI
+
+Path: **Admin → ComfyUI → Fleets** (`/admin/comfyui/fleets`)
+
+- Select a **Template** and **Instance Type** (single choice from the template allowlist).
+- Scaling settings are derived from the template and **cannot** be edited in the UI.
+
+This writes the desired config to SSM:
+`/bp/<stage>/fleets/<fleet_slug>/desired_config`
+
+### Step 9: Provision the fleet ASG (GitHub Actions)
+
+Run GitHub Action: **Provision GPU Fleet** (`.github/workflows/provision-gpu-fleet.yml`)
+
+Inputs:
+- `stage`
+- `fleet_slug`
+
+This reads `/bp/<stage>/fleets/<fleet_slug>/desired_config` and deploys:
+- `bp-<stage>-gpu-shared`
+- `bp-<stage>-gpu-fleet-<fleet_slug>`
+
+If you later change the template or instance type, run **Apply GPU Fleet Config**
+(`.github/workflows/apply-gpu-fleet-config.yml`) to update the existing fleet stack.
+
+### Step 10: Assign workflow to the fleet
 
 Because the fleet is shared, the active bundle must contain assets for all assigned workflows.
 
@@ -426,7 +455,7 @@ Use either:
 - **Admin → Workflows** → set **Staging Fleet**
 - **Admin → ComfyUI → Fleets** → assign workflows
 
-### Step 9: Activate the bundle for the staging fleet
+### Step 11: Activate the bundle for the staging fleet
 
 Path: **Admin → ComfyUI → Fleets** → **Manage** → select bundle → **Activate**
 
@@ -434,7 +463,7 @@ Writes to:
 - DB: `comfyui_gpu_fleets.active_bundle_id` / `active_bundle_s3_prefix`
 - SSM: `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
 
-### Step 10: Bake and deploy the fleet AMI
+### Step 12: Bake and deploy the fleet AMI
 
 Run GitHub Action: **Build GPU AMI** (`.github/workflows/build-ami.yml`)
 
@@ -444,6 +473,7 @@ Inputs:
 - `models_s3_bucket`: from `/bp/<stage>/models/bucket`
 - `models_s3_prefix`: `bundles/<bundle_id>`
 - `bundle_id`: `<bundle_id>`
+- `start_instance_refresh` (optional): triggers ASG refresh after AMI update
 
 This updates:
 `/bp/ami/fleets/<stage>/<fleet_slug> = ami-...`
@@ -480,6 +510,7 @@ The public effect exposes `configurable_properties` based on workflow properties
 
 ```bash
 aws ssm get-parameter --name /bp/<stage>/fleets/<fleet_slug>/active_bundle --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/<stage>/fleets/<fleet_slug>/desired_config --query Parameter.Value --output text
 aws ssm get-parameter --name /bp/ami/fleets/<stage>/<fleet_slug> --query Parameter.Value --output text
 aws ssm get-parameter --name /bp/<stage>/models/bucket --query Parameter.Value --output text
 ```
@@ -502,6 +533,19 @@ sudo systemctl status comfyui.service --no-pager
 sudo systemctl status comfyui-worker.service --no-pager
 sudo cat /opt/worker/env
 ```
+
+## Migration from monolithic GPU stack
+
+If you already have `bp-<stage>-gpu` deployed (monolithic fleets), migrate to per-fleet stacks as follows:
+
+1. Deploy the shared stack:
+   - `bp-<stage>-gpu-shared`
+2. Create/update the fleet in Admin UI (template + instance type) so `desired_config` is written.
+3. Run **Provision GPU Fleet** for that fleet slug.
+4. Verify workers register and jobs execute as expected.
+5. When stable, delete the old `bp-<stage>-gpu` stack (after ensuring all fleets are migrated).
+
+Note: the shared stack uses `bp-<stage>-scale-to-zero` SNS/Lambda. If the old stack already owns this topic, delete or migrate the old stack first to avoid name conflicts.
 
 ### Worker registration and routing
 - **Admin → Workers**: worker appears as `registration_source=fleet`

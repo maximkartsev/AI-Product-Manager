@@ -186,6 +186,7 @@ export class ComputeStack extends cdk.Stack {
       actions: ['ssm:PutParameter', 'ssm:GetParameter'],
       resources: [
         `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleets/*/active_bundle`,
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleets/*/desired_config`,
       ],
     }));
 

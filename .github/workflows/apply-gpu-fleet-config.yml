@@ -1,0 +1,174 @@
+name: Apply GPU Fleet Config
+
+run-name: Apply GPU Fleet Config (${{ inputs.stage }} / ${{ inputs.fleet_slug }}) by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Stage to update'
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      fleet_slug:
+        description: 'Fleet slug to update'
+        required: true
+        type: string
+      aws_region:
+        description: 'AWS region'
+        required: true
+        type: choice
+        default: us-east-1
+        options:
+          - us-east-1
+          - us-west-2
+      confirm_apply:
+        description: 'Set true to apply changes after diff'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: gpu-fleet-${{ inputs.stage }}-${{ inputs.fleet_slug }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ inputs.aws_region }}
+  STAGE: ${{ inputs.stage }}
+  FLEET_SLUG: ${{ inputs.fleet_slug }}
+
+jobs:
+  apply:
+    name: Apply Fleet Config
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.stage == 'production' && 'production-gpu-provision' || 'staging-gpu-provision' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || inputs.stage == 'staging' && (secrets.AWS_DEPLOY_ROLE_ARN_STAGING || secrets.AWS_DEPLOY_ROLE_ARN) }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure fleet stack exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          STACK_NAME="bp-${STAGE}-gpu-fleet-${FLEET_SLUG}"
+          aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].StackStatus" --output text >/dev/null
+
+      - name: Require explicit confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.confirm_apply }}" != "true" ]]; then
+            echo "confirm_apply must be set to true to apply changes." >&2
+            exit 1
+          fi
+
+      - name: Load desired fleet config
+        id: desired
+        shell: bash
+        run: |
+          set -euo pipefail
+          DESIRED_JSON=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/fleets/${FLEET_SLUG}/desired_config" \
+            --query "Parameter.Value" \
+            --output text)
+          export DESIRED_JSON
+
+          TEMPLATE_SLUG=$(python3 - <<'PY'
+          import json, os, sys
+          data = json.loads(os.environ["DESIRED_JSON"])
+          template_slug = data.get("template_slug")
+          instance_type = data.get("instance_type")
+          if not template_slug or not instance_type:
+            print("desired_config missing template_slug or instance_type", file=sys.stderr)
+            sys.exit(1)
+          print(template_slug)
+          PY
+          )
+
+          INSTANCE_TYPE=$(python3 - <<'PY'
+          import json, os, sys
+          data = json.loads(os.environ["DESIRED_JSON"])
+          instance_type = data.get("instance_type")
+          if not instance_type:
+            print("desired_config missing instance_type", file=sys.stderr)
+            sys.exit(1)
+          print(instance_type)
+          PY
+          )
+
+          python3 - <<'PY'
+          import json, os, sys
+          desired = json.loads(os.environ["DESIRED_JSON"])
+          template_slug = desired.get("template_slug")
+          instance_type = desired.get("instance_type")
+          with open("backend/resources/comfyui/fleet-templates.json", "r", encoding="utf-8") as handle:
+              templates = json.load(handle)
+          template = next((t for t in templates if t.get("template_slug") == template_slug), None)
+          if not template:
+              print(f"Unknown template_slug: {template_slug}", file=sys.stderr)
+              sys.exit(1)
+          allowed = template.get("allowed_instance_types") or []
+          if instance_type not in allowed:
+              print(f"Instance type {instance_type} not allowed for template {template_slug}", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+          echo "template_slug=$TEMPLATE_SLUG" >> "$GITHUB_OUTPUT"
+          echo "instance_type=$INSTANCE_TYPE" >> "$GITHUB_OUTPUT"
+
+      - name: Build CDK context args
+        shell: bash
+        run: |
+          set -euo pipefail
+          context_args="--context stage=${STAGE}"
+          context_args="${context_args} --context fleetSlug=${FLEET_SLUG}"
+          context_args="${context_args} --context templateSlug=${{ steps.desired.outputs.template_slug }}"
+          context_args="${context_args} --context instanceType=${{ steps.desired.outputs.instance_type }}"
+          echo "CDK_CONTEXT_ARGS=${context_args}" >> "$GITHUB_ENV"
+
+      - name: CDK diff
+        working-directory: infrastructure
+        run: |
+          npx cdk diff $CDK_CONTEXT_ARGS \
+            bp-${STAGE}-gpu-shared \
+            bp-${STAGE}-gpu-fleet-${FLEET_SLUG}
+
+      - name: CDK deploy
+        working-directory: infrastructure
+        run: |
+          npx cdk deploy $CDK_CONTEXT_ARGS \
+            bp-${STAGE}-gpu-shared \
+            bp-${STAGE}-gpu-fleet-${FLEET_SLUG} \
+            --require-approval never
+
+      - name: Summary
+        run: |
+          {
+            echo "## GPU Fleet Updated"
+            echo ""
+            echo "- **Stage:** ${STAGE}"
+            echo "- **Fleet:** ${FLEET_SLUG}"
+            echo "- **Template:** ${{ steps.desired.outputs.template_slug }}"
+            echo "- **Instance Type:** ${{ steps.desired.outputs.instance_type }}"
+          } >> "$GITHUB_STEP_SUMMARY"

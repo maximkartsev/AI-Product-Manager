@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       bundle_prefix:
-        description: 'Bundle S3 prefix (e.g. bundles/<owner_slug>/<bundle_id>)'
+        description: 'Bundle S3 prefix (e.g. bundles/<bundle_id>)'
         required: true
         type: string
       models_bucket:

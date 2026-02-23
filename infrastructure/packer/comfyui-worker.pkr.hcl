@@ -88,7 +88,7 @@ build {
       "if [ -n '${var.models_s3_bucket}' ] && [ -n '${var.models_s3_prefix}' ]; then",
       "  echo 'Applying bundle from S3 manifest...'",
       "  PREFIX='${var.models_s3_prefix}'",
-      "  PREFIX=${PREFIX%/}",
+      "  PREFIX=$${PREFIX%/}",
       "  MODELS_BUCKET='${var.models_s3_bucket}' BUNDLE_PREFIX=\"$PREFIX\" /opt/comfyui/bin/apply-bundle.sh",
       "  echo 'Bundle apply complete'",
       "else",

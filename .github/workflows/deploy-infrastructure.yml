@@ -52,12 +52,12 @@ on:
         type: boolean
         default: true
       domain_name:
-        description: 'Optional: custom domain (e.g. dzzzs.com)'
+        description: 'Optional: custom domain (e.g. dzzzs.com). Used only when Deploy: Compute stack is enabled.'
         required: false
         type: string
         default: ''
       certificate_arn:
-        description: 'Optional: ACM certificate ARN (same region as ALB)'
+        description: 'Optional: ACM certificate ARN (same region as ALB). Used only when Deploy: Compute stack is enabled.'
         required: false
         type: string
         default: ''

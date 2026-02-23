@@ -16,6 +16,7 @@ AMI_ID="${AMI_ID:-}"
 AMI_SSM_PARAM="${AMI_SSM_PARAM:-}"
 KEY_NAME="${KEY_NAME:-}"
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-}"
+AUTO_INSTANCE_PROFILE="${AUTO_INSTANCE_PROFILE:-true}"
 AUTO_SHUTDOWN_HOURS="${AUTO_SHUTDOWN_HOURS:-4}"
 VOLUME_SIZE="${VOLUME_SIZE:-100}"
 STAGE_INPUT="${STAGE:-}"
@@ -68,6 +69,172 @@ get_public_ip() {
     --instance-ids "$1" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
     --output text 2>/dev/null || echo "N/A"
+}
+
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_models_bucket() {
+  if [ -n "${MODELS_BUCKET:-}" ]; then
+    echo "$MODELS_BUCKET"
+    return 0
+  fi
+
+  aws ssm get-parameter \
+    --region "$AWS_REGION" \
+    --name "/bp/${STAGE}/models/bucket" \
+    --query 'Parameter.Value' \
+    --output text 2>/dev/null || true
+}
+
+ensure_default_instance_profile() {
+  if [ -n "$INSTANCE_PROFILE" ]; then
+    return 0
+  fi
+
+  local profile_name role_name inline_policy_name assume_doc models_bucket policy_doc
+  profile_name="bp-comfyui-dev-${STAGE}"
+  role_name="bp-comfyui-dev-${STAGE}"
+  inline_policy_name="bp-comfyui-dev-models-read"
+  assume_doc='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+
+  echo "Ensuring SSM-enabled IAM instance profile (${profile_name})..."
+
+  if ! aws iam get-role --role-name "$role_name" >/dev/null 2>&1; then
+    if ! aws iam create-role \
+      --role-name "$role_name" \
+      --assume-role-policy-document "$assume_doc" >/dev/null; then
+      echo "WARNING: Failed to create IAM role ${role_name}. Launching without an instance profile."
+      echo "         Fix: set INSTANCE_PROFILE to an existing SSM-enabled instance profile, or run with AUTO_INSTANCE_PROFILE=false."
+      return 1
+    fi
+  fi
+
+  if ! aws iam attach-role-policy \
+    --role-name "$role_name" \
+    --policy-arn "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" >/dev/null; then
+    echo "WARNING: Failed to attach AmazonSSMManagedInstanceCore to ${role_name}. Launching without an instance profile."
+    echo "         Fix: set INSTANCE_PROFILE to an existing SSM-enabled instance profile, or run with AUTO_INSTANCE_PROFILE=false."
+    return 1
+  fi
+
+  models_bucket="$(resolve_models_bucket || true)"
+  if [ -n "$models_bucket" ] && [ "$models_bucket" != "None" ]; then
+    policy_doc=$(cat <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::${models_bucket}/assets/*",
+        "arn:aws:s3:::${models_bucket}/bundles/*"
+      ]
+    }
+  ]
+}
+EOF
+)
+    aws iam put-role-policy \
+      --role-name "$role_name" \
+      --policy-name "$inline_policy_name" \
+      --policy-document "$policy_doc" >/dev/null || echo "WARNING: Failed to attach S3 read policy to ${role_name}."
+  else
+    echo "WARNING: Could not resolve /bp/${STAGE}/models/bucket and MODELS_BUCKET is empty."
+    echo "         Bundle apply may fail unless your instance role can read s3://<models-bucket>/assets/* and /bundles/*."
+  fi
+
+  if ! aws iam get-instance-profile --instance-profile-name "$profile_name" >/dev/null 2>&1; then
+    if ! aws iam create-instance-profile --instance-profile-name "$profile_name" >/dev/null; then
+      echo "WARNING: Failed to create IAM instance profile ${profile_name}. Launching without an instance profile."
+      echo "         Fix: set INSTANCE_PROFILE to an existing SSM-enabled instance profile, or run with AUTO_INSTANCE_PROFILE=false."
+      return 1
+    fi
+  fi
+
+  local roles_in_profile
+  roles_in_profile="$(aws iam get-instance-profile \
+    --instance-profile-name "$profile_name" \
+    --query 'InstanceProfile.Roles[].RoleName' \
+    --output text 2>/dev/null || true)"
+  if [ "$roles_in_profile" = "None" ]; then
+    roles_in_profile=""
+  fi
+  if ! echo " $roles_in_profile " | grep -q " $role_name "; then
+    if ! aws iam add-role-to-instance-profile \
+      --instance-profile-name "$profile_name" \
+      --role-name "$role_name" >/dev/null; then
+      echo "WARNING: Failed to add role ${role_name} to instance profile ${profile_name}. Launching without an instance profile."
+      echo "         Fix: set INSTANCE_PROFILE to an existing SSM-enabled instance profile, or run with AUTO_INSTANCE_PROFILE=false."
+      return 1
+    fi
+  fi
+
+  # IAM instance profile propagation to EC2 can take a few seconds.
+  sleep 10
+
+  INSTANCE_PROFILE="$profile_name"
+}
+
+ensure_instance_profile_for_launch() {
+  if [ -n "$INSTANCE_PROFILE" ]; then
+    return 0
+  fi
+  if ! is_truthy "$AUTO_INSTANCE_PROFILE"; then
+    return 0
+  fi
+  if ! ensure_default_instance_profile; then
+    return 0
+  fi
+}
+
+attach_instance_profile_if_missing() {
+  local instance_id="$1"
+
+  if ! is_truthy "$AUTO_INSTANCE_PROFILE"; then
+    return 0
+  fi
+
+  local current_profile_arn
+  current_profile_arn="$(aws ec2 describe-instances \
+    --region "$AWS_REGION" \
+    --instance-ids "$instance_id" \
+    --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' \
+    --output text 2>/dev/null || echo "None")"
+
+  if [ "$current_profile_arn" != "None" ] && [ -n "$current_profile_arn" ]; then
+    return 0
+  fi
+
+  if ! ensure_default_instance_profile; then
+    return 0
+  fi
+
+  echo "Attaching IAM instance profile to existing instance $instance_id..."
+  if [[ "$INSTANCE_PROFILE" == arn:* ]]; then
+    if ! aws ec2 associate-iam-instance-profile \
+      --region "$AWS_REGION" \
+      --instance-id "$instance_id" \
+      --iam-instance-profile "Arn=$INSTANCE_PROFILE" >/dev/null; then
+      echo "WARNING: Failed to attach instance profile to $instance_id."
+      return 1
+    fi
+  else
+    if ! aws ec2 associate-iam-instance-profile \
+      --region "$AWS_REGION" \
+      --instance-id "$instance_id" \
+      --iam-instance-profile "Name=$INSTANCE_PROFILE" >/dev/null; then
+      echo "WARNING: Failed to attach instance profile to $instance_id."
+      return 1
+    fi
+  fi
+
+  echo "  Instance profile attached. It may take 1-2 minutes to appear in SSM Managed Nodes."
 }
 
 configure_sg_ingress() {
@@ -158,6 +325,7 @@ if [ -n "$EXISTING_ID" ]; then
   EXISTING_STATE=$(get_instance_state "$EXISTING_ID")
 
   if [[ "$EXISTING_STATE" == "running" || "$EXISTING_STATE" == "pending" ]]; then
+    attach_instance_profile_if_missing "$EXISTING_ID" || true
     EXISTING_IP=$(get_public_ip "$EXISTING_ID")
     echo "Dev instance already running."
     echo "  Instance: $EXISTING_ID ($EXISTING_STATE)"
@@ -291,6 +459,8 @@ USER_DATA=$(sed "s/__AUTO_SHUTDOWN_HOURS__/$AUTO_SHUTDOWN_HOURS/g" "$SCRIPT_DIR/
 USER_DATA_B64=$(echo "$USER_DATA" | base64 -w 0 2>/dev/null || echo "$USER_DATA" | base64 | tr -d '\n')
 
 # ── Build launch params ─────────────────────────────────────────────────────
+ensure_instance_profile_for_launch
+
 LAUNCH_ARGS=(
   --region "$AWS_REGION"
   --image-id "$AMI_ID"

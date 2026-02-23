@@ -9,7 +9,7 @@ Launch a single GPU instance with the ComfyUI web UI accessible from the interne
 - **S3 read access** to the models bucket (required only if you plan to apply bundles via the GitHub Action)
 - **Production AMI** built via Packer and registered in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>` (or pass `AMI_ID` directly)
 - **EC2 key pair** (optional — only needed for SSH)
-- **Session Manager** (optional) requires an instance profile with `AmazonSSMManagedInstanceCore`
+- **Session Manager**: by default, `launch.sh` will try to create/attach an SSM-enabled instance profile (`bp-comfyui-dev-<stage>`) so the instance appears in Systems Manager. Set `AUTO_INSTANCE_PROFILE=false` to disable, or set `INSTANCE_PROFILE` to override.
 
 ## Quick Start
 
@@ -132,12 +132,12 @@ ssh -i ~/.ssh/comfyui-dev.pem ubuntu@<public-ip>
 
 ## Enable Session Manager (optional)
 
-1. Create an IAM role for EC2 with `AmazonSSMManagedInstanceCore`.
-2. Create an instance profile and attach the role.
-3. Launch with `INSTANCE_PROFILE`:
+By default, `launch.sh` will create/attach a profile automatically (see `AUTO_INSTANCE_PROFILE` below).
+
+To use a specific existing instance profile:
 
 ```bash
-INSTANCE_PROFILE=ComfyUiDevInstanceProfile ./launch.sh
+INSTANCE_PROFILE=MyExistingInstanceProfile ./launch.sh
 ```
 
 ## Configuration
@@ -155,6 +155,8 @@ All settings are via environment variables:
 | `AMI_ID` | *(from SSM)* | Override AMI ID instead of SSM lookup |
 | `KEY_NAME` | *(none)* | EC2 key pair name for SSH access |
 | `INSTANCE_PROFILE` | *(none)* | IAM instance profile (Name or ARN) for SSM Session Manager |
+| `AUTO_INSTANCE_PROFILE` | `true` | If `true` and `INSTANCE_PROFILE` is empty, attempt to create/attach `bp-comfyui-dev-<stage>` with `AmazonSSMManagedInstanceCore` (and S3 read to the models bucket if resolvable) |
+| `MODELS_BUCKET` | *(none)* | Optional: override models bucket name for attaching S3 read permissions to the auto-created dev role |
 | `AUTO_SHUTDOWN_HOURS` | `4` | Hours before auto-stop |
 | `VOLUME_SIZE` | `100` | Root volume size in GB |
 

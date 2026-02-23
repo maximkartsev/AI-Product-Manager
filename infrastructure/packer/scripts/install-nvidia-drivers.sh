@@ -3,16 +3,37 @@ set -euo pipefail
 
 echo "=== Installing NVIDIA drivers and CUDA toolkit ==="
 
-# Update system
+# Ensure base Ubuntu repo is present. Some images only include -updates/-security entries,
+# which can make common packages (e.g., build-essential) unavailable.
+CODENAME="$(. /etc/os-release && echo "${VERSION_CODENAME:-}")"
+if [ -z "${CODENAME}" ]; then
+  CODENAME="jammy"
+fi
+if ! grep -RqsE "^[^#]*deb .* ${CODENAME} .* main" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+  echo "Adding base Ubuntu repo for ${CODENAME} (main/restricted/universe/multiverse)."
+  echo "deb http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" | sudo tee "/etc/apt/sources.list.d/bp-${CODENAME}-base.list" > /dev/null
+fi
+
 sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 
 # Install kernel headers and build tools
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  linux-headers-$(uname -r) \
+if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential \
   dkms \
-  pkg-config
+  pkg-config \
+  "linux-headers-$(uname -r)"; then
+  # Fallback for AWS/generic kernels when exact headers aren't available
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    build-essential \
+    dkms \
+    pkg-config \
+    linux-headers-aws \
+    || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      build-essential \
+      dkms \
+      pkg-config \
+      linux-headers-generic
+fi
 
 # Add NVIDIA driver repository
 sudo apt-get install -y software-properties-common

@@ -39,11 +39,10 @@ Internet
 | **ComputeStack** | `bp-<stage>-compute` | ECS Fargate cluster, ALB (HTTP/HTTPS), backend service (4 containers), frontend service, auto-scaling |
 | **GpuSharedStack** | `bp-<stage>-gpu-shared` | Shared scale-to-zero SNS + Lambda for per-fleet ASGs |
 | **GpuFleetStack** | `bp-<stage>-gpu-fleet-<fleet_slug>` | Per-fleet EC2 ASG (100% Spot), step scaling 0→1, backlog tracking 1→N |
-| **GpuWorkerStack** (legacy) | `bp-<stage>-gpu` | Monolithic per-fleet ASGs (legacy path; superseded by per-fleet stacks) |
-| **MonitoringStack** | `bp-<stage>-monitoring` | CloudWatch dashboard, P1/P2/P3 alarms, SNS alert topic, GPU worker log groups |
+| **MonitoringStack** | `bp-<stage>-monitoring` | CloudWatch dashboard, P1/P2 alarms, SNS alert topic, optional budget alerts |
 | **CiCdStack** | `bp-<stage>-cicd` | ECR repositories (backend + frontend) with lifecycle policies (keep last 10 images) |
 
-Dependency chain: `Network → Data → Compute → GPU-Shared → GPU-Fleet → Monitoring`. CiCd is standalone.
+Dependency chain: `Network → Data → Compute → Monitoring`. GPU is `GpuShared → GpuFleet` (provisioned per fleet); CiCd is standalone.
 
 ### Cost Estimates (us-east-1, staging)
 
@@ -174,7 +173,7 @@ Stage is selected via CDK context: `npx cdk deploy --context stage=production`.
 
 Important: GitHub Actions **Environments** (e.g. `staging-migrations`) are GitHub approval/secret scopes, not the AWS “stage”.
 
-CI note: `.github/workflows/deploy.yml` is currently configured for **staging** (ECS cluster/services and ECR repos use `-staging`). To deploy production from CI you’d typically create a separate workflow (or add an input) and use a separate AWS role + GitHub environment approvals.
+CI note: `.github/workflows/deploy.yml` supports `stage` (staging/production). Production should use a separate AWS account and `AWS_DEPLOY_ROLE_ARN_PRODUCTION`.
 
 ### CDK Context (`cdk.json`)
 
@@ -191,7 +190,7 @@ CI note: `.github/workflows/deploy.yml` is currently configured for **staging** 
 You will usually use **two identities**:
 
 - **Local (you / CDK)**: AWS CLI credentials on your machine for `cdk diff/deploy`.
-- **CI (GitHub Actions)**: an IAM **role** assumed via OIDC (`AWS_DEPLOY_ROLE_ARN`). No IAM user keys stored in GitHub.
+- **CI (GitHub Actions)**: IAM **roles** assumed via OIDC (`AWS_DEPLOY_ROLE_ARN_STAGING` / `AWS_DEPLOY_ROLE_ARN_PRODUCTION`). No IAM user keys stored in GitHub.
 
 #### Local AWS CLI for CDK
 
@@ -208,29 +207,16 @@ CDK needs broad permissions across CloudFormation, IAM, EC2/VPC, ECS, ECR, ELBv2
 
 See [GitHub Actions to AWS (OIDC)](#github-actions-to-aws-oidc) for the exact trust policy, permissions, and GitHub secrets/environments.
 
-### Fleet Configuration (`lib/config/fleets.ts`)
+### Fleet templates (new approach)
 
-Each **fleet** gets a dedicated GPU ASG + AMI alias. Workflows are assigned to fleets **in the app** (Admin → Assets), not in infrastructure config.
+Fleet templates live in `backend/resources/comfyui/fleet-templates.json`.
 
-```typescript
-// lib/config/fleets.ts
-export const FLEETS: FleetConfig[] = [
-  {
-    slug: 'gpu-default',                // Fleet identifier (SSM/ASG naming)
-    displayName: 'Default GPU Fleet',   // CloudWatch dashboard label
-    // amiSsmParameter: '/bp/ami/fleets/staging/gpu-default', // optional override
-    instanceTypes: ['g4dn.xlarge', 'g5.xlarge'], // Spot priority order
-    maxSize: 10,                        // ASG max instances
-    warmupSeconds: 300,                 // Instance warmup for scaling
-    backlogTarget: 2,                   // Target jobs per instance
-    scaleToZeroMinutes: 15,             // Minutes at 0 queue before scale-in
-  },
-  // Add new fleets here, then run: npx cdk deploy bp-<stage>-gpu
-];
-```
+- **Backend**: validates `template_slug` + `instance_type` on fleet create/update and writes `/bp/<stage>/fleets/<fleet_slug>/desired_config` (SSM).
+- **Infrastructure**: reads the same templates file (via `lib/config/fleets.ts`) to validate CDK context and apply defaults (max size, warmup, backlog, scale-to-zero).
 
-If `amiSsmParameter` is not provided, the Fleet ASG defaults to:
-`/bp/ami/fleets/<stage>/<fleet-slug>`.
+Creating capacity is a separate, operator-driven step:
+- Create the fleet in the Admin UI.
+- Run GitHub Actions **Provision GPU Fleet** to create `bp-<stage>-gpu-fleet-<fleet_slug>`.
 
 ## Deployment
 
@@ -252,7 +238,7 @@ npx cdk deploy bp-staging-cicd
 #    See "Docker Images" section below
 
 # 4. Deploy remaining stacks
-npx cdk deploy bp-staging-network bp-staging-data bp-staging-compute bp-staging-gpu bp-staging-monitoring
+npx cdk deploy bp-staging-network bp-staging-data bp-staging-compute bp-staging-monitoring bp-staging-gpu-shared
 
 # 5. Set secrets (see Post-Deploy above)
 
@@ -280,8 +266,10 @@ Actions → "Deploy" → Run workflow
 2. **test-frontend** — Node 18 + pnpm, runs `pnpm build`
 3. **build-and-push** — Builds ARM64 Docker images, pushes to ECR (tags: `<sha7>` + `latest`)
 4. **deploy-services** — `aws ecs update-service --force-new-deployment` for both services
-5. **deploy-infrastructure** — CDK deploy (requires GitHub environment approval: `staging-infra`). Optional if you deploy infrastructure locally.
-6. **run-migrations** — One-off ECS tasks for DB migrations (requires GitHub environment approval: `staging-migrations`)
+
+Other operational workflows:
+- **Deploy Infrastructure** (`deploy-infrastructure.yml`) — CDK deploy (manual gate via GitHub Environment).
+- **DB Migrate** (`db-migrate.yml`) — one-off ECS tasks for central + tenant pool migrations (manual gate via GitHub Environment).
 
 ### Infrastructure Changes
 
@@ -304,7 +292,7 @@ Migrations run as one-off ECS tasks (not during normal deploys):
 
 - **ECS service** keeps your app running (backend/frontend tasks stay up behind the ALB).
 - **ECS task** is a single, one-off run of a task definition. Here we use `aws ecs run-task` to start a temporary Fargate task and override the `php-fpm` command to run migrations. The task stops when the command finishes.
-- These migration tasks run only when you **manually** run the commands below, or when you run the **Deploy** workflow and approve the `run-migrations` job. They do **not** run during `deploy-services`.
+- These migration tasks run only when you **manually** run the commands below, or when you run the **DB Migrate** workflow (`db-migrate.yml`). They do **not** run during `deploy-services`.
 
 Safety:
 - `php artisan migrate` does **not** wipe the database by default, but migrations can still be destructive (e.g. dropping/altering columns). Treat production migrations as potentially risky and ensure you have backups/rollback plans.
@@ -415,14 +403,14 @@ The SSM **value** is the bundle prefix (e.g. `bundles/<bundle_id>`).
 ```bash
 # Example (staging)
 cd infrastructure
-npx cdk deploy bp-staging-data bp-staging-compute bp-staging-gpu
+npx cdk deploy bp-staging-network bp-staging-data bp-staging-compute bp-staging-monitoring bp-staging-gpu-shared
 ```
 
 - **Deploy updated backend/frontend code** (so the new admin endpoints + `/admin/assets` UI exist):
   - See [Updating Application Code (CI/CD)](#updating-application-code-cicd) and run the `Deploy` workflow.
 
 - **Run backend migrations** (creates central DB tables for assets/bundles/audit logs):
-  - Via GitHub Actions: run `Deploy` and approve the `run-migrations` job, or
+  - Via GitHub Actions: run `DB Migrate` (`db-migrate.yml`), or
   - Via CLI (staging example): see [Database Migrations](#database-migrations).
 
 - **Set required secrets** (if not already done):
@@ -539,12 +527,12 @@ Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **runni
 - The workflow will upload SSM command output to the logs bucket (if provided).
 - If `ASSET_OPS_API_URL` + `ASSET_OPS_SECRET` are set, the workflow also records an audit log via the backend.
 
-### Adding a New Fleet
+### Adding a New Fleet (new approach)
 
-1. Add entry to `lib/config/fleets.ts` (see Configuration section above)
-2. Build a Packer AMI for the new fleet slug
-3. Deploy: `npx cdk deploy bp-staging-gpu bp-staging-monitoring`
-4. Create the fleet in **Admin → Assets**, assign workflows, and activate a bundle
+1. Ensure a suitable template exists in `backend/resources/comfyui/fleet-templates.json`.
+2. Create the fleet in the Admin UI (template + instance type). This writes `/bp/<stage>/fleets/<fleet_slug>/desired_config`.
+3. Run GitHub Actions → **Provision GPU Fleet** to create `bp-<stage>-gpu-fleet-<fleet_slug>`.
+4. (Recommended) Bake an AMI via **Build GPU AMI**, then refresh the ASG.
 
 ### Monitoring Workers
 
@@ -759,9 +747,15 @@ aws autoscaling describe-auto-scaling-groups \
 
 ### Full teardown (destroy infrastructure)
 
+For a full “wipe and redeploy” runbook, see: `docs/recreate-infrastructure.md`.
+
 ```bash
 cd infrastructure
-npx cdk destroy bp-staging-monitoring bp-staging-gpu bp-staging-compute bp-staging-data bp-staging-network bp-staging-cicd
+# Per-fleet stacks (repeat for each fleet slug you provisioned)
+npx cdk destroy bp-staging-gpu-fleet-<fleet_slug>
+
+# Shared + core stacks
+npx cdk destroy bp-staging-gpu-shared bp-staging-monitoring bp-staging-compute bp-staging-data bp-staging-network bp-staging-cicd
 ```
 
 Notes:
@@ -828,10 +822,8 @@ aws cloudwatch describe-alarms \
 
 ```
 test-backend ──┐
-               ├──► build-and-push ──┬──► deploy-services ──► run-migrations*
-test-frontend ─┘                     └──► deploy-infrastructure*
-
-* = requires GitHub environment approval (see “Required GitHub Environments”)
+               ├──► build-and-push ──► deploy-services
+test-frontend ─┘
 ```
 
 ### `build-ami.yml`
@@ -869,9 +861,10 @@ test-frontend ─┘                     └──► deploy-infrastructure*
 
 | Secret | Description |
 |--------|-------------|
-| `AWS_DEPLOY_ROLE_ARN` | IAM role ARN for OIDC federation (GitHub Actions → AWS) |
-| `PRIVATE_SUBNET_IDS` | JSON array of private subnet IDs (for migration tasks), e.g. `["subnet-123","subnet-456"]` |
-| `BACKEND_SG_ID` | Backend security group ID (for migration tasks), e.g. `sg-0123abcd` |
+| `AWS_DEPLOY_ROLE_ARN_STAGING` | IAM role ARN for OIDC federation (GitHub Actions → AWS, staging) |
+| `AWS_DEPLOY_ROLE_ARN_PRODUCTION` | IAM role ARN for OIDC federation (GitHub Actions → AWS, production) |
+| `PRIVATE_SUBNET_IDS` | (Optional) JSON array of private subnet IDs for one-off ECS tasks (db-migrate/db-seed), e.g. `["subnet-123","subnet-456"]` |
+| `BACKEND_SG_ID` | (Optional) Backend security group ID for one-off ECS tasks (db-migrate/db-seed), e.g. `sg-0123abcd` |
 | `ASSET_OPS_API_URL` | (Optional) Backend API base URL for asset ops logging (used by apply bundle workflow) |
 | `ASSET_OPS_SECRET` | (Optional) Shared secret for asset ops logging (Secrets Manager `/bp/<stage>/asset-ops/secret`) |
 
@@ -972,20 +965,26 @@ Tip: tighten the trust policy `sub` claim when you’re ready:
 **GitHub setup**
 
 1. Copy the IAM role ARN (IAM → Roles → your role → **ARN**).
-2. Add it as a GitHub repo secret named `AWS_DEPLOY_ROLE_ARN` (Repo → Settings → Secrets and variables → Actions).
-   - The secret value is the **role ARN**, e.g. `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-staging` (not the OIDC provider ARN).
+2. Add GitHub repo (or Environment) secrets:
+   - `AWS_DEPLOY_ROLE_ARN_STAGING` — role ARN for staging deploys
+   - `AWS_DEPLOY_ROLE_ARN_PRODUCTION` — role ARN for production deploys (separate AWS account recommended)
+   - Secret values are **role ARNs**, e.g. `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-staging` (not the OIDC provider ARN).
 
 Notes:
 - The workflows already set `permissions: id-token: write` which is required for OIDC.
-- If you store `AWS_DEPLOY_ROLE_ARN` as an **Environment** secret, the job must specify `environment: <name>` or the secret will be unavailable and `configure-aws-credentials` may fail with `Could not load credentials from any providers`.
+- If you store these as **Environment** secrets, the job must specify `environment: <name>` or the secrets will be unavailable and `configure-aws-credentials` may fail with `Could not load credentials from any providers`.
 - Separately, attach **permissions policies** to the role (IAM → Roles → <your role> → Permissions) to control **what AWS actions** the workflow can perform after assuming the role (e.g., EC2/SSM for AMI builds).
 
 ### Required GitHub Environments
 
 | Environment | Used By | Purpose |
 |-------------|---------|---------|
-| `staging-infra` | deploy-infrastructure job | Manual approval gate for CDK deploy |
-| `staging-migrations` | run-migrations job | Manual approval gate for DB migrations |
+| `staging-infra` | `deploy-infrastructure.yml` | Manual approval gate for CDK deploy (staging) |
+| `production-infra` | `deploy-infrastructure.yml` | Manual approval gate for CDK deploy (production) |
+| `staging-migrations` | `db-migrate.yml`, `db-seed.yml` | Manual approval gate for DB tasks (staging) |
+| `production-migrations` | `db-migrate.yml`, `db-seed.yml` | Manual approval gate for DB tasks (production) |
+| `staging-gpu-provision` | `provision-gpu-fleet.yml`, `apply-gpu-fleet-config.yml` | Manual approval gate for GPU fleet stack deploys (staging) |
+| `production-gpu-provision` | `provision-gpu-fleet.yml`, `apply-gpu-fleet-config.yml` | Manual approval gate for GPU fleet stack deploys (production) |
 
 ## File Map
 
@@ -996,17 +995,17 @@ infrastructure/
 ├── lib/
 │   ├── config/
 │   │   ├── environment.ts                  # Stage configs (staging/production presets)
-│   │   └── fleets.ts                       # GPU fleet definitions (slug, AMI, instance types)
+│   │   └── fleets.ts                       # Fleet templates loader + helpers (reads backend/resources/comfyui/fleet-templates.json)
 │   ├── stacks/
 │   │   ├── network-stack.ts                # VPC, subnets, security groups, S3 endpoint
 │   │   ├── data-stack.ts                   # RDS, Redis, S3, CloudFront, secrets
 │   │   ├── compute-stack.ts                # ECS cluster, ALB, backend/frontend services
-│   │   ├── gpu-worker-stack.ts             # Per-fleet GPU ASGs, scale-to-zero
-│   │   ├── monitoring-stack.ts             # Dashboard, alarms (P1/P2/P3), SNS
+│   │   ├── gpu-shared-stack.ts             # Shared scale-to-zero SNS + Lambda
+│   │   ├── gpu-fleet-stack.ts              # Single-fleet GPU ASG stack (bp-<stage>-gpu-fleet-<fleet_slug>)
+│   │   ├── monitoring-stack.ts             # Dashboard, alarms (P1/P2), SNS
 │   │   └── cicd-stack.ts                   # ECR repositories
 │   └── constructs/
 │       ├── fleet-asg.ts                    # Reusable: ASG + launch template + scaling policies
-│       ├── scale-to-zero-lambda.ts         # Shared Lambda: SNS → set ASG desired=0
 │       └── rds-init.ts                     # Legacy custom resource (tenant DBs now created via migrations)
 ├── docker/
 │   └── backend/

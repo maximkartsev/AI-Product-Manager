@@ -59,7 +59,7 @@ AWS Console:
 
 #### If a stack is missing: deploy it (or redeploy)
 
-Stacks have dependencies: `bp-<stage>-network` → `bp-<stage>-data` → `bp-<stage>-compute` → `bp-<stage>-gpu-shared` (monitoring is optional).
+Stacks have dependencies: `bp-<stage>-network` → `bp-<stage>-data` → `bp-<stage>-compute` → `bp-<stage>-gpu-shared` (monitoring is recommended).
 
 Deploy the chain (from repo root):
 
@@ -158,8 +158,11 @@ What it does (high level):
 - **test-backend**: runs `php artisan test`
 - **test-frontend**: runs `pnpm build`
 - **build-and-push**: builds `linux/arm64` images and pushes the required tags to ECR
-- **deploy-infrastructure** (manual gate via GitHub Environment): runs `npx cdk deploy --all --require-approval never`
 - **deploy-services**: runs ECS deployments (`update-service --force-new-deployment`)
+
+Related workflows:
+- **Deploy Infrastructure**: `.github/workflows/deploy-infrastructure.yml`
+- **DB Migrate**: `.github/workflows/db-migrate.yml`
 
 How to run it:
 1. GitHub → **Actions** → **Deploy**
@@ -168,16 +171,16 @@ How to run it:
 4. Verify ECR tags exist (commands above)
 5. Deploy `bp-<stage>-compute` (CDK) or let the workflow deploy services
 
-##### `AWS_DEPLOY_ROLE_ARN` (GitHub Actions → AWS)
+##### `AWS_DEPLOY_ROLE_ARN_STAGING` / `AWS_DEPLOY_ROLE_ARN_PRODUCTION` (GitHub Actions → AWS)
 
-`AWS_DEPLOY_ROLE_ARN` is the IAM role that GitHub Actions assumes using OIDC (no long-lived AWS keys).
+These are the IAM roles that GitHub Actions assumes using OIDC (no long-lived AWS keys).
 
 Where to configure it in GitHub:
 - Repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
-  - Name: `AWS_DEPLOY_ROLE_ARN`
+  - Name: `AWS_DEPLOY_ROLE_ARN_STAGING` (and `AWS_DEPLOY_ROLE_ARN_PRODUCTION` if you deploy production)
   - Value: `arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>`
 
-Important: jobs like **build-and-push** and **deploy-services** do **not** specify a GitHub Environment, so `AWS_DEPLOY_ROLE_ARN` must be a **repository secret** (not only an environment-scoped secret) unless you also update the workflow to attach an environment to those jobs.
+Important: jobs like **build-and-push** and **deploy-services** do **not** specify a GitHub Environment, so these must be **repository secrets** (not only environment-scoped secrets) unless you update the workflows to attach an environment to those jobs.
 
 How to configure the role in AWS (outline):
 1. Create/verify the GitHub OIDC provider exists in IAM:
@@ -534,19 +537,6 @@ sudo systemctl status comfyui-worker.service --no-pager
 sudo cat /opt/worker/env
 ```
 
-## Migration from monolithic GPU stack
-
-If you already have `bp-<stage>-gpu` deployed (monolithic fleets), migrate to per-fleet stacks as follows:
-
-1. Deploy the shared stack:
-   - `bp-<stage>-gpu-shared`
-2. Create/update the fleet in Admin UI (template + instance type) so `desired_config` is written.
-3. Run **Provision GPU Fleet** for that fleet slug.
-4. Verify workers register and jobs execute as expected.
-5. When stable, delete the old `bp-<stage>-gpu` stack (after ensuring all fleets are migrated).
-
-Note: the shared stack uses `bp-<stage>-scale-to-zero` SNS/Lambda. If the old stack already owns this topic, delete or migrate the old stack first to avoid name conflicts.
-
 ### Worker registration and routing
 - **Admin → Workers**: worker appears as `registration_source=fleet`
 - `last_seen_at` updates
@@ -586,7 +576,7 @@ Ensure alarms exist:
 - `<stage>-<fleet_slug>-queue-has-jobs`
 - `<stage>-<fleet_slug>-queue-empty`
 
-## Production migration (separate AWS account)
+## Production deploy (separate AWS account)
 
 ### 1) Deploy production infrastructure
 

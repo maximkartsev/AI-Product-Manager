@@ -4,12 +4,10 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
-import * as logs from 'aws-cdk-lib/aws-logs';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
 import type { BpEnvironmentConfig } from '../config/environment';
-import type { FleetConfig } from '../config/fleets';
 
 export interface MonitoringStackProps extends cdk.StackProps {
   readonly config: BpEnvironmentConfig;
@@ -20,16 +18,16 @@ export interface MonitoringStackProps extends cdk.StackProps {
   readonly frontendServiceName: string;
   readonly dbInstanceId: string;
   readonly natGatewayIds?: string[];
-  readonly fleets: FleetConfig[];
 }
 
 export class MonitoringStack extends cdk.Stack {
+  public readonly alertTopicArn: string;
+
   constructor(scope: Construct, id: string, props: MonitoringStackProps) {
     super(scope, id, props);
 
-    const { config, ecsCluster, albFullName, albTargetGroupBackend, backendServiceName, frontendServiceName, dbInstanceId, natGatewayIds, fleets } = props;
+    const { config, ecsCluster, albFullName, albTargetGroupBackend, backendServiceName, frontendServiceName, dbInstanceId, natGatewayIds } = props;
     const stage = config.stage;
-    const logRetention = stage === 'production' ? logs.RetentionDays.ONE_MONTH : logs.RetentionDays.ONE_WEEK;
 
     // ========================================
     // SNS Alert Topic
@@ -39,6 +37,8 @@ export class MonitoringStack extends cdk.Stack {
       topicName: `bp-${stage}-ops-alerts`,
     });
 
+    this.alertTopicArn = alertTopic.topicArn;
+
     if (config.alertEmail) {
       alertTopic.addSubscription(
         new snsSubscriptions.EmailSubscription(config.alertEmail)
@@ -46,18 +46,6 @@ export class MonitoringStack extends cdk.Stack {
     }
 
     const alarmAction = new cloudwatchActions.SnsAction(alertTopic);
-
-    // ========================================
-    // GPU Worker Log Groups
-    // ========================================
-
-    for (const fleet of fleets) {
-      new logs.LogGroup(this, `GpuLog-${fleet.slug}`, {
-        logGroupName: `/gpu-workers/${fleet.slug}`,
-        retention: logRetention,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      });
-    }
 
     // ========================================
     // Alarms
@@ -81,6 +69,22 @@ export class MonitoringStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
     p1Alb5xx.addAlarmAction(alarmAction);
+
+    const backendUnhealthyHosts = new cloudwatch.Metric({
+      namespace: 'AWS/ApplicationELB',
+      metricName: 'UnHealthyHostCount',
+      dimensionsMap: { LoadBalancer: albFullName, TargetGroup: albTargetGroupBackend },
+      statistic: 'Maximum',
+      period: cdk.Duration.minutes(1),
+    });
+    const p1BackendUnhealthy = new cloudwatch.Alarm(this, 'P1-BackendUnhealthyHosts', {
+      alarmName: `${stage}-p1-backend-unhealthy-hosts`,
+      metric: backendUnhealthyHosts,
+      threshold: 1,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    p1BackendUnhealthy.addAlarmAction(alarmAction);
 
     const p1RdsCpu = new cloudwatch.Alarm(this, 'P1-RdsCpuCritical', {
       alarmName: `${stage}-p1-rds-cpu-critical`,
@@ -136,40 +140,6 @@ export class MonitoringStack extends cdk.Stack {
     });
     p2RdsCpu.addAlarmAction(alarmAction);
 
-    // --- P3: Per-fleet GPU alarms ---
-
-    for (const fleet of fleets) {
-      const dimensions = { FleetSlug: fleet.slug };
-
-      new cloudwatch.Alarm(this, `P3-Queue-${fleet.slug}`, {
-        alarmName: `${stage}-p3-${fleet.slug}-queue-deep`,
-        metric: new cloudwatch.Metric({
-          namespace: 'ComfyUI/Workers',
-          metricName: 'QueueDepth',
-          dimensionsMap: dimensions,
-          statistic: 'Maximum',
-          period: cdk.Duration.minutes(30),
-        }),
-        threshold: 10,
-        evaluationPeriods: 1,
-        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      }).addAlarmAction(alarmAction);
-
-      new cloudwatch.Alarm(this, `P2-Error-${fleet.slug}`, {
-        alarmName: `${stage}-p2-${fleet.slug}-error-rate`,
-        metric: new cloudwatch.Metric({
-          namespace: 'ComfyUI/Workers',
-          metricName: 'ErrorRate',
-          dimensionsMap: dimensions,
-          statistic: 'Average',
-          period: cdk.Duration.minutes(5),
-        }),
-        threshold: 20,
-        evaluationPeriods: 1,
-        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      }).addAlarmAction(alarmAction);
-    }
-
     // ========================================
     // CloudWatch Dashboard
     // ========================================
@@ -223,7 +193,53 @@ export class MonitoringStack extends cdk.Stack {
       }),
     );
 
-    // Row 2: Data Layer
+    // Row 2: ECS Services
+    const clusterName = ecsCluster.clusterName;
+    const backendCpu = new cloudwatch.Metric({
+      namespace: 'AWS/ECS',
+      metricName: 'CPUUtilization',
+      dimensionsMap: { ClusterName: clusterName, ServiceName: backendServiceName },
+      statistic: 'Average',
+      period: cdk.Duration.minutes(5),
+    });
+    const backendMem = new cloudwatch.Metric({
+      namespace: 'AWS/ECS',
+      metricName: 'MemoryUtilization',
+      dimensionsMap: { ClusterName: clusterName, ServiceName: backendServiceName },
+      statistic: 'Average',
+      period: cdk.Duration.minutes(5),
+    });
+    const frontendCpu = new cloudwatch.Metric({
+      namespace: 'AWS/ECS',
+      metricName: 'CPUUtilization',
+      dimensionsMap: { ClusterName: clusterName, ServiceName: frontendServiceName },
+      statistic: 'Average',
+      period: cdk.Duration.minutes(5),
+    });
+    const frontendMem = new cloudwatch.Metric({
+      namespace: 'AWS/ECS',
+      metricName: 'MemoryUtilization',
+      dimensionsMap: { ClusterName: clusterName, ServiceName: frontendServiceName },
+      statistic: 'Average',
+      period: cdk.Duration.minutes(5),
+    });
+
+    dashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: 'ECS Backend CPU & Memory',
+        left: [backendCpu],
+        right: [backendMem],
+        width: 12,
+      }),
+      new cloudwatch.GraphWidget({
+        title: 'ECS Frontend CPU & Memory',
+        left: [frontendCpu],
+        right: [frontendMem],
+        width: 12,
+      }),
+    );
+
+    // Row 3: Data Layer
     dashboard.addWidgets(
       new cloudwatch.GraphWidget({
         title: 'RDS CPU & Connections',
@@ -262,7 +278,7 @@ export class MonitoringStack extends cdk.Stack {
       }),
     );
 
-    // Row 3: NAT Gateway (cost visibility)
+    // Row 4: NAT Gateway (cost visibility)
     if (natGatewayIds && natGatewayIds.length > 0) {
       const natBytesOut = natGatewayIds.map(id => new cloudwatch.Metric({
         namespace: 'AWS/NATGateway',
@@ -295,72 +311,6 @@ export class MonitoringStack extends cdk.Stack {
             statistic: 'Sum',
             period: cdk.Duration.minutes(5),
           })),
-          width: 12,
-        }),
-      );
-    }
-
-    // Row 4: GPU Workers (per fleet)
-    for (const fleet of fleets) {
-      const dimensions = { FleetSlug: fleet.slug };
-
-      dashboard.addWidgets(
-        new cloudwatch.GraphWidget({
-          title: `${fleet.displayName}: Queue & Workers`,
-          left: [
-            new cloudwatch.Metric({
-              namespace: 'ComfyUI/Workers',
-              metricName: 'QueueDepth',
-              dimensionsMap: dimensions,
-              statistic: 'Maximum',
-              period: cdk.Duration.minutes(1),
-            }),
-            new cloudwatch.Metric({
-              namespace: 'ComfyUI/Workers',
-              metricName: 'BacklogPerInstance',
-              dimensionsMap: dimensions,
-              statistic: 'Average',
-              period: cdk.Duration.minutes(1),
-            }),
-          ],
-          right: [
-            new cloudwatch.Metric({
-              namespace: 'ComfyUI/Workers',
-              metricName: 'ActiveWorkers',
-              dimensionsMap: dimensions,
-              statistic: 'Maximum',
-              period: cdk.Duration.minutes(1),
-            }),
-          ],
-          width: 12,
-        }),
-        new cloudwatch.GraphWidget({
-          title: `${fleet.displayName}: Performance & Errors`,
-          left: [
-            new cloudwatch.Metric({
-              namespace: 'ComfyUI/Workers',
-              metricName: 'JobProcessingP50',
-              dimensionsMap: dimensions,
-              statistic: 'Average',
-              period: cdk.Duration.minutes(5),
-            }),
-          ],
-          right: [
-            new cloudwatch.Metric({
-              namespace: 'ComfyUI/Workers',
-              metricName: 'ErrorRate',
-              dimensionsMap: dimensions,
-              statistic: 'Average',
-              period: cdk.Duration.minutes(5),
-            }),
-            new cloudwatch.Metric({
-              namespace: 'ComfyUI/Workers',
-              metricName: 'SpotInterruptionCount',
-              dimensionsMap: dimensions,
-              statistic: 'Sum',
-              period: cdk.Duration.minutes(5),
-            }),
-          ],
           width: 12,
         }),
       );

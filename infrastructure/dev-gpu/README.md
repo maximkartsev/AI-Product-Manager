@@ -65,10 +65,10 @@ Re-run `./launch.sh` to resume a stopped dev instance.
 
 ### GitHub Actions (recommended)
 
-Prerequisite (one-time): configure GitHub Actions → AWS auth (OIDC) and set the secret:
+Prerequisite (one-time): configure GitHub Actions → AWS auth (OIDC) and set the secrets:
 
 - Create an AWS IAM role that GitHub Actions can assume via OIDC.
-- Add the role ARN as a repo Actions secret named `AWS_DEPLOY_ROLE_ARN`.
+- Add the role ARN(s) as repo Actions secrets named `AWS_DEPLOY_ROLE_ARN_STAGING` (and `AWS_DEPLOY_ROLE_ARN_PRODUCTION` if needed).
 - Setup details are in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
 
 1. Go to **Actions → Build GPU AMI**.
@@ -82,7 +82,7 @@ If the workflow fails at **Configure AWS credentials** with:
 
 - `Credentials could not be loaded ... Could not load credentials from any providers`
 
-Then `AWS_DEPLOY_ROLE_ARN` is missing/empty or the IAM role trust policy doesn’t allow this repo/branch. Re-check the OIDC setup in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
+Then your `AWS_DEPLOY_ROLE_ARN_STAGING`/`AWS_DEPLOY_ROLE_ARN_PRODUCTION` secret is missing/empty or the IAM role trust policy doesn’t allow this repo/branch. Re-check the OIDC setup in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
 
 ### Local Packer
 

@@ -30,9 +30,9 @@ Internet -> CloudFront (CDN) -> ALB -> ECS Fargate (Backend + Frontend)
 ### CDK Stack Dependency Chain
 
 ```
-NetworkStack -> DataStack -> ComputeStack -> GpuWorkerStack -> MonitoringStack
-                                                                    |
-                                                              CiCdStack (standalone)
+NetworkStack -> DataStack -> ComputeStack -> MonitoringStack
+GpuSharedStack -> GpuFleetStack (per fleet, provisioned via workflow)
+CiCdStack (standalone)
 ```
 
 ### Key Components
@@ -46,7 +46,7 @@ NetworkStack -> DataStack -> ComputeStack -> GpuWorkerStack -> MonitoringStack
 | Database | RDS MariaDB 10.11 | db.t4g.small, 3 databases on one instance |
 | Cache | ElastiCache Redis 7.1 | cache.t4g.micro, single node |
 | Storage | S3 + CloudFront | Media bucket with OAC, PriceClass_100 |
-| GPU Workers | EC2 ASGs per-workflow | 100% Spot, scale-to-zero (ADR-0005) |
+| GPU Workers | EC2 ASGs per-fleet | 100% Spot, scale-to-zero (ADR-0005) |
 | Monitoring | CloudWatch | Dashboard, alarms (P1/P2/P3), SNS alerts |
 
 ### Network Design
@@ -84,8 +84,8 @@ Container images are ARM64 for Graviton Fargate (20% cost savings). Backend scal
 ### GPU Worker Architecture
 
 Implements ADR-0005 with CDK constructs:
-- **WorkflowAsg construct:** Creates per-workflow ASG with Launch Template, Spot policies, step scaling (0->1), backlog tracking (1->N)
-- **ScaleToZeroLambda construct:** Shared Lambda triggered by SNS when QueueDepth == 0 for 15 minutes
+- **FleetAsg construct:** Creates per-fleet ASG with Launch Template, Spot policies, step scaling (0->1), backlog tracking (1->N)
+- **GpuSharedStack:** Shared SNS + Lambda for scale-to-zero when QueueDepth == 0 for N minutes
 - AMI IDs stored in SSM Parameter Store, updated by Packer CI pipeline
 - Workers self-register via fleet secret, poll backend for jobs, handle Spot interruptions
 
@@ -103,15 +103,19 @@ ECS containers use `ecs.Secret.fromSecretsManager()` for injection. GPU workers 
 
 ### CI/CD Pipeline
 
-**deploy.yml** (GitHub Actions, triggered on push to main):
+**deploy.yml** (GitHub Actions, manual dispatch):
 1. `test-backend`: PHP 8.3 + MariaDB, `composer install`, `php artisan test`
 2. `test-frontend`: Node 18, `pnpm install`, `pnpm build`
 3. `build-and-push`: Build ARM64 Docker images, push to ECR
-4. `deploy-infrastructure`: CDK deploy (manual gate, workflow_dispatch only)
-5. `deploy-services`: `aws ecs update-service --force-new-deployment`
-6. `run-migrations`: One-off ECS task for `php artisan migrate --force` (manual gate)
+4. `deploy-services`: `aws ecs update-service --force-new-deployment`
 
-**build-ami.yml** (manual dispatch): Packer build with workflow_slug parameter, stores AMI ID in SSM.
+**deploy-infrastructure.yml** (manual dispatch): CDK deploy (network/data/compute/monitoring/cicd + gpu-shared).
+
+**db-migrate.yml** (manual dispatch): One-off ECS task for central + tenant pool migrations.
+
+**provision-gpu-fleet.yml / apply-gpu-fleet-config.yml** (manual dispatch): Provision/update `bp-<stage>-gpu-fleet-<fleet_slug>` stacks.
+
+**build-ami.yml** (manual dispatch): Packer build, stores AMI ID in SSM.
 
 ## Design Decisions
 
@@ -171,14 +175,14 @@ ECS containers use `ecs.Secret.fromSecretsManager()` for injection. GPU workers 
 - `infrastructure/lib/stacks/network-stack.ts` - VPC, subnets, security groups
 - `infrastructure/lib/stacks/data-stack.ts` - RDS, Redis, S3, CloudFront, secrets
 - `infrastructure/lib/stacks/compute-stack.ts` - ECS cluster, ALB, backend/frontend services
-- `infrastructure/lib/stacks/gpu-worker-stack.ts` - Per-workflow GPU ASGs
+- `infrastructure/lib/stacks/gpu-shared-stack.ts` - Shared GPU scale-to-zero SNS + Lambda
+- `infrastructure/lib/stacks/gpu-fleet-stack.ts` - Per-fleet GPU ASG stack
 - `infrastructure/lib/stacks/monitoring-stack.ts` - CloudWatch dashboard, alarms, SNS
 - `infrastructure/lib/stacks/cicd-stack.ts` - ECR repositories
-- `infrastructure/lib/constructs/workflow-asg.ts` - Reusable per-workflow ASG construct
-- `infrastructure/lib/constructs/scale-to-zero-lambda.ts` - Shared scale-to-zero Lambda
+- `infrastructure/lib/constructs/fleet-asg.ts` - Reusable per-fleet ASG construct
 - `infrastructure/lib/constructs/rds-init.ts` - Custom resource for tenant pool DB creation
 - `infrastructure/lib/config/environment.ts` - Stage-specific configuration
-- `infrastructure/lib/config/workflows.ts` - GPU workflow definitions
+- `infrastructure/lib/config/workflows.ts` - ComfyUI workflow registry
 
 ### Docker
 - `infrastructure/docker/backend/Dockerfile.nginx` - Nginx reverse proxy (ARM64)
@@ -194,8 +198,11 @@ ECS containers use `ecs.Secret.fromSecretsManager()` for injection. GPU workers 
 - `infrastructure/packer/scripts/install-python-worker.sh` - Worker script setup
 
 ### CI/CD
-- `.github/workflows/deploy.yml` - Main deploy pipeline
-- `.github/workflows/build-ami.yml` - GPU AMI build pipeline
+- `.github/workflows/deploy.yml` - Build/push images + ECS redeploy
+- `.github/workflows/deploy-infrastructure.yml` - CDK deploy
+- `.github/workflows/db-migrate.yml` - DB migrations (ECS one-off)
+- `.github/workflows/build-ami.yml` - GPU AMI build (Packer)
+- `.github/workflows/provision-gpu-fleet.yml` - Provision per-fleet GPU stack
 
 ## Related ADRs
 - [ADR-0001: Tenancy DB Pools](0001-tenancy-db-pools.md)

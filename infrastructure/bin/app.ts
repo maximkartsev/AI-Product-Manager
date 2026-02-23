@@ -7,13 +7,12 @@ import { AwsSolutionsChecks } from 'cdk-nag';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { DataStack } from '../lib/stacks/data-stack';
 import { ComputeStack } from '../lib/stacks/compute-stack';
-import { GpuWorkerStack } from '../lib/stacks/gpu-worker-stack';
 import { GpuSharedStack } from '../lib/stacks/gpu-shared-stack';
 import { GpuFleetStack } from '../lib/stacks/gpu-fleet-stack';
 import { MonitoringStack } from '../lib/stacks/monitoring-stack';
 import { CiCdStack } from '../lib/stacks/cicd-stack';
 import { STAGING_CONFIG, PRODUCTION_CONFIG, type BpEnvironmentConfig } from '../lib/config/environment';
-import { FLEETS, getFleetTemplateBySlug } from '../lib/config/fleets';
+import { getFleetTemplateBySlug } from '../lib/config/fleets';
 
 const app = new cdk.App();
 
@@ -58,7 +57,8 @@ if (owner) {
 }
 
 // --- Stack dependency chain ---
-// NetworkStack -> DataStack -> ComputeStack -> GpuSharedStack -> GpuFleetStack -> MonitoringStack
+// NetworkStack -> DataStack -> ComputeStack -> MonitoringStack
+// GpuSharedStack -> (GpuFleetStack per fleet, provisioned via workflow)
 // CiCdStack is standalone
 
 const network = new NetworkStack(app, `${prefix}-network`, {
@@ -99,6 +99,21 @@ const compute = new ComputeStack(app, `${prefix}-compute`, {
 compute.addDependency(data);
 cdk.Tags.of(compute).add('Service', 'compute');
 
+const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
+  env: config.env,
+  config,
+  ecsCluster: compute.cluster,
+  albFullName: compute.albFullName,
+  albTargetGroupBackend: compute.tgBackendFullName,
+  backendServiceName: compute.backendServiceName,
+  frontendServiceName: compute.frontendServiceName,
+  dbInstanceId: data.dbInstanceId,
+  natGatewayIds: network.natGatewayIds,
+  description: 'CloudWatch dashboard, alarms, SNS alerts',
+});
+monitoring.addDependency(compute);
+cdk.Tags.of(monitoring).add('Service', 'monitoring');
+
 const gpuShared = new GpuSharedStack(app, `${prefix}-gpu-shared`, {
   env: config.env,
   config,
@@ -134,42 +149,13 @@ if (wantsDynamicFleet) {
     apiBaseUrl: compute.apiBaseUrl,
     modelsBucket: data.modelsBucket,
     scaleToZeroTopicArn: gpuShared.scaleToZeroTopicArn,
+    opsAlertTopicArn: monitoring.alertTopicArn,
     description: `GPU ASG for fleet ${contextFleetSlug}`,
   });
   gpuFleet.addDependency(compute);
   gpuFleet.addDependency(gpuShared);
+  gpuFleet.addDependency(monitoring);
   cdk.Tags.of(gpuFleet).add('Service', 'gpu-fleet');
-} else {
-  const gpu = new GpuWorkerStack(app, `${prefix}-gpu`, {
-    env: config.env,
-    config,
-    vpc: network.vpc,
-    sgGpuWorkers: network.sgGpuWorkers,
-    fleets: FLEETS,
-    apiBaseUrl: compute.apiBaseUrl,
-    modelsBucket: data.modelsBucket,
-    scaleToZeroTopicArn: gpuShared.scaleToZeroTopicArn,
-    description: 'Per-fleet GPU ASGs with Spot instances and scale-to-zero',
-  });
-  gpu.addDependency(compute);
-  gpu.addDependency(gpuShared);
-  cdk.Tags.of(gpu).add('Service', 'gpu');
-
-  const monitoring = new MonitoringStack(app, `${prefix}-monitoring`, {
-    env: config.env,
-    config,
-    ecsCluster: compute.cluster,
-    albFullName: compute.albFullName,
-    albTargetGroupBackend: compute.tgBackendFullName,
-    backendServiceName: compute.backendServiceName,
-    frontendServiceName: compute.frontendServiceName,
-    dbInstanceId: data.dbInstanceId,
-    natGatewayIds: network.natGatewayIds,
-    fleets: FLEETS,
-    description: 'CloudWatch dashboard, alarms, SNS alerts',
-  });
-  monitoring.addDependency(gpu);
-  cdk.Tags.of(monitoring).add('Service', 'monitoring');
 }
 
 const cicd = new CiCdStack(app, `${prefix}-cicd`, {

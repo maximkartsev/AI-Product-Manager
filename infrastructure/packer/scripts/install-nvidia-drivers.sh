@@ -9,12 +9,14 @@ CODENAME="$(. /etc/os-release && echo "${VERSION_CODENAME:-}")"
 if [ -z "${CODENAME}" ]; then
   CODENAME="jammy"
 fi
-if ! grep -RqsE "^[^#]*deb .* ${CODENAME} .* main" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-  echo "Adding base Ubuntu repo for ${CODENAME} (main/restricted/universe/multiverse)."
-  echo "deb http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" | sudo tee "/etc/apt/sources.list.d/bp-${CODENAME}-base.list" > /dev/null
-fi
 
 sudo apt-get update
+
+if apt-cache policy build-essential | grep -q "Candidate: (none)"; then
+  echo "Adding base Ubuntu repo for ${CODENAME} (main/restricted/universe/multiverse)."
+  echo "deb http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" | sudo tee "/etc/apt/sources.list.d/bp-${CODENAME}-base.list" > /dev/null
+  sudo apt-get update
+fi
 
 # Install kernel headers and build tools
 if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \

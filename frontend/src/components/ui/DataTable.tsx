@@ -305,7 +305,7 @@ export function DataTableView<T extends Record<string, any>>({
                     </Table>
 
                     {desktopOverlay && (
-                      <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center px-4">
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 top-12 z-30 flex items-center justify-center px-4">
                         {desktopOverlay}
                       </div>
                     )}

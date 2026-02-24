@@ -96,6 +96,7 @@ jobs:
           BUNDLE_PREFIX="${{ inputs.bundle_prefix }}"
           BUNDLE_PREFIX="${BUNDLE_PREFIX%/}"
           CMD_APPLY="MODELS_BUCKET=${MODELS_BUCKET} BUNDLE_PREFIX=${BUNDLE_PREFIX} /opt/comfyui/bin/apply-bundle.sh"
+          export CMD_APPLY
           PARAMS=$(python3 - <<'PY'
           import json
           import os

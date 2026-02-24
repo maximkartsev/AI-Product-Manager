@@ -63,10 +63,14 @@ for asset in assets:
     paths.append(full_path)
 
 with open(ops_path, "w", encoding="utf-8") as handle:
-    handle.write("\n".join(ops_lines))
+    # IMPORTANT: ensure a trailing newline. Bash `while read ...; do` may skip
+    # the last line if the file does not end with a newline character.
+    if ops_lines:
+        handle.write("\n".join(ops_lines) + "\n")
 
 with open(paths_path, "w", encoding="utf-8") as handle:
-    handle.write("\n".join(paths))
+    if paths:
+        handle.write("\n".join(paths) + "\n")
 PY
 
 if [ -f "$INSTALLED_PATHS_FILE" ]; then

@@ -108,20 +108,56 @@ print_manual_ssm_attach_help() {
   local instance_id="$1"
   local profile_name="bp-comfyui-dev-${STAGE}"
   local role_name="$profile_name"
+  local models_bucket
+  models_bucket="$(resolve_models_bucket || true)"
+  if [ -z "${models_bucket:-}" ] || [ "$models_bucket" = "None" ]; then
+    models_bucket="<YOUR_MODELS_BUCKET_NAME>"
+  fi
 
   cat <<EOF
 WARNING: Instance is not SSM-managed.
 - Reason: no IAM instance profile attached (or SSM agent not running).
 - Fix (CLI): attach an instance profile with AmazonSSMManagedInstanceCore.
+- If you plan to apply bundles (download assets from S3), also attach S3 read to:
+  s3://${models_bucket}/assets/* and s3://${models_bucket}/bundles/*
 
 Example:
-  aws iam create-role --role-name "$role_name" \\
+  aws iam create-role --role-name "$role_name" \
     --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-  aws iam attach-role-policy --role-name "$role_name" \\
+  aws iam attach-role-policy --role-name "$role_name" \
     --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
   aws iam create-instance-profile --instance-profile-name "$profile_name"
   aws iam add-role-to-instance-profile --instance-profile-name "$profile_name" --role-name "$role_name"
-  aws ec2 associate-iam-instance-profile --region "$AWS_REGION" \\
+
+  # Optional (recommended): allow the instance to download bundle assets from S3
+  aws iam put-role-policy \
+    --role-name "$role_name" \
+    --policy-name "comfyui-models-read" \
+    --policy-document '{
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": ["s3:GetObject"],
+          "Resource": [
+            "arn:aws:s3:::${models_bucket}/assets/*",
+            "arn:aws:s3:::${models_bucket}/bundles/*"
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": ["s3:ListBucket"],
+          "Resource": "arn:aws:s3:::${models_bucket}",
+          "Condition": {
+            "StringLike": {
+              "s3:prefix": ["assets/*", "bundles/*"]
+            }
+          }
+        }
+      ]
+    }'
+
+  aws ec2 associate-iam-instance-profile --region "$AWS_REGION" \
     --instance-id "$instance_id" --iam-instance-profile Name="$profile_name"
 
 Required IAM permissions (caller):
@@ -181,7 +217,7 @@ ensure_default_instance_profile() {
   local profile_name role_name inline_policy_name assume_doc models_bucket policy_doc
   profile_name="bp-comfyui-dev-${STAGE}"
   role_name="bp-comfyui-dev-${STAGE}"
-  inline_policy_name="bp-comfyui-dev-models-read"
+  inline_policy_name="comfyui-models-read"
   assume_doc='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
 
   echo "Ensuring SSM-enabled IAM instance profile (${profile_name})..."
@@ -217,6 +253,16 @@ ensure_default_instance_profile() {
         "arn:aws:s3:::${models_bucket}/assets/*",
         "arn:aws:s3:::${models_bucket}/bundles/*"
       ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::${models_bucket}",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": ["assets/*", "bundles/*"]
+        }
+      }
     }
   ]
 }

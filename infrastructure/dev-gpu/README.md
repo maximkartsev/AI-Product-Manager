@@ -43,6 +43,46 @@ If you’re iterating on models/LoRAs/VAEs, you can sync a bundle onto the **run
 
 The workflow will `aws s3 sync` the bundle to `/opt/comfyui` and restart `comfyui.service`.
 
+If you are using the default dev role (`bp-comfyui-dev-<stage>`), `launch.sh` will *try* to attach this automatically (when it can resolve `/bp/<stage>/models/bucket`). If it didn’t, you can attach the policy manually:
+
+```bash
+AWS_REGION="us-east-1"
+STAGE="staging"
+ROLE_NAME="bp-comfyui-dev-${STAGE}"
+BUCKET="$(aws ssm get-parameter \
+  --region "$AWS_REGION" \
+  --name "/bp/${STAGE}/models/bucket" \
+  --query 'Parameter.Value' \
+  --output text)"
+
+aws iam put-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-name comfyui-models-read \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": [
+          "arn:aws:s3:::'"$BUCKET"'/assets/*",
+          "arn:aws:s3:::'"$BUCKET"'/bundles/*"
+        ]
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["s3:ListBucket"],
+        "Resource": "arn:aws:s3:::'"$BUCKET"'",
+        "Condition": {
+          "StringLike": {
+            "s3:prefix": ["assets/*", "bundles/*"]
+          }
+        }
+      }
+    ]
+  }'
+```
+
 If you see errors like `$'\r': command not found`, your scripts were checked out with Windows (CRLF) line endings. Fix with:
 
 ```bash

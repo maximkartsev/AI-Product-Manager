@@ -1,5 +1,5 @@
 ---
-name: DB Seed
+name: 03 - DB Seed
 
 run-name: DB Seed (${{ inputs.stage }}) by @${{ github.actor }}
 

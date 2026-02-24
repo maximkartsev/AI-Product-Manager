@@ -1,4 +1,4 @@
-name: Bake GPU AMI (Active Bundle)
+name: 15 - GPU - Bake AMI (Active Bundle)
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Build Base GPU AMI
+name: 10 - GPU - Build Base AMI
 
 on:
   workflow_dispatch:

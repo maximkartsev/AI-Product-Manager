@@ -1,4 +1,4 @@
-name: Apply GPU Fleet Config
+name: 12 - GPU - Apply Fleet Config (update ASG)
 
 run-name: Apply GPU Fleet Config (${{ inputs.fleet_slug }}) by @${{ github.actor }}
 

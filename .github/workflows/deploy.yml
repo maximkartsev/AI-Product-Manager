@@ -1,4 +1,4 @@
-name: Deploy
+name: 01 - Deploy App (ECR + ECS)
 
 run-name: Deploy (${{ inputs.stage }}) by @${{ github.actor }}
 

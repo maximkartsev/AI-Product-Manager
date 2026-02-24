@@ -1,4 +1,4 @@
-name: Apply ComfyUI Bundle to Dev Instance
+name: 14 - GPU - Apply Active Bundle to Dev Instance
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Create Dev GPU Instance
+name: 13 - GPU - Create Dev Instance
 
 on:
   workflow_dispatch:

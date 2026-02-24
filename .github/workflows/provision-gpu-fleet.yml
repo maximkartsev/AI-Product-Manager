@@ -1,4 +1,4 @@
-name: Provision GPU Fleet
+name: 11 - GPU - Provision Fleet (create ASG)
 
 run-name: Provision GPU Fleet (${{ inputs.fleet_slug }}) by @${{ github.actor }}
 

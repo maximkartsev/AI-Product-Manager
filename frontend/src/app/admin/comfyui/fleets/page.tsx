@@ -33,6 +33,29 @@ type FleetFormState = {
   instance_type: string;
 };
 
+type InstanceTypeUiInfo = {
+  readonly gpu: string;
+  readonly vram: string;
+  /** Approximate on-demand price per hour (Linux), us-east-1. */
+  readonly approxUsdPerHourOnDemandUsEast1: number;
+};
+
+const INSTANCE_TYPE_UI_INFO: Record<string, InstanceTypeUiInfo> = {
+  "g4dn.xlarge": { gpu: "T4", vram: "16GB", approxUsdPerHourOnDemandUsEast1: 0.526 },
+  "g5.xlarge": { gpu: "A10G", vram: "24GB", approxUsdPerHourOnDemandUsEast1: 1.006 },
+  "g6e.2xlarge": { gpu: "L40S", vram: "48GB", approxUsdPerHourOnDemandUsEast1: 2.2421 },
+  "p5.48xlarge": { gpu: "8× H100", vram: "640GB", approxUsdPerHourOnDemandUsEast1: 55.04 },
+};
+
+function formatInstanceTypeLabel(instanceType: string): string {
+  const info = INSTANCE_TYPE_UI_INFO[instanceType];
+  if (!info) return instanceType;
+  const price = info.approxUsdPerHourOnDemandUsEast1;
+  const priceLabel = Number.isFinite(price) ? `~$${price.toFixed(price < 10 ? 2 : 0)}/hr` : undefined;
+  const parts = [info.gpu, `${info.vram} VRAM`, priceLabel].filter(Boolean);
+  return `${instanceType} (${parts.join(", ")})`;
+}
+
 export default function AdminComfyUiFleetsPage() {
   const [showPanel, setShowPanel] = useState(false);
   const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, any> } | null>(null);
@@ -231,18 +254,23 @@ export default function AdminComfyUiFleetsPage() {
         const template = templatesBySlug.get(formState.template_slug);
         const instanceTypes = template?.allowed_instance_types ?? [];
         return (
-          <Select value={value} onValueChange={onChange} disabled={instanceTypes.length === 0}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select instance type" />
-            </SelectTrigger>
-            <SelectContent>
-              {instanceTypes.map((instanceType) => (
-                <SelectItem key={instanceType} value={instanceType}>
-                  {instanceType}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="space-y-1">
+            <Select value={value} onValueChange={onChange} disabled={instanceTypes.length === 0}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select instance type" />
+              </SelectTrigger>
+              <SelectContent>
+                {instanceTypes.map((instanceType) => (
+                  <SelectItem key={instanceType} value={instanceType}>
+                    {formatInstanceTypeLabel(instanceType)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Prices are approximate on-demand (Linux) in us-east-1. Spot pricing varies.
+            </p>
+          </div>
         );
       },
     },
@@ -431,11 +459,14 @@ export default function AdminComfyUiFleetsPage() {
                     <SelectContent>
                       {(templatesBySlug.get(detailTemplateSlug)?.allowed_instance_types ?? []).map((instanceType) => (
                         <SelectItem key={instanceType} value={instanceType}>
-                          {instanceType}
+                          {formatInstanceTypeLabel(instanceType)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Prices are approximate on-demand (Linux) in us-east-1. Spot pricing varies.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Max Size</label>

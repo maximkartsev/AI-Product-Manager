@@ -2,9 +2,18 @@
   {
     "template_slug": "gpu-default",
     "display_name": "Default GPU Fleet",
-    "allowed_instance_types": ["g4dn.xlarge", "g5.xlarge"],
+    "allowed_instance_types": ["g4dn.xlarge", "g5.xlarge", "g6e.2xlarge"],
     "max_size": 10,
     "warmup_seconds": 300,
+    "backlog_target": 2,
+    "scale_to_zero_minutes": 15
+  },
+  {
+    "template_slug": "gpu-p-series",
+    "display_name": "P-series (H100) Fleet",
+    "allowed_instance_types": ["p5.48xlarge"],
+    "max_size": 1,
+    "warmup_seconds": 600,
     "backlog_target": 2,
     "scale_to_zero_minutes": 15
   }

@@ -1,18 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTableView } from "@/components/ui/DataTable";
 import { useDataTable } from "@/hooks/useDataTable";
 import { getComfyUiAssetAuditLogs, type ComfyUiAssetAuditLog } from "@/lib/api";
 import type { FilterValue } from "@/components/ui/SmartFilters";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
+import { AdminDetailSheet, AdminDetailSection } from "@/components/admin/AdminDetailSheet";
 import { Button } from "@/components/ui/button";
 
 function EventBadge({ event }: { event: string }) {
@@ -30,6 +24,7 @@ function EventBadge({ event }: { event: string }) {
 
 export default function AdminComfyUiAuditLogsPage() {
   const [selectedLog, setSelectedLog] = useState<ComfyUiAssetAuditLog | null>(null);
+  const didInitTablePrefsRef = useRef(false);
 
   const columns = useMemo<ColumnDef<ComfyUiAssetAuditLog>[]>(
     () => [
@@ -57,7 +52,7 @@ export default function AdminComfyUiAuditLogsPage() {
         cell: ({ row }) => <EventBadge event={row.original.event} />,
       },
       {
-        id: "bundle_id",
+        id: "bundle",
         accessorKey: "bundle_id",
         header: "Bundle",
         enableSorting: true,
@@ -69,7 +64,7 @@ export default function AdminComfyUiAuditLogsPage() {
         },
       },
       {
-        id: "asset_file_id",
+        id: "asset_file",
         accessorKey: "asset_file_id",
         header: "Asset",
         enableSorting: true,
@@ -109,6 +104,10 @@ export default function AdminComfyUiAuditLogsPage() {
     entityClass: "ComfyUiAssetAuditLog",
     entityName: "Asset Audit Log",
     storageKey: "admin-comfyui-asset-audit-logs",
+    relationToIdMap: {
+      bundle: "bundle_id",
+      asset_file: "asset_file_id",
+    },
     list: async (params: {
       page: number;
       perPage: number;
@@ -131,6 +130,37 @@ export default function AdminComfyUiAuditLogsPage() {
     extraColumns: columns,
   });
 
+  useEffect(() => {
+    if (didInitTablePrefsRef.current) return;
+    if (state.availableColumns.length === 0) return;
+
+    const allKeys = state.availableColumns.map((col) => col.key);
+    const preferredOrder = [
+      "created_at",
+      "event",
+      "bundle",
+      "asset_file",
+      "actor_email",
+      "notes",
+      "id",
+    ].filter((key) => allKeys.includes(key));
+
+    const nextOrder = [
+      ...preferredOrder,
+      ...allKeys.filter((key) => !preferredOrder.includes(key)),
+    ];
+    state.table.setColumnOrder(nextOrder);
+
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("admin-comfyui-asset-audit-logs");
+      if (!saved && preferredOrder.length > 0) {
+        state.setVisibleColumns(new Set(preferredOrder));
+      }
+    }
+
+    didInitTablePrefsRef.current = true;
+  }, [state.availableColumns, state.table, state.setVisibleColumns]);
+
   return (
     <>
       <DataTableView
@@ -145,21 +175,18 @@ export default function AdminComfyUiAuditLogsPage() {
         }}
       />
 
-      <Sheet
+      <AdminDetailSheet
         open={selectedLog !== null}
         onOpenChange={(open) => {
           if (!open) setSelectedLog(null);
         }}
+        title={selectedLog ? `Audit: ${selectedLog.event}` : "Audit Log"}
+        description={selectedLog ? `Event #${selectedLog.id}` : undefined}
       >
-        <SheetContent side="right" className="overflow-y-auto">
-          {selectedLog && (
-            <>
-              <SheetHeader className="pb-4 border-b border-border">
-                <SheetTitle>ComfyUI Audit Log Detail</SheetTitle>
-                <SheetDescription>Event #{selectedLog.id}</SheetDescription>
-              </SheetHeader>
-
-              <div className="mt-6 space-y-4">
+        {selectedLog && (
+          <>
+            <AdminDetailSection title="Event Details">
+              <div className="grid gap-4 md:grid-cols-2">
                 <DetailRow label="Timestamp">
                   {selectedLog.created_at ? new Date(selectedLog.created_at).toLocaleString() : "-"}
                 </DetailRow>
@@ -169,41 +196,42 @@ export default function AdminComfyUiAuditLogsPage() {
                 <DetailRow label="Bundle ID">{selectedLog.bundle_id ?? "-"}</DetailRow>
                 <DetailRow label="Asset ID">{selectedLog.asset_file_id ?? "-"}</DetailRow>
                 <DetailRow label="Actor">{selectedLog.actor_email ?? "-"}</DetailRow>
-                <DetailRow label="Notes">{selectedLog.notes ?? "-"}</DetailRow>
-
-                {selectedLog.artifact_download_url && (
-                  <div className="pt-4 border-t border-border">
-                    <Button
-                      variant="outline"
-                      onClick={() => window.open(selectedLog.artifact_download_url || "", "_blank", "noopener,noreferrer")}
-                    >
-                      Download Artifact
-                    </Button>
-                  </div>
-                )}
-
-                {selectedLog.metadata && Object.keys(selectedLog.metadata).length > 0 && (
-                  <div className="pt-4 border-t border-border">
-                    <h3 className="text-sm font-medium text-foreground mb-2">Metadata</h3>
-                    <pre className="rounded-lg bg-muted p-3 text-xs text-foreground overflow-x-auto whitespace-pre-wrap break-all">
-                      {JSON.stringify(selectedLog.metadata, null, 2)}
-                    </pre>
-                  </div>
-                )}
+                <div className="md:col-span-2">
+                  <DetailRow label="Notes">{selectedLog.notes ?? "-"}</DetailRow>
+                </div>
               </div>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
+            </AdminDetailSection>
+
+            {selectedLog.artifact_download_url && (
+              <AdminDetailSection title="Artifact">
+                <Button
+                  variant="outline"
+                  onClick={() => window.open(selectedLog.artifact_download_url || "", "_blank", "noopener,noreferrer")}
+                >
+                  Download Artifact
+                </Button>
+              </AdminDetailSection>
+            )}
+
+            {selectedLog.metadata && Object.keys(selectedLog.metadata).length > 0 && (
+              <AdminDetailSection title="Metadata">
+                <pre className="rounded-lg bg-muted p-3 text-xs text-foreground overflow-x-auto whitespace-pre-wrap break-all">
+                  {JSON.stringify(selectedLog.metadata, null, 2)}
+                </pre>
+              </AdminDetailSection>
+            )}
+          </>
+        )}
+      </AdminDetailSheet>
     </>
   );
 }
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-1">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <div className="text-sm text-foreground">{children}</div>
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase text-muted-foreground">{label}</p>
+      <div className="text-sm text-foreground break-words">{children}</div>
     </div>
   );
 }

@@ -140,6 +140,21 @@ To use a specific existing instance profile:
 INSTANCE_PROFILE=MyExistingInstanceProfile ./launch.sh
 ```
 
+## Troubleshooting: instance not in SSM Managed nodes
+
+1. **Region check**: make sure the AWS Console region matches the instance region.
+2. **Check instance profile**:
+   ```bash
+   aws ec2 describe-instances --region us-east-1 --instance-ids i-xxxx \
+     --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text
+   ```
+   - If `None`, attach an instance profile with `AmazonSSMManagedInstanceCore`.
+3. **Check SSM agent on the instance**:
+   ```bash
+   sudo systemctl status amazon-ssm-agent --no-pager || true
+   sudo systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service --no-pager || true
+   ```
+
 ## Configuration
 
 All settings are via environment variables:

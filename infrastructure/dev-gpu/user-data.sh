@@ -10,6 +10,23 @@ echo "=== dev-gpu setup started at $(date -u) ==="
 
 AUTO_SHUTDOWN_HOURS="__AUTO_SHUTDOWN_HOURS__"
 
+# ── 0. Ensure SSM agent is installed/running ──────────────────────────────────
+echo "Ensuring amazon-ssm-agent is installed and running..."
+if systemctl list-unit-files | grep -q "^amazon-ssm-agent"; then
+  systemctl enable --now amazon-ssm-agent || echo "WARNING: Failed to start amazon-ssm-agent."
+elif systemctl list-unit-files | grep -q "^snap.amazon-ssm-agent.amazon-ssm-agent.service"; then
+  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service || echo "WARNING: Failed to start snap amazon-ssm-agent."
+else
+  if command -v snap >/dev/null 2>&1; then
+    snap install amazon-ssm-agent --classic || echo "WARNING: Failed to install amazon-ssm-agent via snap."
+    systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service || echo "WARNING: Failed to start snap amazon-ssm-agent."
+  else
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update || true
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y amazon-ssm-agent || echo "WARNING: Failed to install amazon-ssm-agent via apt."
+    systemctl enable --now amazon-ssm-agent || echo "WARNING: Failed to start amazon-ssm-agent."
+  fi
+fi
+
 # ── 1. Disable the production worker daemon ──────────────────────────────────
 echo "Disabling comfyui-worker.service..."
 systemctl disable --now comfyui-worker.service || true

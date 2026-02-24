@@ -71,6 +71,88 @@ get_public_ip() {
     --output text 2>/dev/null || echo "N/A"
 }
 
+get_instance_profile_arn() {
+  aws ec2 describe-instances \
+    --region "$AWS_REGION" \
+    --instance-ids "$1" \
+    --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' \
+    --output text 2>/dev/null || echo "None"
+}
+
+is_ssm_managed() {
+  local instance_id="$1"
+  local found
+  found=$(aws ssm describe-instance-information \
+    --region "$AWS_REGION" \
+    --filters "Key=InstanceIds,Values=${instance_id}" \
+    --query "InstanceInformationList[0].InstanceId" \
+    --output text 2>/dev/null || echo "None")
+  [ -n "$found" ] && [ "$found" != "None" ] && [ "$found" = "$instance_id" ]
+}
+
+wait_for_ssm() {
+  local instance_id="$1"
+  local attempts=12
+  local i=1
+  while [ "$i" -le "$attempts" ]; do
+    if is_ssm_managed "$instance_id"; then
+      return 0
+    fi
+    sleep 10
+    i=$((i + 1))
+  done
+  return 1
+}
+
+print_manual_ssm_attach_help() {
+  local instance_id="$1"
+  local profile_name="bp-comfyui-dev-${STAGE}"
+  local role_name="$profile_name"
+
+  cat <<EOF
+WARNING: Instance is not SSM-managed.
+- Reason: no IAM instance profile attached (or SSM agent not running).
+- Fix (CLI): attach an instance profile with AmazonSSMManagedInstanceCore.
+
+Example:
+  aws iam create-role --role-name "$role_name" \\
+    --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+  aws iam attach-role-policy --role-name "$role_name" \\
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  aws iam create-instance-profile --instance-profile-name "$profile_name"
+  aws iam add-role-to-instance-profile --instance-profile-name "$profile_name" --role-name "$role_name"
+  aws ec2 associate-iam-instance-profile --region "$AWS_REGION" \\
+    --instance-id "$instance_id" --iam-instance-profile Name="$profile_name"
+
+Required IAM permissions (caller):
+  iam:CreateRole, iam:AttachRolePolicy, iam:CreateInstanceProfile,
+  iam:AddRoleToInstanceProfile, iam:PutRolePolicy, iam:PassRole,
+  ec2:AssociateIamInstanceProfile
+EOF
+}
+
+print_ssm_status() {
+  local instance_id="$1"
+  local profile_arn
+  profile_arn="$(get_instance_profile_arn "$instance_id" || echo "None")"
+  echo "  Instance profile: ${profile_arn}"
+
+  if [ -z "$profile_arn" ] || [ "$profile_arn" = "None" ]; then
+    echo "  SSM status: NOT MANAGED (no instance profile attached)"
+    print_manual_ssm_attach_help "$instance_id"
+    return 1
+  fi
+
+  if is_ssm_managed "$instance_id"; then
+    echo "  SSM status: MANAGED"
+    return 0
+  fi
+
+  echo "  SSM status: NOT MANAGED (agent not registered yet)"
+  echo "  Tip: wait 1-2 minutes and ensure amazon-ssm-agent is running."
+  return 1
+}
+
 is_truthy() {
   case "${1:-}" in
     1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
@@ -334,6 +416,9 @@ if [ -n "$EXISTING_ID" ]; then
     if [ -n "${DEVGPU_SG_ID:-}" ]; then
       configure_sg_ingress "$DEVGPU_SG_ID" "$EXISTING_ID" "$KEY_NAME"
     fi
+    echo "Checking SSM registration..."
+    wait_for_ssm "$EXISTING_ID" || true
+    print_ssm_status "$EXISTING_ID" || true
     exit 0
   fi
 
@@ -347,6 +432,7 @@ if [ -n "$EXISTING_ID" ]; then
     echo "Starting stopped instance $EXISTING_ID..."
     aws ec2 start-instances --region "$AWS_REGION" --instance-ids "$EXISTING_ID" >/dev/null
     aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$EXISTING_ID"
+    attach_instance_profile_if_missing "$EXISTING_ID" || true
     EXISTING_IP=$(get_public_ip "$EXISTING_ID")
     if [ -n "${DEVGPU_SG_ID:-}" ]; then
       configure_sg_ingress "$DEVGPU_SG_ID" "$EXISTING_ID" "$KEY_NAME"
@@ -362,6 +448,9 @@ if [ -n "$EXISTING_ID" ]; then
       echo "  SSH          : ssh -i ~/.ssh/$KEY_NAME.pem ubuntu@$EXISTING_IP"
     fi
     echo "========================================"
+    echo "Checking SSM registration..."
+    wait_for_ssm "$EXISTING_ID" || true
+    print_ssm_status "$EXISTING_ID" || true
     exit 0
   fi
 
@@ -496,6 +585,7 @@ INSTANCE_ID=$(aws ec2 run-instances "${LAUNCH_ARGS[@]}")
 
 echo "Instance $INSTANCE_ID launched. Waiting for running state..."
 aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$INSTANCE_ID"
+attach_instance_profile_if_missing "$INSTANCE_ID" || true
 
 # Get public IP
 PUBLIC_IP=$(get_public_ip "$INSTANCE_ID")
@@ -521,6 +611,9 @@ echo "  Stage        : $STAGE"
 echo "  Fleet        : $FLEET_SLUG"
 echo "  Workflow     : $WORKFLOW_SLUG"
 echo "========================================"
+echo "Checking SSM registration..."
+wait_for_ssm "$INSTANCE_ID" || true
+print_ssm_status "$INSTANCE_ID" || true
 echo ""
 echo "NOTE: ComfyUI may take 1-2 minutes to start after the instance is running."
 echo "      Check /var/log/dev-gpu-setup.log on the instance if it doesn't load."

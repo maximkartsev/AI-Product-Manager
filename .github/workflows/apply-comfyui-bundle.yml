@@ -99,7 +99,7 @@ jobs:
             --instance-ids "${{ inputs.instance_id }}" \
             --document-name "AWS-RunShellScript" \
             --comment "Apply ComfyUI asset bundle" \
-            --parameters commands="if [ ! -x /opt/comfyui/bin/apply-bundle.sh ]; then echo 'apply-bundle.sh missing (wrong AMI)'; exit 1; fi; MODELS_BUCKET=${MODELS_BUCKET} BUNDLE_PREFIX=$BUNDLE_PREFIX /opt/comfyui/bin/apply-bundle.sh && sudo systemctl restart comfyui.service && (sudo systemctl restart comfyui-worker.service || true)" \
+            --parameters commands="if ! test -x /opt/comfyui/bin/apply-bundle.sh; then echo 'apply-bundle.sh missing (wrong AMI)'; exit 1; fi; MODELS_BUCKET=${MODELS_BUCKET} BUNDLE_PREFIX=$BUNDLE_PREFIX /opt/comfyui/bin/apply-bundle.sh && sudo systemctl restart comfyui.service && (sudo systemctl restart comfyui-worker.service || true)" \
             --query "Command.CommandId" --output text)
           echo "command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
           echo "SSM command ID: $COMMAND_ID"

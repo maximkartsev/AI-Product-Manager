@@ -473,6 +473,7 @@ Run GitHub Action: **Build GPU AMI** (`.github/workflows/build-ami.yml`)
 Inputs:
 - `fleet_slug`: `gpu-default`
 - `stage`: `staging`
+- `instance_type` (optional override): leave blank to use `/bp/<stage>/fleets/<fleet_slug>/desired_config`
 - `models_s3_bucket`: from `/bp/<stage>/models/bucket`
 - `models_s3_prefix`: `bundles/<bundle_id>`
 - `bundle_id`: `<bundle_id>`

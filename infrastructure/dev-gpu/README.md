@@ -115,7 +115,7 @@ Prerequisite (one-time): configure GitHub Actions → AWS auth (OIDC) and set th
 2. Run workflow with:
    - `fleet_slug`: e.g. `gpu-default`
    - `stage`: `staging` or `production`
-   - `instance_type`: e.g. `g4dn.xlarge`
+   - `instance_type` (optional override): leave blank to use `/bp/<stage>/fleets/<fleet_slug>/desired_config`
 3. The workflow writes the AMI ID to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
 
 If the workflow fails at **Configure AWS credentials** with:

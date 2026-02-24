@@ -18,10 +18,10 @@ on:
         type: string
         default: 'us-east-1'
       instance_type:
-        description: 'Instance type for AMI build'
+        description: 'Optional override: instance type for AMI build (leave blank to use fleet desired_config)'
         required: false
         type: string
-        default: 'g4dn.xlarge'
+        default: ''
       models_s3_bucket:
         description: 'Optional: S3 bucket with ComfyUI asset bundle'
         required: false
@@ -64,6 +64,76 @@ jobs:
           role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Resolve Packer instance type
+        id: resolve_instance_type
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "${{ inputs.instance_type }}" ]; then
+            INSTANCE_TYPE="${{ inputs.instance_type }}"
+            SOURCE="input"
+          else
+            DESIRED_JSON=$(aws ssm get-parameter \
+              --name "/bp/${{ inputs.stage }}/fleets/${{ inputs.fleet_slug }}/desired_config" \
+              --query "Parameter.Value" \
+              --output text 2>/dev/null || true)
+
+            if [ -z "${DESIRED_JSON:-}" ] || [ "$DESIRED_JSON" = "None" ]; then
+              echo "No desired_config found at /bp/${{ inputs.stage }}/fleets/${{ inputs.fleet_slug }}/desired_config." >&2
+              echo "Create/update the fleet in the UI (writes desired_config) or pass instance_type override." >&2
+              exit 1
+            fi
+
+            export DESIRED_JSON
+
+            TEMPLATE_SLUG=$(python3 - <<'PY'
+            import json, os, sys
+            data = json.loads(os.environ["DESIRED_JSON"])
+            template_slug = data.get("template_slug")
+            instance_type = data.get("instance_type")
+            if not template_slug or not instance_type:
+              print("desired_config missing template_slug or instance_type", file=sys.stderr)
+              sys.exit(1)
+            print(template_slug)
+            PY
+            )
+
+            INSTANCE_TYPE=$(python3 - <<'PY'
+            import json, os, sys
+            data = json.loads(os.environ["DESIRED_JSON"])
+            instance_type = data.get("instance_type")
+            if not instance_type:
+              print("desired_config missing instance_type", file=sys.stderr)
+              sys.exit(1)
+            print(instance_type)
+            PY
+            )
+
+            python3 - <<'PY'
+            import json, os, sys
+            desired = json.loads(os.environ["DESIRED_JSON"])
+            template_slug = desired.get("template_slug")
+            instance_type = desired.get("instance_type")
+            with open("backend/resources/comfyui/fleet-templates.json", "r", encoding="utf-8") as handle:
+                templates = json.load(handle)
+            template = next((t for t in templates if t.get("template_slug") == template_slug), None)
+            if not template:
+                print(f"Unknown template_slug: {template_slug}", file=sys.stderr)
+                sys.exit(1)
+            allowed = template.get("allowed_instance_types") or []
+            if instance_type not in allowed:
+                print(f"Instance type {instance_type} not allowed for template {template_slug}", file=sys.stderr)
+                sys.exit(1)
+            PY
+
+            SOURCE="ssm"
+          fi
+
+          echo "PACKER_INSTANCE_TYPE=${INSTANCE_TYPE}" >> "$GITHUB_ENV"
+          echo "instance_type=${INSTANCE_TYPE}" >> "$GITHUB_OUTPUT"
+          echo "source=${SOURCE}" >> "$GITHUB_OUTPUT"
+
       - name: Setup Packer
         uses: hashicorp/setup-packer@main
         with:
@@ -78,7 +148,7 @@ jobs:
         run: |
           packer validate \
             -var "fleet_slug=${{ inputs.fleet_slug }}" \
-            -var "instance_type=${{ inputs.instance_type }}" \
+            -var "instance_type=${PACKER_INSTANCE_TYPE}" \
             -var "aws_region=${{ env.AWS_REGION }}" \
             -var "models_s3_bucket=${{ inputs.models_s3_bucket }}" \
             -var "models_s3_prefix=${{ inputs.models_s3_prefix }}" \
@@ -92,7 +162,7 @@ jobs:
         run: |
           packer build \
             -var "fleet_slug=${{ inputs.fleet_slug }}" \
-            -var "instance_type=${{ inputs.instance_type }}" \
+            -var "instance_type=${PACKER_INSTANCE_TYPE}" \
             -var "aws_region=${{ env.AWS_REGION }}" \
             -var "models_s3_bucket=${{ inputs.models_s3_bucket }}" \
             -var "models_s3_prefix=${{ inputs.models_s3_prefix }}" \
@@ -138,6 +208,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Fleet:** ${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Stage:** ${{ inputs.stage }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Instance Type:** ${{ steps.resolve_instance_type.outputs.instance_type }} (source: ${{ steps.resolve_instance_type.outputs.source }})" >> $GITHUB_STEP_SUMMARY
           echo "- **AMI ID:** ${{ steps.build.outputs.ami_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "- **SSM Parameter:** /bp/ami/fleets/${{ inputs.stage }}/${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY

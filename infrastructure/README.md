@@ -481,7 +481,7 @@ AMIs are built via GitHub Actions (`.github/workflows/build-ami.yml`, manual dis
 Actions → "Build GPU AMI" → Run workflow
   fleet_slug: gpu-default
   stage: staging
-  instance_type: g4dn.xlarge  (default)
+  instance_type: (optional override; leave blank to use desired_config)
 ```
 
 The pipeline:
@@ -630,7 +630,7 @@ Defaults and constraints (from backend config):
 
 - **GPU AMI builds**:
   - Trigger GitHub Actions `build-ami.yml` (manual dispatch).
-  - Input: `fleet_slug`, `stage`, optional `instance_type`.
+- Input: `fleet_slug`, `stage`, optional `instance_type` override (defaults to `/bp/<stage>/fleets/<fleet_slug>/desired_config`).
   - Output: AMI ID written to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
 
 - **Optional bundle apply** (Packer):
@@ -833,7 +833,7 @@ test-frontend ─┘
 **Inputs:**
 - `fleet_slug` (required) — e.g. `gpu-default`
 - `stage` (optional, default: `staging`)
-- `instance_type` (optional, default: `g4dn.xlarge`) — build instance
+- `instance_type` (optional override) — build instance type. Leave blank to use `/bp/<stage>/fleets/<fleet_slug>/desired_config`.
 - `models_s3_bucket` (optional) — models bucket (e.g. `bp-models-<account>-<stage>`)
 - `models_s3_prefix` (optional) — bundle prefix (e.g. `bundles/<bundle_id>`)
 - `bundle_id` (optional) — used for AMI tagging/audit

@@ -8,6 +8,7 @@ import { useDataTable } from "@/hooks/useDataTable";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   deleteComfyUiAssetBundle,
   deleteComfyUiAssetFile,
@@ -200,8 +201,8 @@ export default function AdminComfyUiCleanupPage() {
       toast.success("Bundle deleted.");
       setBundleToDelete(null);
       bundleState.loadItems();
-    } catch {
-      toast.error("Failed to delete bundle.");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to delete bundle."));
     }
   };
 
@@ -212,8 +213,8 @@ export default function AdminComfyUiCleanupPage() {
       toast.success("Asset deleted.");
       setAssetToDelete(null);
       assetState.loadItems();
-    } catch {
-      toast.error("Failed to delete asset.");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to delete asset."));
     }
   };
 

@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 
 // ---- Helpers ----
 
@@ -676,7 +677,7 @@ export default function AdminEffectsPage() {
             toast.success("Effect deleted");
           } catch (error) {
             console.error("Failed to delete Effect.", error);
-            toast.error("Failed to delete Effect. Please try again.");
+            toast.error(extractErrorMessage(error, "Failed to delete Effect."));
           } finally {
             setDeletingId(null);
           }

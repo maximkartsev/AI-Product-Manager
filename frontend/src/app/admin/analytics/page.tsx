@@ -7,11 +7,13 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "sonner";
 import {
   getTokenSpendingAnalytics,
   type TokenSpendingData,
   type TokenSpendingByEffect,
 } from "@/lib/api";
+import { extractErrorMessage } from "@/lib/apiErrors";
 
 export default function AdminAnalyticsPage() {
   const [fromDate, setFromDate] = useState(() => format(subDays(new Date(), 30), "yyyy-MM-dd"));
@@ -31,6 +33,7 @@ export default function AdminAnalyticsPage() {
       setData(result);
     } catch (error) {
       console.error("Failed to load analytics:", error);
+      toast.error(extractErrorMessage(error, "Failed to load analytics."));
     } finally {
       setLoading(false);
     }

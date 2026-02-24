@@ -22,7 +22,18 @@ export function extractFieldErrors(error: unknown): Record<string, string> {
 /** Extract a user-friendly message from an ApiError */
 export function extractErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
-    return error.message || fallback;
+    const message = String(error.message || fallback).trim();
+    if (message && message !== "Validation Error") {
+      return message;
+    }
+
+    // If the backend returns a generic "Validation Error", prefer the first
+    // field-level message (it is usually more actionable).
+    const fieldErrors = extractFieldErrors(error);
+    const firstFieldError = Object.values(fieldErrors)[0];
+    if (firstFieldError) return firstFieldError;
+
+    return message || fallback;
   }
   return fallback;
 }

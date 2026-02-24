@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   activateComfyUiFleetBundle,
   createComfyUiFleet,
@@ -307,8 +308,8 @@ export default function AdminComfyUiFleetsPage() {
       setDetailFleet(updated);
       toast.success("Fleet updated.");
       state.loadItems();
-    } catch {
-      toast.error("Failed to update fleet.");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to update fleet."));
     } finally {
       setSavingDetail(false);
     }
@@ -329,8 +330,8 @@ export default function AdminComfyUiFleetsPage() {
       toast.success("Bundle activated.");
       setActivateNotes("");
       state.loadItems();
-    } catch {
-      toast.error("Failed to activate bundle.");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to activate bundle."));
     } finally {
       setSavingDetail(false);
     }

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTableView } from "@/components/ui/DataTable";
 import { useDataTable } from "@/hooks/useDataTable";
+import { toast } from "sonner";
 import {
   getAdminUser,
   getAdminUserPurchases,
@@ -17,6 +18,7 @@ import {
   type AdminTokenTransaction,
 } from "@/lib/api";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 
 function PurchasesTable({ userId, userName }: { userId: number; userName: string }) {
   const state = useDataTable<AdminPurchase>({
@@ -140,12 +142,14 @@ export default function AdminUserDetailPage() {
 
   const [user, setUser] = useState<AdminUserDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tokenBalance, setTokenBalance] = useState<number>(0);
   const [totalPurchases, setTotalPurchases] = useState<number>(0);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
+      setLoadError(null);
       try {
         const [userData, purchasesData, tokensData] = await Promise.all([
           getAdminUser(userId),
@@ -157,6 +161,9 @@ export default function AdminUserDetailPage() {
         setTokenBalance(tokensData.balance);
       } catch (error) {
         console.error("Failed to load user:", error);
+        const message = extractErrorMessage(error, "Failed to load user.");
+        setLoadError(message);
+        toast.error(message);
       } finally {
         setLoading(false);
       }
@@ -175,7 +182,7 @@ export default function AdminUserDetailPage() {
   if (!user) {
     return (
       <div className="flex items-center justify-center py-32">
-        <p className="text-muted-foreground">User not found.</p>
+        <p className="text-muted-foreground">{loadError || "User not found."}</p>
       </div>
     );
   }

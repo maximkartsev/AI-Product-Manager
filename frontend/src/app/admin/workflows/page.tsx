@@ -34,6 +34,7 @@ import {
 import { WorkflowPropertyBuilder } from "@/components/admin/WorkflowPropertyBuilder";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 
 // ---- Helpers ----
 
@@ -644,7 +645,7 @@ export default function AdminWorkflowsPage() {
               setShowBlockedDialog(true);
             } else {
               console.error("Failed to delete Workflow.", error);
-              toast.error("Failed to delete Workflow. Please try again.");
+              toast.error(extractErrorMessage(error, "Failed to delete Workflow."));
             }
           } finally {
             setDeletingId(null);

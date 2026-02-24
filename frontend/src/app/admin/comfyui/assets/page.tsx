@@ -14,6 +14,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
 import { uploadMultipartParts } from "@/lib/multipartUpload";
+import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   createComfyUiAssetFile,
   abortComfyUiAssetMultipartUpload,
@@ -542,7 +543,7 @@ export default function AdminComfyUiAssetsPage() {
               setShowBlockedDialog(true);
             } else {
               console.error("Failed to delete Asset.", error);
-              toast.error("Failed to delete Asset. Please try again.");
+              toast.error(extractErrorMessage(error, "Failed to delete Asset."));
             }
           } finally {
             setDeletingId(null);

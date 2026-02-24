@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 
 function parseNumber(value: string): number | null {
   const num = Number(value);
@@ -255,7 +256,7 @@ export default function AdminCategoriesPage() {
             toast.success("Category deleted");
           } catch (error) {
             console.error("Failed to delete Category.", error);
-            toast.error("Failed to delete Category. Please try again.");
+            toast.error(extractErrorMessage(error, "Failed to delete Category."));
           } finally {
             setDeletingId(null);
           }

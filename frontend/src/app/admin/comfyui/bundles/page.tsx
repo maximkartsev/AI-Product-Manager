@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Info } from "lucide-react";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   createComfyUiAssetBundle,
   deleteComfyUiAssetBundle,
@@ -164,8 +165,8 @@ export default function AdminComfyUiBundlesPage() {
                   try {
                     const manifest = await getComfyUiAssetBundleManifest(bundle.id);
                     window.open(manifest.download_url, "_blank", "noopener,noreferrer");
-                  } catch {
-                    toast.error("Failed to fetch manifest.");
+                  } catch (error) {
+                    toast.error(extractErrorMessage(error, "Failed to fetch manifest."));
                   }
                 }}
               >
@@ -608,7 +609,7 @@ export default function AdminComfyUiBundlesPage() {
               setShowBlockedDialog(true);
             } else {
               console.error("Failed to delete Bundle.", error);
-              toast.error("Failed to delete Bundle. Please try again.");
+              toast.error(extractErrorMessage(error, "Failed to delete Bundle."));
             }
           } finally {
             setDeletingId(null);

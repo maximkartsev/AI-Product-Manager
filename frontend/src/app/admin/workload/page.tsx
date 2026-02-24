@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
+import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   getWorkload,
   assignWorkflowWorkers,
@@ -68,8 +69,8 @@ export default function AdminWorkloadPage() {
       setLocalAssignments(assignments);
       originalAssignments.current = JSON.parse(JSON.stringify(assignments));
       setDirty(false);
-    } catch {
-      toast.error("Failed to load workload data");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to load workload data"));
     } finally {
       setLoading(false);
     }
@@ -124,8 +125,8 @@ export default function AdminWorkloadPage() {
       );
       toast.success("Assignments saved");
       await loadData(period);
-    } catch {
-      toast.error("Failed to save assignments");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to save assignments"));
     } finally {
       setSaving(false);
     }

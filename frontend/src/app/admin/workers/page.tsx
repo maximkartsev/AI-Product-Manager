@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AdminDetailSheet, AdminDetailSection } from "@/components/admin/AdminDetailSheet";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
+import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   getAdminWorkers,
   getAdminWorker,
@@ -74,8 +75,8 @@ export default function AdminWorkersPage() {
       setAssignedWorkflowIds((full.workflows ?? []).map((w) => w.id));
       setAuditLogs(full.recent_audit_logs ?? []);
       setDetailOpen(true);
-    } catch {
-      toast.error("Failed to load worker details");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to load worker details"));
     }
   }, []);
 
@@ -162,8 +163,8 @@ export default function AdminWorkersPage() {
       await updateAdminWorker(detailWorker.id, { display_name: displayName, is_draining: isDraining });
       toast.success("Worker updated");
       state.loadItems();
-    } catch {
-      toast.error("Failed to update worker");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to update worker"));
     } finally {
       setSaving(false);
     }
@@ -181,8 +182,8 @@ export default function AdminWorkersPage() {
       }
       state.loadItems();
       await refreshDetail(detailWorker.id);
-    } catch {
-      toast.error("Failed to update approval status");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to update approval status"));
     }
   };
 
@@ -192,8 +193,8 @@ export default function AdminWorkersPage() {
       const result = await rotateWorkerToken(detailWorker.id);
       setPlainToken(result.token);
       await refreshDetail(detailWorker.id);
-    } catch {
-      toast.error("Failed to rotate token");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to rotate token"));
     }
   };
 
@@ -203,8 +204,8 @@ export default function AdminWorkersPage() {
       await assignWorkerWorkflows(detailWorker.id, assignedWorkflowIds);
       toast.success("Workflows assigned");
       state.loadItems();
-    } catch {
-      toast.error("Failed to assign workflows");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to assign workflows"));
     }
   };
 

@@ -14,6 +14,7 @@ use InvalidArgumentException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
@@ -105,6 +106,12 @@ class ComfyUiFleetsController extends BaseController
         $templateSlug = $request->input('template_slug');
         $instanceType = $request->input('instance_type');
 
+        if (ComfyUiGpuFleet::query()->where('stage', $stage)->where('slug', $slug)->exists()) {
+            return $this->sendError('Validation Error', [
+                'slug' => ['A fleet with this slug already exists for this stage.'],
+            ], 409);
+        }
+
         try {
             $template = $templates->requireTemplate($templateSlug);
         } catch (InvalidArgumentException $e) {
@@ -119,26 +126,50 @@ class ComfyUiFleetsController extends BaseController
 
         $amiParam = "/bp/ami/fleets/{$stage}/{$slug}";
 
-        $fleet = ComfyUiGpuFleet::query()->create([
-            'stage' => $stage,
-            'slug' => $slug,
-            'template_slug' => $templateSlug,
-            'name' => $request->input('name'),
-            'instance_types' => [$instanceType],
-            'max_size' => $template['max_size'],
-            'warmup_seconds' => $template['warmup_seconds'],
-            'backlog_target' => $template['backlog_target'],
-            'scale_to_zero_minutes' => $template['scale_to_zero_minutes'],
-            'ami_ssm_parameter' => $amiParam,
-        ]);
+        // Write desired config first so a failure doesn't leave a partially-created fleet row.
+        try {
+            $ssm->putDesiredFleetConfig($stage, $slug, [
+                'version' => 1,
+                'template_slug' => $templateSlug,
+                'instance_type' => $instanceType,
+                'ami_ssm_parameter' => $amiParam,
+                'enabled' => true,
+            ]);
+        } catch (\Throwable $e) {
+            return $this->sendError('Failed to write desired fleet config to SSM', [
+                'ssm' => [
+                    $e->getMessage(),
+                    'Hint: ensure the backend ECS task role allows ssm:PutParameter for /bp/<stage>/fleets/*/desired_config (redeploy compute stack).',
+                ],
+            ], 502);
+        }
 
-        $ssm->putDesiredFleetConfig($stage, $slug, [
-            'version' => 1,
-            'template_slug' => $templateSlug,
-            'instance_type' => $instanceType,
-            'ami_ssm_parameter' => $amiParam,
-            'enabled' => true,
-        ]);
+        try {
+            $fleet = ComfyUiGpuFleet::query()->create([
+                'stage' => $stage,
+                'slug' => $slug,
+                'template_slug' => $templateSlug,
+                'name' => $request->input('name'),
+                'instance_types' => [$instanceType],
+                'max_size' => $template['max_size'],
+                'warmup_seconds' => $template['warmup_seconds'],
+                'backlog_target' => $template['backlog_target'],
+                'scale_to_zero_minutes' => $template['scale_to_zero_minutes'],
+                'ami_ssm_parameter' => $amiParam,
+            ]);
+        } catch (QueryException $e) {
+            // Handle duplicate key (stage+slug unique)
+            $duplicate = isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062;
+            if ($duplicate) {
+                return $this->sendError('Validation Error', [
+                    'slug' => ['A fleet with this slug already exists for this stage.'],
+                ], 409);
+            }
+
+            return $this->sendError('Failed to create fleet', [
+                'db' => ['Database error while creating fleet.'],
+            ], 500);
+        }
 
         return $this->sendResponse($fleet, 'Fleet created successfully', [], 201);
     }
@@ -181,30 +212,48 @@ class ComfyUiFleetsController extends BaseController
             $fleet->name = $request->input('name');
         }
 
-        if ($request->has('template_slug') || $request->has('instance_type')) {
-            $templateSlug = $request->input('template_slug', $fleet->template_slug);
-            $instanceType = $request->input('instance_type', ($fleet->instance_types[0] ?? null));
+        $shouldUpdateDesiredConfig = $request->has('template_slug') || $request->has('instance_type');
+        if ($shouldUpdateDesiredConfig) {
+            $nextTemplateSlug = $request->input('template_slug', $fleet->template_slug);
+            $nextInstanceType = $request->input('instance_type', ($fleet->instance_types[0] ?? null));
 
-            if (!$instanceType) {
+            if (!$nextInstanceType) {
                 return $this->sendError('Validation Error', [
                     'instance_type' => ['Instance type is required.'],
                 ], 422);
             }
 
             try {
-                $template = $templates->requireTemplate($templateSlug);
+                $template = $templates->requireTemplate($nextTemplateSlug);
             } catch (InvalidArgumentException $e) {
                 return $this->sendError('Validation Error', ['template_slug' => [$e->getMessage()]], 422);
             }
 
-            if (!in_array($instanceType, $template['allowed_instance_types'], true)) {
+            if (!in_array($nextInstanceType, $template['allowed_instance_types'], true)) {
                 return $this->sendError('Validation Error', [
                     'instance_type' => ['Instance type is not allowed for this template.'],
                 ], 422);
             }
 
-            $fleet->template_slug = $templateSlug;
-            $fleet->instance_types = [$instanceType];
+            try {
+                $ssm->putDesiredFleetConfig($fleet->stage, $fleet->slug, [
+                    'version' => 1,
+                    'template_slug' => $nextTemplateSlug,
+                    'instance_type' => $nextInstanceType,
+                    'ami_ssm_parameter' => $fleet->ami_ssm_parameter,
+                    'enabled' => true,
+                ]);
+            } catch (\Throwable $e) {
+                return $this->sendError('Failed to write desired fleet config to SSM', [
+                    'ssm' => [
+                        $e->getMessage(),
+                        'Hint: ensure the backend ECS task role allows ssm:PutParameter for /bp/<stage>/fleets/*/desired_config (redeploy compute stack).',
+                    ],
+                ], 502);
+            }
+
+            $fleet->template_slug = $nextTemplateSlug;
+            $fleet->instance_types = [$nextInstanceType];
             $fleet->max_size = $template['max_size'];
             $fleet->warmup_seconds = $template['warmup_seconds'];
             $fleet->backlog_target = $template['backlog_target'];
@@ -212,14 +261,6 @@ class ComfyUiFleetsController extends BaseController
         }
 
         $fleet->save();
-
-        $ssm->putDesiredFleetConfig($fleet->stage, $fleet->slug, [
-            'version' => 1,
-            'template_slug' => $fleet->template_slug,
-            'instance_type' => $fleet->instance_types[0] ?? null,
-            'ami_ssm_parameter' => $fleet->ami_ssm_parameter,
-            'enabled' => true,
-        ]);
 
         return $this->sendResponse($fleet, 'Fleet updated successfully');
     }

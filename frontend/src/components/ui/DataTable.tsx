@@ -104,6 +104,55 @@ export function DataTableView<T extends Record<string, any>>({
 
   const entityClass = options.entityClass;
 
+  const desktopOverlay =
+    availableColumns.length === 0
+      ? null
+      : loading
+        ? (
+            <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+          )
+        : errorStatus === 401
+          ? (
+              <div className="flex flex-col items-center justify-center">
+                <LogIn className="w-16 h-16 text-muted-foreground mb-4" />
+                <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Authentication Required</h3>
+                <p className="text-base text-muted-foreground text-center max-w-md px-4">
+                  You need to be authenticated to access this page. Please log in to continue.
+                </p>
+              </div>
+            )
+          : errorStatus === 403
+            ? (
+                <div className="flex flex-col items-center justify-center">
+                  <Lock className="w-16 h-16 text-muted-foreground mb-4" />
+                  <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Access Denied</h3>
+                  <p className="text-base text-muted-foreground text-center max-w-md px-4">
+                    You don&apos;t have permission to access this page.
+                  </p>
+                </div>
+              )
+            : errorStatus === 500
+              ? (
+                  <div className="flex flex-col items-center justify-center">
+                    <AlertCircle className="w-16 h-16 text-muted-foreground mb-4" />
+                    <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Oops! Something went wrong</h3>
+                    <p className="text-base text-muted-foreground text-center max-w-md px-4">
+                      We are already fixing it. Please try again in a few minutes.
+                    </p>
+                  </div>
+                )
+              : errorStatus === 404 || items.length === 0
+                ? (
+                    <div className="flex flex-col items-center justify-center">
+                      <FileQuestion className="w-16 h-16 text-muted-foreground mb-4" />
+                      <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Nothing Found</h3>
+                      <p className="text-base text-muted-foreground text-center max-w-md px-4">
+                        No {entityName.toLowerCase()} were found. Try adjusting your search or filters.
+                      </p>
+                    </div>
+                  )
+                : null;
+
   return (
     <div>
       <div className="space-y-6">
@@ -219,92 +268,48 @@ export function DataTableView<T extends Record<string, any>>({
                     <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
                   </div>
                 ) : (
-                <Table style={{ minWidth: table.getTotalSize(), width: '100%', tableLayout: 'fixed' }}>
-                  <TableHeader>
-                    {table.getHeaderGroups().map(headerGroup => (
-                      <TableRow key={headerGroup.id}>
-                        <SortableContext items={columnOrder} strategy={horizontalListSortingStrategy}>
-                          {headerGroup.headers.map(header => (
-                            <DraggableTableHeader key={header.id} header={header} />
-                          ))}
-                        </SortableContext>
-                      </TableRow>
-                    ))}
-                  </TableHeader>
-                  <TableBody>
-                    {loading ? (
-                      <TableRow>
-                        <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-16">
-                          <div className="flex items-center justify-center">
-                            <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : errorStatus === 401 ? (
-                      <TableRow>
-                        <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-16 px-4">
-                          <div className="flex flex-col items-center justify-center">
-                            <LogIn className="w-16 h-16 text-muted-foreground mb-4" />
-                            <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Authentication Required</h3>
-                            <p className="text-base text-muted-foreground text-center max-w-md px-4">
-                              You need to be authenticated to access this page. Please log in to continue.
-                            </p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : errorStatus === 403 ? (
-                      <TableRow>
-                        <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-16 px-4">
-                          <div className="flex flex-col items-center justify-center">
-                            <Lock className="w-16 h-16 text-muted-foreground mb-4" />
-                            <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Access Denied</h3>
-                            <p className="text-base text-muted-foreground text-center max-w-md px-4">
-                              You don&apos;t have permission to access this page.
-                            </p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : errorStatus === 500 ? (
-                      <TableRow>
-                        <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-16 px-4">
-                          <div className="flex flex-col items-center justify-center">
-                            <AlertCircle className="w-16 h-16 text-muted-foreground mb-4" />
-                            <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Oops! Something went wrong</h3>
-                            <p className="text-base text-muted-foreground text-center max-w-md px-4">
-                              We are already fixing it. Please try again in a few minutes.
-                            </p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : errorStatus === 404 || items.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-16 px-4">
-                          <div className="flex flex-col items-center justify-center">
-                            <FileQuestion className="w-16 h-16 text-muted-foreground mb-4" />
-                            <h3 className="text-xl font-semibold text-foreground mb-2 text-center">Nothing Found</h3>
-                            <p className="text-base text-muted-foreground text-center max-w-md px-4">
-                              No {entityName.toLowerCase()} were found. Try adjusting your search or filters.
-                            </p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      table.getRowModel().rows.map(row => (
-                        <TableRow
-                          key={row.id}
-                          className={onRowClick ? "cursor-pointer hover:bg-accent/50" : ""}
-                          onClick={() => onRowClick?.(row.original)}
-                        >
-                          <SortableContext items={columnOrder} strategy={horizontalListSortingStrategy}>
-                            {row.getVisibleCells().map(cell => (
-                              <DragAlongCell key={cell.id} cell={cell} />
-                            ))}
-                          </SortableContext>
-                        </TableRow>
-                      ))
+                  <div className="relative">
+                    <Table style={{ minWidth: table.getTotalSize(), width: "100%", tableLayout: "fixed" }}>
+                      <TableHeader>
+                        {table.getHeaderGroups().map(headerGroup => (
+                          <TableRow key={headerGroup.id}>
+                            <SortableContext items={columnOrder} strategy={horizontalListSortingStrategy}>
+                              {headerGroup.headers.map(header => (
+                                <DraggableTableHeader key={header.id} header={header} />
+                              ))}
+                            </SortableContext>
+                          </TableRow>
+                        ))}
+                      </TableHeader>
+                      <TableBody>
+                        {desktopOverlay ? (
+                          <TableRow>
+                            <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-16 px-4" />
+                          </TableRow>
+                        ) : (
+                          table.getRowModel().rows.map(row => (
+                            <TableRow
+                              key={row.id}
+                              className={onRowClick ? "cursor-pointer hover:bg-accent/50" : ""}
+                              onClick={() => onRowClick?.(row.original)}
+                            >
+                              <SortableContext items={columnOrder} strategy={horizontalListSortingStrategy}>
+                                {row.getVisibleCells().map(cell => (
+                                  <DragAlongCell key={cell.id} cell={cell} />
+                                ))}
+                              </SortableContext>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+
+                    {desktopOverlay && (
+                      <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center px-4">
+                        {desktopOverlay}
+                      </div>
                     )}
-                  </TableBody>
-                </Table>
+                  </div>
                 )}
               </div>
             </DndContext>

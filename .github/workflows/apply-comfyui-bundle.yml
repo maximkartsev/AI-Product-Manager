@@ -7,25 +7,9 @@ on:
         description: 'EC2 instance ID (dev GPU node)'
         required: true
         type: string
-      stage:
-        description: 'Stage (staging or production)'
-        required: false
-        type: choice
-        default: staging
-        options:
-          - staging
-          - production
       fleet_slug:
         description: 'Fleet slug (e.g. gpu-default)'
         required: true
-        type: string
-      bundle_prefix:
-        description: 'Bundle S3 prefix (e.g. bundles/<bundle_id>)'
-        required: true
-        type: string
-      models_bucket:
-        description: 'S3 bucket with asset bundles (bp-models-<account>-<stage>)'
-        required: false
         type: string
       logs_bucket:
         description: 'Optional: S3 bucket for logs (bp-logs-<account>-<stage>)'
@@ -46,17 +30,81 @@ permissions:
   contents: read
 
 jobs:
-  apply-bundle:
-    name: Apply Bundle via SSM
+  resolve-stage:
+    name: Resolve Stage
     runs-on: ubuntu-latest
     env:
       AWS_REGION: ${{ inputs.aws_region }}
-      STAGE: ${{ inputs.stage }}
+    outputs:
+      stage: ${{ steps.set-stage.outputs.stage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check staging desired_config
+        id: check-staging
+        shell: bash
+        run: |
+          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage staging --region "${{ env.AWS_REGION }}"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (production)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check production desired_config
+        id: check-production
+        shell: bash
+        run: |
+          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage production --region "${{ env.AWS_REGION }}"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve stage
+        id: set-stage
+        shell: bash
+        run: |
+          STAGING_FOUND="${{ steps.check-staging.outputs.found }}"
+          PRODUCTION_FOUND="${{ steps.check-production.outputs.found }}"
+          if [[ "$STAGING_FOUND" == "true" && "$PRODUCTION_FOUND" == "true" ]]; then
+            echo "Fleet slug exists in both staging and production. Slugs must be globally unique." >&2
+            exit 1
+          fi
+          if [[ "$STAGING_FOUND" == "true" ]]; then
+            echo "stage=staging" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$PRODUCTION_FOUND" == "true" ]]; then
+            echo "stage=production" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "No desired_config found for fleet_slug '${{ inputs.fleet_slug }}' in staging or production." >&2
+          exit 1
+
+  apply-bundle:
+    name: Apply Bundle via SSM
+    runs-on: ubuntu-latest
+    needs: resolve-stage
+    env:
+      AWS_REGION: ${{ inputs.aws_region }}
+      STAGE: ${{ needs.resolve-stage.outputs.stage }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
+          role-to-assume: ${{ env.STAGE == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify instance is SSM-managed
@@ -73,28 +121,35 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve models bucket
+      - name: Resolve models bucket + active bundle
         shell: bash
         run: |
           set -euo pipefail
-          MODELS_BUCKET="${{ inputs.models_bucket }}"
-          if [[ -z "${MODELS_BUCKET}" ]]; then
-            MODELS_BUCKET=$(aws ssm get-parameter \
-              --name "/bp/${STAGE}/models/bucket" \
-              --query "Parameter.Value" \
-              --output text)
-          fi
+          MODELS_BUCKET=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/models/bucket" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
           if [[ -z "${MODELS_BUCKET}" || "${MODELS_BUCKET}" == "None" ]]; then
-            echo "models_bucket is required (input empty and SSM lookup failed)." >&2
+            echo "No models bucket found at /bp/${STAGE}/models/bucket." >&2
             exit 1
           fi
+
+          ACTIVE_PREFIX=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/fleets/${{ inputs.fleet_slug }}/active_bundle" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+          if [[ -z "${ACTIVE_PREFIX}" || "${ACTIVE_PREFIX}" == "None" || "${ACTIVE_PREFIX}" == "none" ]]; then
+            echo "No active bundle set at /bp/${STAGE}/fleets/${{ inputs.fleet_slug }}/active_bundle." >&2
+            exit 1
+          fi
+          ACTIVE_PREFIX="${ACTIVE_PREFIX%/}"
+
           echo "MODELS_BUCKET=${MODELS_BUCKET}" >> "$GITHUB_ENV"
+          echo "BUNDLE_PREFIX=${ACTIVE_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Send SSM command
         id: send
         run: |
-          BUNDLE_PREFIX="${{ inputs.bundle_prefix }}"
-          BUNDLE_PREFIX="${BUNDLE_PREFIX%/}"
           CMD_APPLY="MODELS_BUCKET=${MODELS_BUCKET} BUNDLE_PREFIX=${BUNDLE_PREFIX} /opt/comfyui/bin/apply-bundle.sh"
           export CMD_APPLY
           PARAMS=$(python3 - <<'PY'
@@ -136,8 +191,6 @@ jobs:
       - name: Upload command output (optional)
         if: inputs.logs_bucket != ''
         run: |
-          BUNDLE_PREFIX="${{ inputs.bundle_prefix }}"
-          BUNDLE_PREFIX="${BUNDLE_PREFIX%/}"
           BUNDLE_ID=$(basename "$BUNDLE_PREFIX")
           LOG_KEY="asset-sync/${{ inputs.fleet_slug }}/${BUNDLE_ID}/$(date -u +%Y%m%dT%H%M%SZ)-${{ inputs.instance_id }}.json"
           aws s3 cp command-output.json "s3://${{ inputs.logs_bucket }}/$LOG_KEY"
@@ -155,8 +208,6 @@ jobs:
           fi
 
           LOG_KEY="${{ steps.upload.outputs.log_key }}"
-          BUNDLE_PREFIX="${{ inputs.bundle_prefix }}"
-          BUNDLE_PREFIX="${BUNDLE_PREFIX%/}"
           BUNDLE_ID=$(basename "$BUNDLE_PREFIX")
           payload=$(jq -n \
             --arg bundle_id "$BUNDLE_ID" \

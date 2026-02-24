@@ -337,25 +337,23 @@ For local admin use, follow `quickstart.md`:
 
 ## Step-by-step execution (UI + console)
 
-### Step 1: Launch the Dev GPU node
+### Step 1: Create a Dev GPU instance (GitHub Actions)
 
 This gives you a live ComfyUI UI for iterating on workflows.
 
-```bash
-cd infrastructure/dev-gpu
-./launch.sh
-```
+Run GitHub Action: **Create Dev GPU Instance** (`.github/workflows/create-dev-gpu-instance.yml`)
 
-If you need to force a fleet AMI explicitly:
+Inputs:
+- `fleet_slug`
+- `allowed_cidr` (your IP/CIDR for port 8188)
+- `aws_region` (optional)
+- `auto_shutdown_hours` (optional)
 
-```bash
-FLEET_SLUG=gpu-default
-STAGE=staging
-AMI_ID=$(aws ssm get-parameter --name "/bp/ami/fleets/${STAGE}/${FLEET_SLUG}" --query Parameter.Value --output text)
-AMI_ID="$AMI_ID" ./launch.sh
-```
+Notes:
+- The action resolves **stage** from `fleet_slug`, pulls the AMI from `/bp/ami/fleets/<stage>/<fleet_slug>`, and uses the fleet’s `desired_config` instance type.
+- If that AMI parameter doesn’t exist yet, run **Build Base GPU AMI** first.
 
-Outcome: the script prints the ComfyUI URL `http://<public-ip>:8188`.
+Outcome: the workflow summary prints the ComfyUI URL `http://<public-ip>:8188`.
 
 ### Step 2: Load and run the workflow in ComfyUI
 
@@ -396,10 +394,14 @@ Recommended: GitHub Action `.github/workflows/apply-comfyui-bundle.yml`
 Inputs:
 - `instance_id`: dev GPU EC2 instance ID
 - `fleet_slug`: e.g. `gpu-default`
-- `bundle_prefix`: `bundles/<bundle_id>`
-- `models_bucket` (optional): `bp-models-<account>-<stage>` (derived from `/bp/<stage>/models/bucket` if omitted)
+- `logs_bucket` (optional): `bp-logs-<account>-<stage>`
+- `notes` (optional)
+- `aws_region` (optional)
 
-This runs SSM to execute:
+This action resolves **stage** from `fleet_slug`, reads the models bucket from `/bp/<stage>/models/bucket`, and uses the active bundle pointer in `/bp/<stage>/fleets/<fleet_slug>/active_bundle`.
+Make sure the fleet’s active bundle is set in the Admin UI before running it.
+
+It runs SSM to execute:
 `MODELS_BUCKET=... BUNDLE_PREFIX=... /opt/comfyui/bin/apply-bundle.sh`
 
 Re-test the workflow in ComfyUI to confirm missing assets are resolved.
@@ -431,6 +433,7 @@ Path: **Admin → ComfyUI → Fleets** (`/admin/comfyui/fleets`)
 
 - Select a **Template** and **Instance Type** (single choice from the template allowlist).
 - Scaling settings are derived from the template and **cannot** be edited in the UI.
+- Fleet slugs must be **globally unique** across stages (Actions resolve stage from slug).
 
 This writes the desired config to SSM:
 `/bp/<stage>/fleets/<fleet_slug>/desired_config`
@@ -440,10 +443,10 @@ This writes the desired config to SSM:
 Run GitHub Action: **Provision GPU Fleet** (`.github/workflows/provision-gpu-fleet.yml`)
 
 Inputs:
-- `stage`
 - `fleet_slug`
+- `aws_region`
 
-This reads `/bp/<stage>/fleets/<fleet_slug>/desired_config` and deploys:
+This resolves **stage** from `fleet_slug`, reads `/bp/<stage>/fleets/<fleet_slug>/desired_config`, and deploys:
 - `bp-<stage>-gpu-shared`
 - `bp-<stage>-gpu-fleet-<fleet_slug>`
 
@@ -458,7 +461,7 @@ Use either:
 - **Admin → Workflows** → set **Staging Fleet**
 - **Admin → ComfyUI → Fleets** → assign workflows
 
-### Step 11: Activate the bundle for the staging fleet
+### Step 11: Activate the bundle for the fleet
 
 Path: **Admin → ComfyUI → Fleets** → **Manage** → select bundle → **Activate**
 
@@ -468,27 +471,30 @@ Writes to:
 
 ### Step 12: Bake and deploy the fleet AMI
 
-Run GitHub Action: **Build GPU AMI** (`.github/workflows/build-ami.yml`)
+Run GitHub Action: **Build Base GPU AMI** (`.github/workflows/build-ami.yml`)
 
 Inputs:
-- `fleet_slug`: `gpu-default`
-- `stage`: `staging`
-- `instance_type` (optional override): leave blank to use `/bp/<stage>/fleets/<fleet_slug>/desired_config`
-- `models_s3_bucket`: from `/bp/<stage>/models/bucket`
-- `models_s3_prefix`: `bundles/<bundle_id>`
-- `bundle_id`: `<bundle_id>`
-- `start_instance_refresh` (optional): triggers ASG refresh after AMI update
+- `fleet_slug`
+- `aws_region` (optional)
+- `start_instance_refresh` (optional)
 
-This updates:
+This resolves **stage** from `fleet_slug`, builds a **base AMI** (no assets baked), and writes:
 `/bp/ami/fleets/<stage>/<fleet_slug> = ami-...`
 
-Roll the ASG to apply the new AMI:
+Then run GitHub Action: **Bake GPU AMI (Active Bundle)** (`.github/workflows/bake-ami.yml`)
 
-```bash
-aws autoscaling start-instance-refresh \
-  --auto-scaling-group-name "asg-<stage>-<fleet_slug>" \
-  --preferences '{"MinHealthyPercentage":90,"InstanceWarmup":300}'
-```
+Inputs:
+- `fleet_slug`
+- `aws_region` (optional)
+- `start_instance_refresh` (optional)
+
+The bake workflow auto-resolves:
+- `models_s3_bucket` from `/bp/<stage>/models/bucket`
+- `models_s3_prefix` from `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
+- `bundle_id` from the prefix basename
+- `packer_instance_profile` from `/bp/<stage>/packer/instance_profile`
+
+Optional: start an instance refresh to roll the ASG after updating the AMI.
 
 ### Step 11: Create the Effect
 
@@ -517,6 +523,7 @@ aws ssm get-parameter --name /bp/<stage>/fleets/<fleet_slug>/active_bundle --que
 aws ssm get-parameter --name /bp/<stage>/fleets/<fleet_slug>/desired_config --query Parameter.Value --output text
 aws ssm get-parameter --name /bp/ami/fleets/<stage>/<fleet_slug> --query Parameter.Value --output text
 aws ssm get-parameter --name /bp/<stage>/models/bucket --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/<stage>/packer/instance_profile --query Parameter.Value --output text
 ```
 
 ### ASG + instance health

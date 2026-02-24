@@ -106,9 +106,13 @@ class ComfyUiFleetsController extends BaseController
         $templateSlug = $request->input('template_slug');
         $instanceType = $request->input('instance_type');
 
-        if (ComfyUiGpuFleet::query()->where('stage', $stage)->where('slug', $slug)->exists()) {
+        $existingFleet = ComfyUiGpuFleet::query()->where('slug', $slug)->first();
+        if ($existingFleet) {
+            $errorMessage = $existingFleet->stage === $stage
+                ? 'A fleet with this slug already exists for this stage.'
+                : sprintf('A fleet with this slug already exists in another stage (%s).', $existingFleet->stage);
             return $this->sendError('Validation Error', [
-                'slug' => ['A fleet with this slug already exists for this stage.'],
+                'slug' => [$errorMessage],
             ], 409);
         }
 

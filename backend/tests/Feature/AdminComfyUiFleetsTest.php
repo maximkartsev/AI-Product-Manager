@@ -142,6 +142,29 @@ class AdminComfyUiFleetsTest extends TestCase
         $this->assertSame('gpu-default', $this->fakeSsm->desiredCalls[0]['fleetSlug']);
     }
 
+    public function test_fleets_store_rejects_duplicate_slug_across_stages(): void
+    {
+        ComfyUiGpuFleet::query()->create([
+            'stage' => 'staging',
+            'slug' => 'gpu-default',
+            'template_slug' => 'gpu-default',
+            'name' => 'Default GPU Fleet',
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 10,
+        ]);
+
+        $response = $this->adminPost('/api/admin/comfyui-fleets', [
+            'stage' => 'production',
+            'slug' => 'gpu-default',
+            'name' => 'Default GPU Fleet (Prod)',
+            'template_slug' => 'gpu-default',
+            'instance_type' => 'g4dn.xlarge',
+        ]);
+
+        $response->assertStatus(409)
+            ->assertJsonPath('data.slug.0', 'A fleet with this slug already exists in another stage (staging).');
+    }
+
     public function test_fleets_store_rejects_invalid_instance_type(): void
     {
         $response = $this->adminPost('/api/admin/comfyui-fleets', [

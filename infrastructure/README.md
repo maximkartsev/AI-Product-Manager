@@ -394,7 +394,7 @@ The SSM **value** is the bundle prefix (e.g. `bundles/<bundle_id>`).
 - **Storage config split**:
   - Media uploads use the default `s3` disk (`AWS_*`) → MinIO locally, S3 in staging/prod.
   - ComfyUI models/logs use dedicated disks (`COMFYUI_MODELS_*`, `COMFYUI_LOGS_*`) so models stay in AWS S3 even when media is local.
-- **AWS S3 readers**: `build-ami.yml` (Packer), `apply-comfyui-bundle.yml` (SSM), GPU worker boot (user-data).
+- **AWS S3 readers**: `bake-ami.yml` (Packer), `apply-comfyui-bundle.yml` (SSM), GPU worker boot (user-data).
 
 #### One-time setup (per stage)
 
@@ -440,15 +440,18 @@ aws secretsmanager get-secret-value \
 4. **Activate a bundle for the fleet**:
    - In **Fleets**, pick a bundle and click **Activate**.
    - This updates `/bp/<stage>/fleets/<fleet_slug>/active_bundle`.
-5. **Bake an AMI from the bundle (recommended for stage/prod)**:
-   - Run GitHub Actions → **Build GPU AMI** (`build-ami.yml`) with:
+5. **Build / bake AMIs (recommended for stage/prod)**:
+   - Run GitHub Actions → **Build Base GPU AMI** (`build-ami.yml`) with:
      - `fleet_slug`
-     - `stage`
-     - `models_s3_bucket`: `bp-models-<account>-<stage>`
-     - `models_s3_prefix`: `bundles/<bundle_id>`
-     - `bundle_id`: (recommended) stored in the AMI as `/opt/comfyui/.baked_bundle_id` for smart-skip behavior
-     - `packer_instance_profile` (usually required): an EC2 instance profile with S3 read to the models bucket.
-   - The workflow writes the AMI alias to `/bp/ami/fleets/<stage>/<fleet_slug>`.
+     - `aws_region` (optional)
+   - Run GitHub Actions → **Bake GPU AMI (Active Bundle)** (`bake-ami.yml`) with:
+     - `fleet_slug`
+     - `aws_region` (optional)
+   - Both workflows resolve **stage** from `fleet_slug` and write the AMI alias to `/bp/ami/fleets/<stage>/<fleet_slug>`.
+   - The bake workflow auto-resolves:
+     - `models_s3_bucket` from `/bp/<stage>/models/bucket`
+     - `models_s3_prefix` from `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
+     - `packer_instance_profile` from `/bp/<stage>/packer/instance_profile`
 6. **Roll the ASG** so new instances pick up the new AMI + active bundle:
    - AWS Console → Auto Scaling Groups → start **Instance refresh**, or
    - CLI (example):
@@ -475,17 +478,22 @@ aws autoscaling start-instance-refresh \
 
 ### Building AMIs (Packer)
 
-AMIs are built via GitHub Actions (`.github/workflows/build-ami.yml`, manual dispatch):
+AMIs are built via GitHub Actions:
+- **Build Base GPU AMI** (`.github/workflows/build-ami.yml`)
+- **Bake GPU AMI (Active Bundle)** (`.github/workflows/bake-ami.yml`)
 
 ```
-Actions → "Build GPU AMI" → Run workflow
+Actions → "Build Base GPU AMI" → Run workflow
   fleet_slug: gpu-default
-  stage: staging
-  instance_type: (optional override; leave blank to use desired_config)
+  aws_region: us-east-1
+
+Actions → "Bake GPU AMI (Active Bundle)" → Run workflow
+  fleet_slug: gpu-default
+  aws_region: us-east-1
 ```
 
 The pipeline:
-1. Checks out code
+1. Resolves stage from `fleet_slug`
 2. Runs `packer build` with NVIDIA drivers, ComfyUI, Python worker
 3. Stores the new AMI ID in SSM Parameter Store (`/bp/ami/fleets/<stage>/<fleet_slug>`)
 
@@ -518,12 +526,11 @@ Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **runni
 **Inputs:**
 - `instance_id` — EC2 instance ID
 - `fleet_slug` — e.g. `gpu-default`
-- `bundle_prefix` — `bundles/<bundle_id>`
-- `models_bucket` — `bp-models-<account>-<stage>`
 - `logs_bucket` — optional, `bp-logs-<account>-<stage>`
 
 **Requirements:**
 - The dev instance must have **SSM** enabled and an instance profile with **S3 read** to the models bucket.
+- The workflow resolves stage from `fleet_slug` and uses `/bp/<stage>/fleets/<fleet_slug>/active_bundle`.
 - The workflow will upload SSM command output to the logs bucket (if provided).
 - If `ASSET_OPS_API_URL` + `ASSET_OPS_SECRET` are set, the workflow also records an audit log via the backend.
 
@@ -531,8 +538,9 @@ Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **runni
 
 1. Ensure a suitable template exists in `backend/resources/comfyui/fleet-templates.json`.
 2. Create the fleet in the Admin UI (template + instance type). This writes `/bp/<stage>/fleets/<fleet_slug>/desired_config`.
-3. Run GitHub Actions → **Provision GPU Fleet** to create `bp-<stage>-gpu-fleet-<fleet_slug>`.
-4. (Recommended) Bake an AMI via **Build GPU AMI**, then refresh the ASG.
+3. Run GitHub Actions → **Provision GPU Fleet** to create `bp-<stage>-gpu-fleet-<fleet_slug>` (stage auto-resolved from slug).
+4. If `/bp/ami/fleets/<stage>/<fleet_slug>` is missing, run **Build Base GPU AMI**.
+5. Activate the bundle in the Admin UI, then run **Bake GPU AMI (Active Bundle)** and refresh the ASG.
 
 ### Monitoring Workers
 
@@ -629,12 +637,10 @@ Defaults and constraints (from backend config):
   - CI `deploy.yml` builds and pushes these tags on every `main` push.
 
 - **GPU AMI builds**:
-  - Trigger GitHub Actions `build-ami.yml` (manual dispatch).
-- Input: `fleet_slug`, `stage`, optional `instance_type` override (defaults to `/bp/<stage>/fleets/<fleet_slug>/desired_config`).
+  - Trigger GitHub Actions `build-ami.yml` (Base) or `bake-ami.yml` (Active Bundle).
+  - Inputs: `fleet_slug`, `aws_region` (optional).
   - Output: AMI ID written to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
-
-- **Optional bundle apply** (Packer):
-  - Set `models_s3_bucket` and `models_s3_prefix` (bundle root like `bundles/<bundle_id>`) to apply during AMI build via `apply-bundle.sh`.
+  - Bake auto-resolves models bucket, active bundle prefix, and packer instance profile from SSM.
 
 ## Secrets Reference
 
@@ -646,6 +652,7 @@ Defaults and constraints (from backend config):
 | Fleet secret | SSM Parameter Store | `/bp/<stage>/fleet-secret` | No (`CHANGE_ME_AFTER_DEPLOY`) | `aws ssm put-parameter --name /bp/<stage>/fleet-secret --value "..." --type String --overwrite` |
 | Asset ops secret | Secrets Manager | `/bp/<stage>/asset-ops/secret` | Yes (CDK) | Use the secret value as `ASSET_OPS_SECRET` in GitHub Actions |
 | Models bucket | SSM Parameter Store | `/bp/<stage>/models/bucket` | Yes (CDK) | — |
+| Packer instance profile | SSM Parameter Store | `/bp/<stage>/packer/instance_profile` | Yes (CDK) | Used by AMI bake workflow |
 | OAuth secrets | Secrets Manager | `/bp/<stage>/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/oauth/secrets --secret-string '{"google_client_secret":"..."}'` |
 | GPU AMI IDs | SSM Parameter Store | `/bp/ami/fleets/<stage>/<fleet_slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/fleets/<stage>/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
 | Active asset bundle | SSM Parameter Store | `/bp/<stage>/fleets/<fleet_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/fleets/<slug>/active_bundle --value "bundles/<bundle_id>" --type String --overwrite` |
@@ -826,18 +833,30 @@ test-backend ──┐
 test-frontend ─┘
 ```
 
-### `build-ami.yml`
+### `build-ami.yml` (Build Base GPU AMI)
 
 **Trigger:** Manual dispatch only (`workflow_dispatch`).
 
 **Inputs:**
 - `fleet_slug` (required) — e.g. `gpu-default`
-- `stage` (optional, default: `staging`)
-- `instance_type` (optional override) — build instance type. Leave blank to use `/bp/<stage>/fleets/<fleet_slug>/desired_config`.
-- `models_s3_bucket` (optional) — models bucket (e.g. `bp-models-<account>-<stage>`)
-- `models_s3_prefix` (optional) — bundle prefix (e.g. `bundles/<bundle_id>`)
-- `bundle_id` (optional) — used for AMI tagging/audit
-- `packer_instance_profile` (recommended / usually required) — instance profile name/ARN with S3 read access (used by `apply-bundle.sh` inside the build instance)
+- `aws_region` (optional)
+- `start_instance_refresh` (optional)
+
+**Output:** AMI ID stored in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
+
+### `bake-ami.yml` (Bake GPU AMI - Active Bundle)
+
+**Trigger:** Manual dispatch only (`workflow_dispatch`).
+
+**Inputs:**
+- `fleet_slug` (required)
+- `aws_region` (optional)
+- `start_instance_refresh` (optional)
+
+**Auto-resolves:**
+- models bucket from `/bp/<stage>/models/bucket`
+- active bundle from `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
+- packer instance profile from `/bp/<stage>/packer/instance_profile`
 
 **Output:** AMI ID stored in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
 
@@ -850,8 +869,6 @@ test-frontend ─┘
 **Inputs:**
 - `instance_id` (required)
 - `fleet_slug` (required)
-- `bundle_prefix` (required) — `bundles/<bundle_id>`
-- `models_bucket` (required) — `bp-models-<account>-<stage>`
 - `logs_bucket` (optional) — `bp-logs-<account>-<stage>`
 
 **Optional audit logging:**
@@ -870,7 +887,7 @@ test-frontend ─┘
 
 ### GitHub Actions to AWS (OIDC)
 
-The CI workflows (`.github/workflows/deploy.yml`, `.github/workflows/build-ami.yml`) authenticate to AWS by assuming an IAM role via GitHub OIDC (no long-lived AWS access keys).
+The CI workflows (`.github/workflows/deploy.yml`, `.github/workflows/build-ami.yml`, `.github/workflows/bake-ami.yml`) authenticate to AWS by assuming an IAM role via GitHub OIDC (no long-lived AWS access keys).
 
 **One-time AWS setup**
 
@@ -929,12 +946,16 @@ Recommended (split by workflow / least privilege, tighten resources later):
   - `AmazonEC2ContainerRegistryPowerUser`
   - `AmazonECSFullAccess`
   - Plus an `iam:PassRole` policy so `aws ecs run-task` can launch one-off migration tasks (see below)
-- For `.github/workflows/build-ami.yml` (Packer AMI build + SSM):
+- For `.github/workflows/build-ami.yml` / `.github/workflows/bake-ami.yml` (Packer AMI build + SSM):
   - `AmazonEC2FullAccess`
   - `AmazonSSMFullAccess` (or restrict to `ssm:PutParameter` on `/bp/ami/*`)
+  - `iam:PassRole` for the instance profile in `/bp/<stage>/packer/instance_profile`
 - For `.github/workflows/apply-comfyui-bundle.yml` (SSM + optional logs upload):
   - Allow `ssm:SendCommand` and `ssm:GetCommandInvocation` to the target instance(s)
   - If `logs_bucket` is used, allow `s3:PutObject` to `bp-logs-<account>-<stage>/asset-sync/*`
+- For `.github/workflows/create-dev-gpu-instance.yml` (EC2 + SSM):
+  - Allow `ec2:RunInstances`, `ec2:CreateSecurityGroup`, `ec2:AuthorizeSecurityGroupIngress`, `ec2:Describe*`
+  - `iam:PassRole` for the instance profile used by the dev instance
 
 Example `iam:PassRole` inline policy (tighten `Resource` to your ECS task roles if you know them):
 

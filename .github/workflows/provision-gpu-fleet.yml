@@ -1,18 +1,10 @@
 name: Provision GPU Fleet
 
-run-name: Provision GPU Fleet (${{ inputs.stage }} / ${{ inputs.fleet_slug }}) by @${{ github.actor }}
+run-name: Provision GPU Fleet (${{ inputs.fleet_slug }}) by @${{ github.actor }}
 
 on:
   workflow_dispatch:
     inputs:
-      stage:
-        description: 'Stage to provision'
-        required: true
-        type: choice
-        default: staging
-        options:
-          - staging
-          - production
       fleet_slug:
         description: 'Fleet slug (must exist in desired_config)'
         required: true
@@ -31,19 +23,84 @@ permissions:
   contents: read
 
 concurrency:
-  group: gpu-fleet-${{ inputs.stage }}-${{ inputs.fleet_slug }}
+  group: gpu-fleet-${{ inputs.fleet_slug }}
   cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ inputs.aws_region }}
-  STAGE: ${{ inputs.stage }}
   FLEET_SLUG: ${{ inputs.fleet_slug }}
 
 jobs:
+  resolve-stage:
+    name: Resolve Stage
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.aws_region }}
+    outputs:
+      stage: ${{ steps.set-stage.outputs.stage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check staging desired_config
+        id: check-staging
+        shell: bash
+        run: |
+          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage staging --region "${{ env.AWS_REGION }}"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (production)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check production desired_config
+        id: check-production
+        shell: bash
+        run: |
+          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage production --region "${{ env.AWS_REGION }}"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve stage
+        id: set-stage
+        shell: bash
+        run: |
+          STAGING_FOUND="${{ steps.check-staging.outputs.found }}"
+          PRODUCTION_FOUND="${{ steps.check-production.outputs.found }}"
+          if [[ "$STAGING_FOUND" == "true" && "$PRODUCTION_FOUND" == "true" ]]; then
+            echo "Fleet slug exists in both staging and production. Slugs must be globally unique." >&2
+            exit 1
+          fi
+          if [[ "$STAGING_FOUND" == "true" ]]; then
+            echo "stage=staging" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$PRODUCTION_FOUND" == "true" ]]; then
+            echo "stage=production" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "No desired_config found for fleet_slug '${{ inputs.fleet_slug }}' in staging or production." >&2
+          exit 1
+
   provision:
     name: Provision Fleet
     runs-on: ubuntu-latest
-    environment: ${{ inputs.stage == 'production' && 'production-gpu-provision' || 'staging-gpu-provision' }}
+    needs: resolve-stage
+    environment: ${{ needs.resolve-stage.outputs.stage == 'production' && 'production-gpu-provision' || 'staging-gpu-provision' }}
+    env:
+      STAGE: ${{ needs.resolve-stage.outputs.stage }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +116,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ inputs.stage == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
+          role-to-assume: ${{ env.STAGE == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify base stacks exist

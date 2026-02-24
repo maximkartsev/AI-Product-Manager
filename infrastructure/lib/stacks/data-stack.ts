@@ -7,6 +7,7 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
 import type { BpEnvironmentConfig } from '../config/environment';
@@ -218,6 +219,45 @@ export class DataStack extends cdk.Stack {
     });
 
     // ========================================
+    // Packer AMI build instance profile
+    // ========================================
+
+    const packerRole = new iam.Role(this, 'PackerRole', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      description: `Packer build role for ${stage} ComfyUI AMIs`,
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+      ],
+    });
+
+    packerRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:GetObject'],
+      resources: [
+        `${this.modelsBucket.bucketArn}/assets/*`,
+        `${this.modelsBucket.bucketArn}/bundles/*/manifest.json`,
+      ],
+    }));
+    packerRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:ListBucket'],
+      resources: [this.modelsBucket.bucketArn],
+      conditions: {
+        StringLike: {
+          's3:prefix': ['assets/*', 'bundles/*'],
+        },
+      },
+    }));
+
+    const packerInstanceProfile = new iam.CfnInstanceProfile(this, 'PackerInstanceProfile', {
+      roles: [packerRole.roleName],
+    });
+
+    new ssm.StringParameter(this, 'PackerInstanceProfileParam', {
+      parameterName: `/bp/${stage}/packer/instance_profile`,
+      stringValue: packerInstanceProfile.ref,
+      description: 'EC2 instance profile name for Packer AMI builds',
+    });
+
+    // ========================================
     // S3 Logs Bucket
     // ========================================
 
@@ -323,6 +363,9 @@ export class DataStack extends cdk.Stack {
       { id: 'AwsSolutions-CFR3', reason: 'Access logging added when log bucket integration is configured' },
       { id: 'AwsSolutions-CFR4', reason: 'Using CloudFront default TLS, custom domain TLS added later' },
     ]);
+    NagSuppressions.addResourceSuppressions(packerRole, [
+      { id: 'AwsSolutions-IAM4', reason: 'Uses AWS managed policy for SSM access in packer builds' },
+    ], true);
     NagSuppressions.addResourceSuppressions(this.mediaBucket, [
       { id: 'AwsSolutions-S1', reason: 'Access logs go to separate logs bucket via CloudFront' },
     ]);

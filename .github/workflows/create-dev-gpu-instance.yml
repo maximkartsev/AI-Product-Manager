@@ -1,0 +1,317 @@
+name: Create Dev GPU Instance
+
+on:
+  workflow_dispatch:
+    inputs:
+      fleet_slug:
+        description: 'Fleet slug (e.g. gpu-default)'
+        required: true
+        type: string
+      aws_region:
+        description: 'AWS region'
+        required: false
+        type: string
+        default: 'us-east-1'
+      allowed_cidr:
+        description: 'CIDR to allow inbound 8188 (e.g. 1.2.3.4/32)'
+        required: true
+        type: string
+      auto_shutdown_hours:
+        description: 'Auto-shutdown hours'
+        required: false
+        type: number
+        default: 4
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ inputs.aws_region }}
+
+jobs:
+  resolve-stage:
+    name: Resolve Stage
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.aws_region }}
+    outputs:
+      stage: ${{ steps.set-stage.outputs.stage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check staging desired_config
+        id: check-staging
+        shell: bash
+        run: |
+          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage staging --region "${{ env.AWS_REGION }}"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (production)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check production desired_config
+        id: check-production
+        shell: bash
+        run: |
+          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage production --region "${{ env.AWS_REGION }}"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve stage
+        id: set-stage
+        shell: bash
+        run: |
+          STAGING_FOUND="${{ steps.check-staging.outputs.found }}"
+          PRODUCTION_FOUND="${{ steps.check-production.outputs.found }}"
+          if [[ "$STAGING_FOUND" == "true" && "$PRODUCTION_FOUND" == "true" ]]; then
+            echo "Fleet slug exists in both staging and production. Slugs must be globally unique." >&2
+            exit 1
+          fi
+          if [[ "$STAGING_FOUND" == "true" ]]; then
+            echo "stage=staging" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$PRODUCTION_FOUND" == "true" ]]; then
+            echo "stage=production" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "No desired_config found for fleet_slug '${{ inputs.fleet_slug }}' in staging or production." >&2
+          exit 1
+
+  launch-dev:
+    name: Launch Dev GPU - ${{ inputs.fleet_slug }}
+    runs-on: ubuntu-latest
+    needs: resolve-stage
+    env:
+      AWS_REGION: ${{ inputs.aws_region }}
+      STAGE: ${{ needs.resolve-stage.outputs.stage }}
+      FLEET_SLUG: ${{ inputs.fleet_slug }}
+      ALLOWED_CIDR: ${{ inputs.allowed_cidr }}
+      AUTO_SHUTDOWN_HOURS: ${{ inputs.auto_shutdown_hours }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.STAGE == 'production' && secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION || secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve fleet desired_config
+        id: desired
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DESIRED_JSON=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/fleets/${FLEET_SLUG}/desired_config" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+
+          if [ -z "${DESIRED_JSON:-}" ] || [ "$DESIRED_JSON" = "None" ]; then
+            echo "No desired_config found at /bp/${STAGE}/fleets/${FLEET_SLUG}/desired_config." >&2
+            exit 1
+          fi
+
+          export DESIRED_JSON
+
+          INSTANCE_TYPE=$(python3 - <<'PY'
+          import json, os, sys
+          data = json.loads(os.environ["DESIRED_JSON"])
+          instance_type = data.get("instance_type")
+          if not instance_type:
+            print("desired_config missing instance_type", file=sys.stderr)
+            sys.exit(1)
+          print(instance_type)
+          PY
+          )
+
+          echo "INSTANCE_TYPE=${INSTANCE_TYPE}" >> "$GITHUB_ENV"
+
+      - name: Resolve AMI from SSM
+        id: ami
+        shell: bash
+        run: |
+          set -euo pipefail
+          AMI_ID=$(aws ssm get-parameter \
+            --name "/bp/ami/fleets/${STAGE}/${FLEET_SLUG}" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+          if [ -z "${AMI_ID:-}" ] || [ "$AMI_ID" = "None" ]; then
+            echo "No AMI found at /bp/ami/fleets/${STAGE}/${FLEET_SLUG}." >&2
+            exit 1
+          fi
+          echo "AMI_ID=${AMI_ID}" >> "$GITHUB_ENV"
+
+      - name: Resolve instance profile
+        id: profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROFILE_NAME=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/packer/instance_profile" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+          if [ -z "${PROFILE_NAME:-}" ] || [ "$PROFILE_NAME" = "None" ]; then
+            echo "No instance profile found at /bp/${STAGE}/packer/instance_profile." >&2
+            exit 1
+          fi
+          echo "INSTANCE_PROFILE=${PROFILE_NAME}" >> "$GITHUB_ENV"
+
+      - name: Resolve default VPC + subnet
+        id: network
+        shell: bash
+        run: |
+          set -euo pipefail
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --region "$AWS_REGION" \
+            --filters "Name=isDefault,Values=true" \
+            --query 'Vpcs[0].VpcId' \
+            --output text)
+          if [ -z "${VPC_ID:-}" ] || [ "$VPC_ID" = "None" ]; then
+            echo "No default VPC found in ${AWS_REGION}." >&2
+            exit 1
+          fi
+
+          SUBNET_ID=$(aws ec2 describe-subnets \
+            --region "$AWS_REGION" \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \
+            --query 'Subnets[0].SubnetId' \
+            --output text)
+          if [ -z "${SUBNET_ID:-}" ] || [ "$SUBNET_ID" = "None" ]; then
+            echo "No default subnet found in ${AWS_REGION}." >&2
+            exit 1
+          fi
+
+          echo "VPC_ID=${VPC_ID}" >> "$GITHUB_ENV"
+          echo "SUBNET_ID=${SUBNET_ID}" >> "$GITHUB_ENV"
+
+      - name: Create or reuse security group
+        id: sg
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SG_ID=$(aws ec2 describe-security-groups \
+            --region "$AWS_REGION" \
+            --filters \
+              "Name=vpc-id,Values=$VPC_ID" \
+              "Name=tag:ManagedBy,Values=dev-gpu-action" \
+              "Name=tag:Stage,Values=$STAGE" \
+              "Name=tag:FleetSlug,Values=$FLEET_SLUG" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null || echo "None")
+
+          if [ -z "${SG_ID:-}" ] || [ "$SG_ID" = "None" ]; then
+            SG_NAME="comfyui-dev-${STAGE}-${FLEET_SLUG}-$(date +%s)"
+            SG_ID=$(aws ec2 create-security-group \
+              --region "$AWS_REGION" \
+              --group-name "$SG_NAME" \
+              --description "ComfyUI dev instance - managed by GitHub Actions" \
+              --vpc-id "$VPC_ID" \
+              --query 'GroupId' \
+              --output text)
+
+            aws ec2 create-tags \
+              --region "$AWS_REGION" \
+              --resources "$SG_ID" \
+              --tags \
+                Key=Name,Value="$SG_NAME" \
+                Key=ManagedBy,Value=dev-gpu-action \
+                Key=Stage,Value="$STAGE" \
+                Key=FleetSlug,Value="$FLEET_SLUG"
+          fi
+
+          EXISTING=$(aws ec2 describe-security-groups \
+            --region "$AWS_REGION" \
+            --group-ids "$SG_ID" \
+            --query 'SecurityGroups[0].IpPermissions' \
+            --output json)
+          if [ "$EXISTING" != "[]" ] && [ "$EXISTING" != "null" ]; then
+            aws ec2 revoke-security-group-ingress \
+              --region "$AWS_REGION" \
+              --group-id "$SG_ID" \
+              --ip-permissions "$EXISTING" >/dev/null 2>&1 || true
+          fi
+
+          aws ec2 authorize-security-group-ingress \
+            --region "$AWS_REGION" \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 8188 \
+            --cidr "$ALLOWED_CIDR" >/dev/null
+
+          echo "SG_ID=${SG_ID}" >> "$GITHUB_ENV"
+
+      - name: Build user-data
+        id: user-data
+        shell: bash
+        run: |
+          set -euo pipefail
+          USER_DATA=$(sed "s/__AUTO_SHUTDOWN_HOURS__/${AUTO_SHUTDOWN_HOURS}/g" infrastructure/dev-gpu/user-data.sh)
+          USER_DATA_B64=$(echo "$USER_DATA" | base64 -w 0 2>/dev/null || echo "$USER_DATA" | base64 | tr -d '\n')
+          echo "USER_DATA_B64=${USER_DATA_B64}" >> "$GITHUB_ENV"
+
+      - name: Launch instance
+        id: launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --region "$AWS_REGION" \
+            --image-id "$AMI_ID" \
+            --instance-type "$INSTANCE_TYPE" \
+            --security-group-ids "$SG_ID" \
+            --subnet-id "$SUBNET_ID" \
+            --associate-public-ip-address \
+            --user-data "$USER_DATA_B64" \
+            --metadata-options "HttpTokens=required,HttpEndpoint=enabled,HttpPutResponseHopLimit=1" \
+            --iam-instance-profile "Name=$INSTANCE_PROFILE" \
+            --instance-initiated-shutdown-behavior stop \
+            --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3,DeleteOnTermination=true,Encrypted=true}" \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=comfyui-dev},{Key=ManagedBy,Value=dev-gpu-action},{Key=Stage,Value=$STAGE},{Key=FleetSlug,Value=$FLEET_SLUG}]" \
+            --count 1 \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+
+          echo "INSTANCE_ID=${INSTANCE_ID}" >> "$GITHUB_ENV"
+
+      - name: Wait for public IP
+        id: wait-ip
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$INSTANCE_ID"
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          echo "PUBLIC_IP=${PUBLIC_IP}" >> "$GITHUB_ENV"
+
+      - name: Summary
+        run: |
+          echo "## Dev GPU Instance Ready" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance ID:** ${INSTANCE_ID}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Public IP:** ${PUBLIC_IP}" >> $GITHUB_STEP_SUMMARY
+          echo "- **ComfyUI URL:** http://${PUBLIC_IP}:8188" >> $GITHUB_STEP_SUMMARY
+          echo "- **Stage:** ${STAGE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Fleet:** ${FLEET_SLUG}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance Type:** ${INSTANCE_TYPE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Allowed CIDR:** ${ALLOWED_CIDR}" >> $GITHUB_STEP_SUMMARY

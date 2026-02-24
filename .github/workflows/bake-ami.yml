@@ -1,4 +1,4 @@
-name: Build Base GPU AMI
+name: Bake GPU AMI (Active Bundle)
 
 on:
   workflow_dispatch:
@@ -89,8 +89,8 @@ jobs:
           echo "No desired_config found for fleet_slug '${{ inputs.fleet_slug }}' in staging or production." >&2
           exit 1
 
-  build-ami:
-    name: Build Base AMI - ${{ inputs.fleet_slug }}
+  bake-ami:
+    name: Bake AMI - ${{ inputs.fleet_slug }}
     runs-on: ubuntu-latest
     needs: resolve-stage
     env:
@@ -118,7 +118,7 @@ jobs:
 
           if [ -z "${DESIRED_JSON:-}" ] || [ "$DESIRED_JSON" = "None" ]; then
             echo "No desired_config found at /bp/${STAGE}/fleets/${{ inputs.fleet_slug }}/desired_config." >&2
-            echo "Create/update the fleet in the UI (writes desired_config) before building a base AMI." >&2
+            echo "Create/update the fleet in the UI (writes desired_config) before baking an AMI." >&2
             exit 1
           fi
 
@@ -164,11 +164,61 @@ jobs:
               sys.exit(1)
           PY
 
-          SOURCE="desired_config"
-
           echo "PACKER_INSTANCE_TYPE=${INSTANCE_TYPE}" >> "$GITHUB_ENV"
           echo "instance_type=${INSTANCE_TYPE}" >> "$GITHUB_OUTPUT"
-          echo "source=${SOURCE}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve bundle + models bucket
+        id: resolve_bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MODELS_BUCKET=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/models/bucket" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+
+          if [ -z "${MODELS_BUCKET:-}" ] || [ "$MODELS_BUCKET" = "None" ]; then
+            echo "No models bucket found at /bp/${STAGE}/models/bucket." >&2
+            exit 1
+          fi
+
+          ACTIVE_PREFIX=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/fleets/${{ inputs.fleet_slug }}/active_bundle" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+
+          if [ -z "${ACTIVE_PREFIX:-}" ] || [ "$ACTIVE_PREFIX" = "None" ] || [ "$ACTIVE_PREFIX" = "none" ]; then
+            echo "No active bundle set at /bp/${STAGE}/fleets/${{ inputs.fleet_slug }}/active_bundle." >&2
+            echo "Activate a bundle in the Admin UI before baking an AMI." >&2
+            exit 1
+          fi
+
+          ACTIVE_PREFIX="${ACTIVE_PREFIX%/}"
+          BUNDLE_ID=$(basename "$ACTIVE_PREFIX")
+
+          echo "MODELS_BUCKET=${MODELS_BUCKET}" >> "$GITHUB_ENV"
+          echo "BUNDLE_PREFIX=${ACTIVE_PREFIX}" >> "$GITHUB_ENV"
+          echo "BUNDLE_ID=${BUNDLE_ID}" >> "$GITHUB_ENV"
+
+      - name: Resolve Packer instance profile
+        id: resolve_packer_profile
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROFILE_NAME=$(aws ssm get-parameter \
+            --name "/bp/${STAGE}/packer/instance_profile" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+
+          if [ -z "${PROFILE_NAME:-}" ] || [ "$PROFILE_NAME" = "None" ]; then
+            echo "No packer instance profile found at /bp/${STAGE}/packer/instance_profile." >&2
+            echo "Deploy the data stack (or add the profile) before baking an AMI." >&2
+            exit 1
+          fi
+
+          echo "PACKER_INSTANCE_PROFILE=${PROFILE_NAME}" >> "$GITHUB_ENV"
 
       - name: Setup Packer
         uses: hashicorp/setup-packer@main
@@ -186,6 +236,10 @@ jobs:
             -var "fleet_slug=${{ inputs.fleet_slug }}" \
             -var "instance_type=${PACKER_INSTANCE_TYPE}" \
             -var "aws_region=${{ env.AWS_REGION }}" \
+            -var "models_s3_bucket=${MODELS_BUCKET}" \
+            -var "models_s3_prefix=${BUNDLE_PREFIX}" \
+            -var "bundle_id=${BUNDLE_ID}" \
+            -var "packer_instance_profile=${PACKER_INSTANCE_PROFILE}" \
             .
 
       - name: Packer build
@@ -196,6 +250,10 @@ jobs:
             -var "fleet_slug=${{ inputs.fleet_slug }}" \
             -var "instance_type=${PACKER_INSTANCE_TYPE}" \
             -var "aws_region=${{ env.AWS_REGION }}" \
+            -var "models_s3_bucket=${MODELS_BUCKET}" \
+            -var "models_s3_prefix=${BUNDLE_PREFIX}" \
+            -var "bundle_id=${BUNDLE_ID}" \
+            -var "packer_instance_profile=${PACKER_INSTANCE_PROFILE}" \
             -machine-readable \
             . | tee packer-output.txt
 
@@ -232,11 +290,14 @@ jobs:
 
       - name: Summary
         run: |
-          echo "## AMI Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "## AMI Bake Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Fleet:** ${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Stage:** ${STAGE}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Instance Type:** ${{ steps.resolve_instance_type.outputs.instance_type }} (source: ${{ steps.resolve_instance_type.outputs.source }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Instance Type:** ${{ steps.resolve_instance_type.outputs.instance_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Models Bucket:** ${MODELS_BUCKET}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bundle Prefix:** ${BUNDLE_PREFIX}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bundle ID:** ${BUNDLE_ID}" >> $GITHUB_STEP_SUMMARY
           echo "- **AMI ID:** ${{ steps.build.outputs.ami_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "- **SSM Parameter:** /bp/ami/fleets/${STAGE}/${{ inputs.fleet_slug }}" >> $GITHUB_STEP_SUMMARY

@@ -7,11 +7,22 @@ Launch a single GPU instance with the ComfyUI web UI accessible from the interne
 - **AWS CLI** configured with credentials (`aws configure`)
   - Your AWS identity must be able to use **EC2** (launch/stop instances, create security groups) and read **SSM Parameter Store** (to resolve the AMI from `/bp/ami/fleets/<stage>/<fleet_slug>`).
 - **S3 read access** to the models bucket (required only if you plan to apply bundles via the GitHub Action)
-- **Production AMI** built via Packer and registered in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>` (or pass `AMI_ID` directly)
+- **Base or baked AMI** registered in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>` (created via **Build Base GPU AMI** / **Bake GPU AMI** workflows, or pass `AMI_ID` directly)
 - **EC2 key pair** (optional — only needed for SSH)
 - **Session Manager**: by default, `launch.sh` will try to create/attach an SSM-enabled instance profile (`bp-comfyui-dev-<stage>`) so the instance appears in Systems Manager. Set `AUTO_INSTANCE_PROFILE=false` to disable, or set `INSTANCE_PROFILE` to override.
 
-## Quick Start
+## Quick Start (GitHub Actions - recommended)
+
+Run **Create Dev GPU Instance** (`.github/workflows/create-dev-gpu-instance.yml`) with:
+
+- `fleet_slug`
+- `allowed_cidr` (your IP/CIDR for port 8188)
+- `aws_region` (optional)
+- `auto_shutdown_hours` (optional)
+
+The workflow summary includes the ComfyUI URL `http://<public-ip>:8188`.
+
+## Quick Start (local script)
 
 ```bash
 cd infrastructure/dev-gpu
@@ -39,9 +50,9 @@ If you’re iterating on models/LoRAs/VAEs, you can sync a bundle onto the **run
 1. Ensure the instance has an **SSM-enabled** instance profile (e.g. `AmazonSSMManagedInstanceCore`).
 2. Ensure the instance role has **S3 read** to the models bucket (`bp-models-<account>-<stage>`).
 3. Run the workflow `.github/workflows/apply-comfyui-bundle.yml` with:
-   - `instance_id`, `fleet_slug`, `bundle_prefix`, `models_bucket`
+   - `instance_id`, `fleet_slug` (optional: `logs_bucket`, `notes`)
 
-The workflow will `aws s3 sync` the bundle to `/opt/comfyui` and restart `comfyui.service`.
+The workflow resolves **stage** from `fleet_slug`, uses the active bundle pointer in `/bp/<stage>/fleets/<fleet_slug>/active_bundle`, and restarts `comfyui.service`.
 
 If you are using the default dev role (`bp-comfyui-dev-<stage>`), `launch.sh` will *try* to attach this automatically (when it can resolve `/bp/<stage>/models/bucket`). If it didn’t, you can attach the policy manually:
 
@@ -111,12 +122,16 @@ Prerequisite (one-time): configure GitHub Actions → AWS auth (OIDC) and set th
 - Add the role ARN(s) as repo Actions secrets named `AWS_DEPLOY_ROLE_ARN_STAGING` (and `AWS_DEPLOY_ROLE_ARN_PRODUCTION` if needed).
 - Setup details are in [`infrastructure/README.md`](../README.md#github-actions-to-aws-oidc).
 
-1. Go to **Actions → Build GPU AMI**.
+1. Go to **Actions → Build Base GPU AMI**.
 2. Run workflow with:
    - `fleet_slug`: e.g. `gpu-default`
-   - `stage`: `staging` or `production`
-   - `instance_type` (optional override): leave blank to use `/bp/<stage>/fleets/<fleet_slug>/desired_config`
-3. The workflow writes the AMI ID to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
+   - `aws_region` (optional)
+3. The workflow resolves **stage** from the slug and writes the AMI ID to `/bp/ami/fleets/<stage>/<fleet_slug>`.
+
+To bake the active bundle into the AMI, run **Actions → Bake GPU AMI (Active Bundle)** with:
+- `fleet_slug`
+- `aws_region` (optional)
+- `start_instance_refresh` (optional)
 
 If the workflow fails at **Configure AWS credentials** with:
 

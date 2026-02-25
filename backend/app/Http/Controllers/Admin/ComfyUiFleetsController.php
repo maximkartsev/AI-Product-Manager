@@ -38,6 +38,7 @@ class ComfyUiFleetsController extends BaseController
         $this->addFiltersCriteria($query, $filters, ComfyUiGpuFleet::class);
 
         [$totalRows, $items] = $this->addCountQueryAndExecute($orderStr, $query, $from, $perPage);
+        $items = $this->attachFleetMetrics($items);
 
         return $this->sendResponse([
             'items' => $items,
@@ -66,6 +67,8 @@ class ComfyUiFleetsController extends BaseController
         if (!$fleet) {
             return $this->sendError('Fleet not found', [], 404);
         }
+
+        $fleet = $this->attachFleetMetrics(collect([$fleet]))->first();
 
         return $this->sendResponse($fleet, 'Fleet retrieved successfully');
     }
@@ -266,6 +269,8 @@ class ComfyUiFleetsController extends BaseController
 
         $fleet->save();
 
+        $fleet = $this->attachFleetMetrics(collect([$fleet]))->first();
+
         return $this->sendResponse($fleet, 'Fleet updated successfully');
     }
 
@@ -316,6 +321,8 @@ class ComfyUiFleetsController extends BaseController
 
         $fleet->load('workflows');
 
+        $fleet = $this->attachFleetMetrics(collect([$fleet]))->first();
+
         return $this->sendResponse($fleet, 'Workflows assigned to fleet');
     }
 
@@ -357,6 +364,89 @@ class ComfyUiFleetsController extends BaseController
             $user?->email
         );
 
+        $fleet = $this->attachFleetMetrics(collect([$fleet]))->first();
+
         return $this->sendResponse($fleet, 'Fleet bundle activated');
+    }
+
+    private function attachFleetMetrics($fleets)
+    {
+        $fleetCollection = collect($fleets);
+        if ($fleetCollection->isEmpty()) {
+            return $fleets;
+        }
+
+        return $fleetCollection
+            ->groupBy('stage')
+            ->flatMap(function ($group, $stage) {
+                return $this->attachFleetMetricsForStage($group, (string) $stage);
+            })
+            ->values();
+    }
+
+    private function attachFleetMetricsForStage($fleets, string $stage)
+    {
+        $fleetCollection = collect($fleets);
+        if ($fleetCollection->isEmpty()) {
+            return $fleetCollection;
+        }
+
+        $fleetIds = $fleetCollection->pluck('id')->all();
+        $fleetSlugs = $fleetCollection->pluck('slug')->all();
+
+        $workerFleetSub = DB::connection('central')
+            ->table('comfy_ui_workers as w')
+            ->join('worker_workflows as ww', 'w.id', '=', 'ww.worker_id')
+            ->join('comfyui_workflow_fleets as wf', 'wf.workflow_id', '=', 'ww.workflow_id')
+            ->where('wf.stage', $stage)
+            ->where('w.is_approved', true)
+            ->where('w.last_seen_at', '>=', now()->subMinutes(5))
+            ->whereIn('wf.fleet_id', $fleetIds)
+            ->select('w.id as worker_id', 'wf.fleet_id', 'w.capacity_type')
+            ->distinct();
+
+        $workerCapacity = DB::connection('central')
+            ->query()
+            ->fromSub($workerFleetSub, 'x')
+            ->selectRaw('fleet_id, capacity_type, COUNT(DISTINCT worker_id) as workers')
+            ->groupBy('fleet_id', 'capacity_type')
+            ->get();
+
+        $capacityByFleet = [];
+        foreach ($workerCapacity as $row) {
+            $fleetId = (int) $row->fleet_id;
+            if (!isset($capacityByFleet[$fleetId])) {
+                $capacityByFleet[$fleetId] = ['spot' => 0, 'on-demand' => 0, 'unknown' => 0];
+            }
+            $capacityType = $row->capacity_type ?: 'unknown';
+            $capacityByFleet[$fleetId][$capacityType] = (int) $row->workers;
+        }
+
+        $utilizationRows = DB::connection('central')
+            ->table('comfyui_worker_sessions')
+            ->where('stage', $stage)
+            ->whereIn('fleet_slug', $fleetSlugs)
+            ->where('started_at', '>=', now()->subHours(24))
+            ->selectRaw('fleet_slug, SUM(busy_seconds) as busy_seconds, SUM(running_seconds) as running_seconds')
+            ->groupBy('fleet_slug')
+            ->get()
+            ->keyBy('fleet_slug');
+
+        return $fleetCollection->map(function ($fleet) use ($capacityByFleet, $utilizationRows) {
+            $capacity = $capacityByFleet[$fleet->id] ?? ['spot' => 0, 'on-demand' => 0, 'unknown' => 0];
+            $utilRow = $utilizationRows[$fleet->slug] ?? null;
+            $runningSeconds = $utilRow ? (int) $utilRow->running_seconds : 0;
+            $busySeconds = $utilRow ? (int) $utilRow->busy_seconds : 0;
+            $utilization = $runningSeconds > 0 ? round($busySeconds / $runningSeconds, 4) : null;
+
+            $fleet->setAttribute('spot_workers', $capacity['spot'] ?? 0);
+            $fleet->setAttribute('on_demand_workers', $capacity['on-demand'] ?? 0);
+            $fleet->setAttribute('unknown_workers', $capacity['unknown'] ?? 0);
+            $fleet->setAttribute('busy_seconds', $busySeconds);
+            $fleet->setAttribute('running_seconds', $runningSeconds);
+            $fleet->setAttribute('utilization', $utilization);
+
+            return $fleet;
+        });
     }
 }

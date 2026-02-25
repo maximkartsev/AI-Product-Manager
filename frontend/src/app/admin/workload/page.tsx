@@ -38,6 +38,26 @@ function countColor(count: number): string {
   return "text-red-400";
 }
 
+function formatNumber(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined) return "-";
+  return value.toFixed(digits);
+}
+
+function pressureColor(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "text-muted-foreground";
+  if (value > 1.2) return "text-red-400";
+  if (value > 1) return "text-yellow-400";
+  return "text-green-400";
+}
+
+function formatSlo(stats: WorkloadWorkflow["stats"]): string {
+  if (stats.workload_kind === "video") {
+    if (stats.slo_video_seconds_per_processing_second_p95 === null) return "-";
+    return `${formatNumber(stats.slo_video_seconds_per_processing_second_p95, 2)}x`;
+  }
+  return formatDuration(stats.slo_p95_wait_seconds ?? null);
+}
+
 function isOnline(lastSeenAt: string | null): boolean {
   if (!lastSeenAt) return false;
   return Date.now() - new Date(lastSeenAt).getTime() < 5 * 60 * 1000;
@@ -202,6 +222,18 @@ export default function AdminWorkloadPage() {
                   <th className="text-center px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">
                     GPU Time
                   </th>
+                  <th className="text-center px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                    p95 Wait
+                  </th>
+                  <th className="text-center px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                    SLO
+                  </th>
+                  <th className="text-center px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                    Pressure
+                  </th>
+                  <th className="text-center px-3 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                    Rec
+                  </th>
                   {workers.map((w) => (
                     <th
                       key={w.id}
@@ -247,6 +279,20 @@ export default function AdminWorkloadPage() {
                     </td>
                     <td className="text-center px-3 py-3 text-muted-foreground whitespace-nowrap">
                       {formatDuration(wf.stats.total_duration_seconds)}
+                    </td>
+                    <td className="text-center px-3 py-3 text-muted-foreground whitespace-nowrap">
+                      {formatDuration(wf.stats.estimated_wait_seconds_p95)}
+                    </td>
+                    <td className="text-center px-3 py-3 text-muted-foreground whitespace-nowrap">
+                      {formatSlo(wf.stats)}
+                    </td>
+                    <td className={`text-center px-3 py-3 font-mono tabular-nums ${pressureColor(wf.stats.slo_pressure)}`}>
+                      {wf.stats.slo_pressure === null || wf.stats.slo_pressure === undefined
+                        ? "-"
+                        : formatNumber(wf.stats.slo_pressure, 2)}
+                    </td>
+                    <td className="text-center px-3 py-3 font-mono tabular-nums text-muted-foreground">
+                      {wf.stats.recommended_workers ?? "-"}
                     </td>
                     {workers.map((w) => (
                       <td key={w.id} className="text-center px-3 py-3">

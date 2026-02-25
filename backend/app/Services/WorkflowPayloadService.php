@@ -49,6 +49,42 @@ class WorkflowPayloadService
     }
 
     /**
+     * Compute normalized work units for autoscaling.
+     *
+     * @return array{units: float, kind: string}
+     */
+    public function computeWorkUnits(Workflow $workflow, Effect $effect, array $userInput = []): array
+    {
+        $resolvedProps = $this->resolveProperties($workflow, $effect, $userInput);
+        return $this->computeWorkUnitsFromResolvedProps($workflow, $resolvedProps);
+    }
+
+    /**
+     * Compute work units using already-resolved properties.
+     *
+     * @param array<string, mixed> $resolvedProps
+     * @return array{units: float, kind: string}
+     */
+    public function computeWorkUnitsFromResolvedProps(Workflow $workflow, array $resolvedProps): array
+    {
+        $workloadKind = $this->inferWorkloadKind($workflow);
+        if ($workloadKind !== 'video') {
+            return ['units' => 1.0, 'kind' => 'image_job'];
+        }
+
+        $units = null;
+        $key = $workflow->work_units_property_key;
+        if ($key && array_key_exists($key, $resolvedProps)) {
+            $units = $resolvedProps[$key];
+        }
+
+        return [
+            'units' => $this->normalizeWorkUnits($units),
+            'kind' => 'video_seconds',
+        ];
+    }
+
+    /**
      * Build the complete input_payload for a job dispatch.
      */
     public function buildJobPayload(Effect $effect, array $resolvedProps, ?File $inputFile): array
@@ -182,6 +218,28 @@ class WorkflowPayloadService
         }
 
         return $value;
+    }
+
+    private function inferWorkloadKind(Workflow $workflow): string
+    {
+        $kind = strtolower((string) ($workflow->workload_kind ?? ''));
+        if (in_array($kind, ['image', 'video'], true)) {
+            return $kind;
+        }
+        $mimeType = strtolower((string) ($workflow->output_mime_type ?? ''));
+        return str_starts_with($mimeType, 'video/') ? 'video' : 'image';
+    }
+
+    private function normalizeWorkUnits(mixed $value): float
+    {
+        if (is_numeric($value)) {
+            $units = (float) $value;
+            if ($units > 0) {
+                return $units;
+            }
+        }
+
+        return 1.0;
     }
 
     private function getPrimaryInputPlaceholder(array $properties): string

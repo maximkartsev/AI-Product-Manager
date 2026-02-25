@@ -4,7 +4,9 @@ namespace App\Jobs;
 
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
+use App\Models\Effect;
 use App\Models\Tenant;
+use App\Services\WorkflowPayloadService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -42,14 +44,30 @@ class ProcessAiJob implements ShouldQueue
                 return;
             }
 
+            $workflowId = null;
+            $workUnits = null;
+            $workUnitKind = null;
+            $effect = Effect::query()->find($job->effect_id);
+            if ($effect && $effect->workflow_id) {
+                $workflowId = $effect->workflow_id;
+                if ($effect->workflow) {
+                    $computed = app(WorkflowPayloadService::class)->computeWorkUnits($effect->workflow, $effect, []);
+                    $workUnits = $computed['units'] ?? null;
+                    $workUnitKind = $computed['kind'] ?? null;
+                }
+            }
+
             AiJobDispatch::query()->firstOrCreate([
                 'tenant_id' => (string) $job->tenant_id,
                 'tenant_job_id' => $job->id,
             ], [
                 'provider' => $job->provider ?: config('services.comfyui.default_provider', 'self_hosted'),
+                'workflow_id' => $workflowId,
                 'status' => 'queued',
                 'priority' => 0,
                 'attempts' => 0,
+                'work_units' => $workUnits,
+                'work_unit_kind' => $workUnitKind,
             ]);
         } catch (\Throwable $e) {
             throw $e;

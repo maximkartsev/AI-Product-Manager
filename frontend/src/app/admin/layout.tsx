@@ -8,6 +8,7 @@ import {
   FolderOpen,
   Users,
   BarChart3,
+  Coins,
   Menu,
   X,
   GitBranch,
@@ -48,6 +49,7 @@ const NAV_GROUPS = [
       { label: "Workers", href: "/admin/workers", icon: Server },
       { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
       { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
+      { label: "Economics", href: "/admin/economics", icon: Coins },
     ],
   },
 ];

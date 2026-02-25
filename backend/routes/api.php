@@ -29,6 +29,7 @@ use \App\Http\Controllers\VideoController as VideoController;
 use \App\Http\Controllers\GalleryController as GalleryController;
 use \App\Http\Controllers\Admin\EffectsController as AdminEffectsController;
 use \App\Http\Controllers\Admin\CategoriesController as AdminCategoriesController;
+use \App\Http\Controllers\Admin\EconomicsSettingsController as AdminEconomicsSettingsController;
 use \App\Http\Controllers\Admin\UiSettingsController as AdminUiSettingsController;
 use \App\Http\Controllers\Admin\UsersController as AdminUsersController;
 use \App\Http\Controllers\Admin\AnalyticsController as AdminAnalyticsController;
@@ -147,6 +148,9 @@ Route::middleware([
             Route::get('/users/{id}/tokens', [AdminUsersController::class, 'tokens']);
 
             Route::get('/analytics/token-spending', [AdminAnalyticsController::class, 'tokenSpending']);
+            Route::get('/analytics/unit-economics', [AdminAnalyticsController::class, 'unitEconomics']);
+            Route::get('/economics/settings', [AdminEconomicsSettingsController::class, 'index']);
+            Route::put('/economics/settings', [AdminEconomicsSettingsController::class, 'update']);
 
             // Workflows
             Route::get('/workflows', [AdminWorkflowsController::class, 'index']);

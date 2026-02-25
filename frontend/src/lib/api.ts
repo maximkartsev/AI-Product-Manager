@@ -852,6 +852,11 @@ export type AdminWorkflow = {
   output_node_id?: string | null;
   output_extension?: string | null;
   output_mime_type?: string | null;
+  workload_kind?: "image" | "video" | null;
+  work_units_property_key?: string | null;
+  slo_p95_wait_seconds?: number | null;
+  slo_video_seconds_per_processing_second_p95?: number | null;
+  partner_cost_per_work_unit?: number | null;
   is_active?: boolean;
   fleets?: ComfyUiGpuFleet[];
   created_at?: string | null;
@@ -1110,6 +1115,29 @@ export function resetAdminUiSettings(): Promise<void> {
   return apiRequest<void>("/admin/ui-settings", { method: "DELETE" });
 }
 
+// ---- Admin Economics Settings
+
+export type EconomicsSettings = {
+  token_usd_rate: number;
+  spot_multiplier?: number | null;
+  instance_type_rates: Record<string, number>;
+  defaults_applied?: boolean;
+};
+
+export type EconomicsSettingsPayload = {
+  token_usd_rate: number;
+  spot_multiplier?: number | null;
+  instance_type_rates: Record<string, number>;
+};
+
+export function getEconomicsSettings(): Promise<EconomicsSettings> {
+  return apiGet<EconomicsSettings>("/admin/economics/settings");
+}
+
+export function updateEconomicsSettings(payload: EconomicsSettingsPayload): Promise<EconomicsSettings> {
+  return apiRequest<EconomicsSettings>("/admin/economics/settings", { method: "PUT", body: payload });
+}
+
 // ---- Admin Users
 
 export type AdminUser = {
@@ -1265,6 +1293,52 @@ export function getTokenSpendingAnalytics(params: {
   return apiGet<TokenSpendingData>("/admin/analytics/token-spending", query);
 }
 
+export type UnitEconomicsByEffect = {
+  effectId: number;
+  effectName: string;
+  workflowId?: number | null;
+  workflowName?: string | null;
+  workloadKind?: "image" | "video" | null;
+  workUnitKind?: string | null;
+  totalTokens: number;
+  totalJobs: number;
+  totalProcessingSeconds: number;
+  totalQueueWaitSeconds: number;
+  totalWorkUnits: number;
+  avgProcessingSeconds?: number | null;
+  avgProcessingSecondsPerUnit?: number | null;
+  avgTokensPerJob?: number | null;
+  avgTokensPerWorkUnit?: number | null;
+  partnerCostPerWorkUnit?: number | null;
+  partnerCostUsd?: number | null;
+  fleetSlugs?: string[] | null;
+  fleetInstanceTypes?: string[] | null;
+};
+
+export type UnitEconomicsTotals = {
+  totalTokens: number;
+  totalJobs: number;
+  totalProcessingSeconds: number;
+  totalWorkUnits: number;
+  totalPartnerCostUsd?: number | null;
+};
+
+export type UnitEconomicsData = {
+  byEffect: UnitEconomicsByEffect[];
+  totals: UnitEconomicsTotals;
+};
+
+export function getUnitEconomicsAnalytics(params: {
+  from?: string;
+  to?: string;
+} = {}): Promise<UnitEconomicsData> {
+  const query: Query = {
+    from: params.from ?? undefined,
+    to: params.to ?? undefined,
+  };
+  return apiGet<UnitEconomicsData>("/admin/analytics/unit-economics", query);
+}
+
 // ---- Admin Workflows
 
 export async function getAdminWorkflows(params: {
@@ -1376,6 +1450,12 @@ export type ComfyUiGpuFleet = {
     assigned_by_user_id?: number | null;
     assigned_by_email?: string | null;
   };
+  spot_workers?: number | null;
+  on_demand_workers?: number | null;
+  unknown_workers?: number | null;
+  busy_seconds?: number | null;
+  running_seconds?: number | null;
+  utilization?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -1764,10 +1844,21 @@ export function getWorkerAuditLogs(workerId: number, params: { page?: number; pe
 export type WorkloadWorkflowStats = {
   queued: number;
   processing: number;
+  queue_units: number;
+  active_workers: number;
   completed: number;
   failed: number;
   avg_duration_seconds: number | null;
   total_duration_seconds: number | null;
+  p95_queue_wait_seconds: number | null;
+  processing_seconds_per_unit_p95: number | null;
+  estimated_wait_seconds_p95: number | null;
+  slo_pressure: number | null;
+  slo_p95_wait_seconds: number | null;
+  slo_video_seconds_per_processing_second_p95: number | null;
+  workload_kind: "image" | "video" | null;
+  work_units_property_key: string | null;
+  recommended_workers: number | null;
 };
 
 export type WorkloadWorkflow = {

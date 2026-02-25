@@ -91,8 +91,7 @@ def _parse_providers() -> List[str]:
     return ["self_hosted"]
 
 
-def _check_spot_interruption() -> bool:
-    """Check EC2 instance metadata for Spot interruption notice (2-min warning)."""
+def _fetch_imds(path: str) -> Optional[str]:
     try:
         tok = requests.put(
             "http://169.254.169.254/latest/api/token",
@@ -100,23 +99,65 @@ def _check_spot_interruption() -> bool:
             timeout=1,
         ).text
         resp = requests.get(
-            "http://169.254.169.254/latest/meta-data/spot/instance-action",
+            f"http://169.254.169.254/latest/{path}",
             headers={"X-aws-ec2-metadata-token": tok},
             timeout=1,
         )
-        return resp.status_code == 200
+        if resp.status_code != 200:
+            return None
+        return resp.text
     except Exception:
+        return None
+
+
+def _detect_capacity_type() -> Optional[str]:
+    lifecycle = _fetch_imds("meta-data/instance-life-cycle")
+    if lifecycle and lifecycle.strip().lower() == "spot":
+        return "spot"
+    return "on-demand"
+
+
+def _detect_instance_type() -> Optional[str]:
+    instance_type = _fetch_imds("meta-data/instance-type")
+    return instance_type.strip() if instance_type else None
+
+
+def _check_spot_interruption() -> bool:
+    """Check EC2 instance metadata for Spot interruption notice (2-min warning)."""
+    return _fetch_imds("meta-data/spot/instance-action") is not None
+
+
+def _check_spot_rebalance() -> bool:
+    """Check EC2 instance metadata for Spot rebalance recommendation."""
+    return _fetch_imds("meta-data/events/recommendations/rebalance") is not None
+
+
+def _check_asg_termination() -> bool:
+    """Check ASG target lifecycle state (scale-in/termination intent)."""
+    state = _fetch_imds("meta-data/autoscaling/target-lifecycle-state")
+    if not state:
         return False
+    return state.strip() not in ("InService", "")
 
 
-def _spot_monitor() -> None:
-    """Background thread polling for Spot interruption every 5 seconds."""
+def _termination_monitor() -> None:
+    """Background thread polling for termination/rebalance signals every 5 seconds."""
     global _shutdown_requested, _shutdown_reason
     while not _shutdown_requested:
         if _check_spot_interruption():
             _shutdown_requested = True
             _shutdown_reason = "spot_interruption"
             print("[worker] Spot interruption notice received!")
+            break
+        if _check_spot_rebalance():
+            _shutdown_requested = True
+            _shutdown_reason = "spot_rebalance"
+            print("[worker] Spot rebalance recommendation received!")
+            break
+        if _check_asg_termination():
+            _shutdown_requested = True
+            _shutdown_reason = "asg_termination"
+            print("[worker] ASG termination intent detected!")
             break
         time.sleep(5)
 
@@ -163,6 +204,12 @@ def _fleet_register() -> Tuple[str, str]:
     }
     if FLEET_STAGE:
         payload["stage"] = FLEET_STAGE
+    capacity_type = _detect_capacity_type()
+    if capacity_type:
+        payload["capacity_type"] = capacity_type
+    instance_type = _detect_instance_type()
+    if instance_type:
+        payload["instance_type"] = instance_type
 
     resp = requests.post(
         f"{API_BASE_URL}/api/worker/register",
@@ -175,12 +222,13 @@ def _fleet_register() -> Tuple[str, str]:
     return data["worker_id"], data["token"]
 
 
-def _fleet_deregister() -> None:
+def _fleet_deregister(reason: Optional[str] = None) -> None:
     """Deregister this worker from the backend."""
     try:
+        payload = {"reason": reason} if reason else {}
         requests.post(
             f"{API_BASE_URL}/api/worker/deregister",
-            json={},
+            json=payload,
             headers=_backend_headers(),
             timeout=10,
         )
@@ -646,7 +694,7 @@ def main() -> None:
 
     # Start Spot interruption monitor for ASG instances
     if ASG_NAME:
-        threading.Thread(target=_spot_monitor, daemon=True).start()
+        threading.Thread(target=_termination_monitor, daemon=True).start()
 
     current_load = 0
     while not _shutdown_requested:
@@ -671,8 +719,8 @@ def main() -> None:
                     process_job(job)
                     break
             except Exception as exc:
-                if _shutdown_requested and _shutdown_reason == "spot_interruption":
-                    _requeue_job(job["dispatch_id"], job["lease_token"], "spot_interruption")
+                if _shutdown_requested and _shutdown_reason in ("spot_interruption", "spot_rebalance", "asg_termination"):
+                    _requeue_job(job["dispatch_id"], job["lease_token"], _shutdown_reason)
                 else:
                     fail_job(job["dispatch_id"], job["lease_token"], str(exc))
             finally:
@@ -685,12 +733,12 @@ def main() -> None:
     _set_scale_in_protection(False)
 
     # If interrupted with an active job, requeue it
-    if _current_job and _shutdown_reason in ("spot_interruption", "capacity_rebalance"):
+    if _current_job and _shutdown_reason in ("spot_interruption", "spot_rebalance", "asg_termination"):
         _requeue_job(_current_job["dispatch_id"], _current_job["lease_token"], _shutdown_reason)
 
     # Deregister if fleet-registered
     if FLEET_SECRET:
-        _fleet_deregister()
+        _fleet_deregister(_shutdown_reason)
 
     print(f"[worker] Shutdown complete. Reason: {_shutdown_reason or 'normal'}")
 

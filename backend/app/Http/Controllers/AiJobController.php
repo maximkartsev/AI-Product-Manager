@@ -123,7 +123,7 @@ class AiJobController extends BaseController
         }
 
         try {
-            $inputPayload = $this->buildInputPayload($effect, $inputPayload, $inputFile, $user);
+            [$inputPayload, $workUnits] = $this->preparePayloadAndUnits($effect, $inputPayload, $inputFile, $user);
         } catch (\RuntimeException $e) {
             return $this->sendError($e->getMessage(), [], 422);
         }
@@ -170,14 +170,23 @@ class AiJobController extends BaseController
             throw $e;
         }
 
-        $dispatch = $this->ensureDispatch($job, (int) $request->input('priority', 0), $provider);
+        $dispatch = $this->ensureDispatch(
+            $job,
+            (int) $request->input('priority', 0),
+            $provider,
+            $workUnits['units'] ?? null,
+            $workUnits['kind'] ?? null
+        );
 
         return $this->sendResponse($job, 'Job queued', [
             'dispatch_id' => $dispatch?->id,
         ]);
     }
 
-    private function buildInputPayload(Effect $effect, array $inputPayload, ?File $inputFile, User $user): array
+    /**
+     * @return array{0: array, 1: array{units: float, kind: string}}
+     */
+    private function preparePayloadAndUnits(Effect $effect, array $inputPayload, ?File $inputFile, User $user): array
     {
         if (!$effect->workflow_id || !$effect->workflow) {
             throw new \RuntimeException('Effect is not configured for processing.');
@@ -189,7 +198,10 @@ class AiJobController extends BaseController
         $userInput = $this->extractUserInput($inputPayload, $allowed, $user);
         $resolvedProps = $service->resolveProperties($effect->workflow, $effect, $userInput);
         $this->assertRequiredProperties($properties, $resolvedProps);
-        return $service->buildJobPayload($effect, $resolvedProps, $inputFile);
+        $payload = $service->buildJobPayload($effect, $resolvedProps, $inputFile);
+        $workUnits = $service->computeWorkUnitsFromResolvedProps($effect->workflow, $resolvedProps);
+
+        return [$payload, $workUnits];
     }
 
     private function buildAllowedPropertyMap(array $properties): array
@@ -343,7 +355,13 @@ class AiJobController extends BaseController
             : str_starts_with($normalized, 'video/');
     }
 
-    private function ensureDispatch(AiJob $job, int $priority = 0, ?string $provider = null): ?AiJobDispatch
+    private function ensureDispatch(
+        AiJob $job,
+        int $priority = 0,
+        ?string $provider = null,
+        ?float $workUnits = null,
+        ?string $workUnitKind = null
+    ): ?AiJobDispatch
     {
         $workflowId = null;
         $effect = Effect::query()->find($job->effect_id);
@@ -361,6 +379,8 @@ class AiJobController extends BaseController
                 'status' => 'queued',
                 'priority' => $priority,
                 'attempts' => 0,
+                'work_units' => $workUnits,
+                'work_unit_kind' => $workUnitKind,
             ]);
         } catch (\Throwable $e) {
             $job->status = 'failed';

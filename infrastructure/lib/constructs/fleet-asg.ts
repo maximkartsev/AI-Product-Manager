@@ -2,9 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
-import * as cw_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as sns from 'aws-cdk-lib/aws-sns';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
@@ -23,8 +21,9 @@ export interface FleetAsgProps {
 
 export class FleetAsg extends Construct {
   public readonly asg: autoscaling.AutoScalingGroup;
+  public readonly onDemandAsg: autoscaling.AutoScalingGroup;
   public readonly queueDepthAlarm: cloudwatch.Alarm;
-  public readonly queueEmptyAlarm: cloudwatch.Alarm;
+  public readonly queueEmptyAlarm?: cloudwatch.Alarm;
 
   constructor(scope: Construct, id: string, props: FleetAsgProps) {
     super(scope, id);
@@ -94,9 +93,12 @@ export class FleetAsg extends Construct {
       resources: [`arn:aws:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:log-group:/gpu-workers/${fleetSlug}:*`],
     }));
 
-    // User data script
-    const userData = ec2.UserData.forLinux();
-    userData.addCommands(
+    const spotAsgName = `asg-${stage}-${fleetSlug}`;
+    const onDemandAsgName = `asg-${stage}-${fleetSlug}-od`;
+
+    const buildUserData = (asgName: string): ec2.UserData => {
+      const userData = ec2.UserData.forLinux();
+      userData.addCommands(
       '#!/bin/bash',
       'set -euo pipefail',
       'ASSET_LOG="/var/log/comfyui-asset-sync.log"',
@@ -153,7 +155,7 @@ export class FleetAsg extends Construct {
       'FLEET_SECRET="$FLEET_SECRET"',
       `FLEET_SLUG="${fleetSlug}"`,
       `FLEET_STAGE="${stage}"`,
-      `ASG_NAME="asg-${stage}-${fleetSlug}"`,
+      `ASG_NAME="${asgName}"`,
       'COMFYUI_BASE_URL="http://127.0.0.1:8188"',
       'POLL_INTERVAL_SECONDS=3',
       'HEARTBEAT_INTERVAL_SECONDS=30',
@@ -164,14 +166,16 @@ export class FleetAsg extends Construct {
       '',
       '# Start worker via systemd',
       'systemctl restart comfyui-worker.service',
-    );
+      );
+      return userData;
+    };
 
-    // Launch template
-    const launchTemplate = new ec2.LaunchTemplate(this, 'Lt', {
+    // Launch templates
+    const spotLaunchTemplate = new ec2.LaunchTemplate(this, 'LtSpot', {
       launchTemplateName: `lt-${stage}-${fleetSlug}`,
       machineImage,
       role: workerRole,
-      userData,
+      userData: buildUserData(spotAsgName),
       securityGroup,
       requireImdsv2: true,
       httpPutResponseHopLimit: 1,
@@ -186,9 +190,28 @@ export class FleetAsg extends Construct {
       ],
     });
 
-    // ASG with mixed instances policy
-    this.asg = new autoscaling.AutoScalingGroup(this, 'Asg', {
-      autoScalingGroupName: `asg-${stage}-${fleetSlug}`,
+    const onDemandLaunchTemplate = new ec2.LaunchTemplate(this, 'LtOnDemand', {
+      launchTemplateName: `lt-${stage}-${fleetSlug}-od`,
+      machineImage,
+      role: workerRole,
+      userData: buildUserData(onDemandAsgName),
+      securityGroup,
+      requireImdsv2: true,
+      httpPutResponseHopLimit: 1,
+      blockDevices: [
+        {
+          deviceName: '/dev/sda1',
+          volume: ec2.BlockDeviceVolume.ebs(100, {
+            volumeType: ec2.EbsDeviceVolumeType.GP3,
+            encrypted: true,
+          }),
+        },
+      ],
+    });
+
+    // Spot ASG with mixed instances policy
+    this.asg = new autoscaling.AutoScalingGroup(this, 'AsgSpot', {
+      autoScalingGroupName: spotAsgName,
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       mixedInstancesPolicy: {
@@ -197,7 +220,31 @@ export class FleetAsg extends Construct {
           onDemandPercentageAboveBaseCapacity: 0,
           spotAllocationStrategy: autoscaling.SpotAllocationStrategy.CAPACITY_OPTIMIZED_PRIORITIZED,
         },
-        launchTemplate,
+        launchTemplate: spotLaunchTemplate,
+        launchTemplateOverrides: fleet.instanceTypes.map(t => ({
+          instanceType: new ec2.InstanceType(t),
+        })),
+      },
+      minCapacity: 1,
+      maxCapacity: fleet.maxSize,
+      desiredCapacity: 1,
+      defaultInstanceWarmup: cdk.Duration.seconds(fleet.warmupSeconds ?? 300),
+      capacityRebalance: true,
+      newInstancesProtectedFromScaleIn: false,
+    });
+
+    // On-demand ASG (fallback)
+    this.onDemandAsg = new autoscaling.AutoScalingGroup(this, 'AsgOnDemand', {
+      autoScalingGroupName: onDemandAsgName,
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      mixedInstancesPolicy: {
+        instancesDistribution: {
+          onDemandBaseCapacity: 0,
+          onDemandPercentageAboveBaseCapacity: 100,
+          spotAllocationStrategy: autoscaling.SpotAllocationStrategy.CAPACITY_OPTIMIZED_PRIORITIZED,
+        },
+        launchTemplate: onDemandLaunchTemplate,
         launchTemplateOverrides: fleet.instanceTypes.map(t => ({
           instanceType: new ec2.InstanceType(t),
         })),
@@ -206,11 +253,14 @@ export class FleetAsg extends Construct {
       maxCapacity: fleet.maxSize,
       desiredCapacity: 0,
       defaultInstanceWarmup: cdk.Duration.seconds(fleet.warmupSeconds ?? 300),
-      capacityRebalance: true,
+      capacityRebalance: false,
       newInstancesProtectedFromScaleIn: false,
     });
 
     cdk.Tags.of(this.asg).add('FleetSlug', fleetSlug);
+    cdk.Tags.of(this.asg).add('CapacityType', 'spot');
+    cdk.Tags.of(this.onDemandAsg).add('FleetSlug', fleetSlug);
+    cdk.Tags.of(this.onDemandAsg).add('CapacityType', 'on-demand');
 
     // ========================================
     // Scaling Policies
@@ -228,7 +278,7 @@ export class FleetAsg extends Construct {
       period: cdk.Duration.minutes(1),
     });
 
-    // Step scaling 0 -> 1: alarm when QueueDepth > 0
+    // Queue depth alarm retained for visibility
     this.queueDepthAlarm = new cloudwatch.Alarm(this, 'QueueDepthAlarm', {
       alarmName: `${stage}-${fleetSlug}-queue-has-jobs`,
       metric: queueDepthMetric,
@@ -238,52 +288,25 @@ export class FleetAsg extends Construct {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    // Scale from 0 -> 1 when the alarm transitions to ALARM (QueueDepth > 0).
-    // We intentionally do NOT scale back down here; scale-to-zero is handled separately.
-    const scaleFromZero = new autoscaling.StepScalingAction(this, 'ScaleFromZero', {
-      autoScalingGroup: this.asg,
-      adjustmentType: autoscaling.AdjustmentType.EXACT_CAPACITY,
-    });
-    scaleFromZero.addAdjustment({ lowerBound: 0, adjustment: 1 });
-    this.queueDepthAlarm.addAlarmAction(new cw_actions.AutoScalingAction(scaleFromZero));
-
-    // Target tracking 1 -> N: BacklogPerInstance target
-    const backlogMetric = new cloudwatch.Metric({
+    // Scale 1 -> N using FleetSloPressureMax (SLO pressure)
+    const sloPressureMetric = new cloudwatch.Metric({
       namespace,
-      metricName: 'BacklogPerInstance',
+      metricName: 'FleetSloPressureMax',
       dimensionsMap: dimensions,
-      statistic: 'Average',
+      statistic: 'Maximum',
       period: cdk.Duration.minutes(1),
     });
 
-    const backlogTarget = fleet.backlogTarget ?? 2;
-    const backlogHigh = backlogTarget * 2 + 1;
-    this.asg.scaleOnMetric('BacklogTracking', {
-      metric: backlogMetric,
+    this.asg.scaleOnMetric('SloPressureScaling', {
+      metric: sloPressureMetric,
       adjustmentType: autoscaling.AdjustmentType.CHANGE_IN_CAPACITY,
       scalingSteps: [
-        { upper: backlogTarget, change: 0 },
-        { lower: backlogTarget, change: 1 },
-        { lower: backlogHigh, change: 2 },
+        { upper: 0.7, change: -1 },
+        { lower: 1, change: 1 },
+        { lower: 1.5, change: 2 },
       ],
       cooldown: cdk.Duration.minutes(3),
     });
-
-    // Scale-to-zero alarm: QueueDepth == 0 for N minutes
-    this.queueEmptyAlarm = new cloudwatch.Alarm(this, 'QueueEmptyAlarm', {
-      alarmName: `${stage}-${fleetSlug}-queue-empty`,
-      metric: queueDepthMetric,
-      threshold: 0,
-      evaluationPeriods: fleet.scaleToZeroMinutes ?? 15,
-      datapointsToAlarm: fleet.scaleToZeroMinutes ?? 15,
-      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
-      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-    });
-
-    if (props.scaleToZeroTopicArn) {
-      const topic = sns.Topic.fromTopicArn(this, 'ScaleToZeroTopic', props.scaleToZeroTopicArn);
-      this.queueEmptyAlarm.addAlarmAction(new cw_actions.SnsAction(topic));
-    }
 
     NagSuppressions.addResourceSuppressions(workerRole, [
       { id: 'AwsSolutions-IAM4', reason: 'Uses AWS managed policies for SSM' },

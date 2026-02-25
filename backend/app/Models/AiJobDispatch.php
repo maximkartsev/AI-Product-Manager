@@ -19,6 +19,13 @@ class AiJobDispatch extends CentralModel
         'lease_expires_at',
         'last_error',
         'duration_seconds',
+        'leased_at',
+        'last_leased_at',
+        'finished_at',
+        'processing_seconds',
+        'queue_wait_seconds',
+        'work_units',
+        'work_unit_kind',
     ];
 
     protected $casts = [
@@ -27,5 +34,11 @@ class AiJobDispatch extends CentralModel
         'attempts' => 'integer',
         'lease_expires_at' => 'datetime',
         'duration_seconds' => 'integer',
+        'leased_at' => 'datetime',
+        'last_leased_at' => 'datetime',
+        'finished_at' => 'datetime',
+        'processing_seconds' => 'integer',
+        'queue_wait_seconds' => 'integer',
+        'work_units' => 'float',
     ];
 }

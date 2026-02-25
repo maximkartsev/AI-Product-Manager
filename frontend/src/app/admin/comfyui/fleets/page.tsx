@@ -17,6 +17,7 @@ import {
   activateComfyUiFleetBundle,
   createComfyUiFleet,
   getComfyUiAssetBundles,
+  getEconomicsSettings,
   getComfyUiFleets,
   getComfyUiFleetTemplates,
   updateComfyUiFleet,
@@ -24,6 +25,7 @@ import {
   type ComfyUiFleetCreateRequest,
   type ComfyUiFleetTemplate,
   type ComfyUiGpuFleet,
+  type EconomicsSettings,
 } from "@/lib/api";
 
 type FleetFormState = {
@@ -37,24 +39,45 @@ type FleetFormState = {
 type InstanceTypeUiInfo = {
   readonly gpu: string;
   readonly vram: string;
-  /** Approximate on-demand price per hour (Linux), us-east-1. */
-  readonly approxUsdPerHourOnDemandUsEast1: number;
 };
 
 const INSTANCE_TYPE_UI_INFO: Record<string, InstanceTypeUiInfo> = {
-  "g4dn.xlarge": { gpu: "T4", vram: "16GB", approxUsdPerHourOnDemandUsEast1: 0.526 },
-  "g5.xlarge": { gpu: "A10G", vram: "24GB", approxUsdPerHourOnDemandUsEast1: 1.006 },
-  "g6e.2xlarge": { gpu: "L40S", vram: "48GB", approxUsdPerHourOnDemandUsEast1: 2.2421 },
-  "p5.48xlarge": { gpu: "8× H100", vram: "640GB", approxUsdPerHourOnDemandUsEast1: 55.04 },
+  "g4dn.xlarge": { gpu: "T4", vram: "16GB" },
+  "g5.xlarge": { gpu: "A10G", vram: "24GB" },
+  "g6e.2xlarge": { gpu: "L40S", vram: "48GB" },
+  "p5.48xlarge": { gpu: "8× H100", vram: "640GB" },
 };
 
-function formatInstanceTypeLabel(instanceType: string): string {
+function formatInstanceTypeLabel(instanceType: string, rate?: number | null): string {
   const info = INSTANCE_TYPE_UI_INFO[instanceType];
   if (!info) return instanceType;
-  const price = info.approxUsdPerHourOnDemandUsEast1;
-  const priceLabel = Number.isFinite(price) ? `~$${price.toFixed(price < 10 ? 2 : 0)}/hr` : undefined;
+  const normalizedRate = typeof rate === "number" && Number.isFinite(rate) ? rate : null;
+  const priceLabel = normalizedRate !== null
+    ? `~$${normalizedRate.toFixed(normalizedRate < 10 ? 2 : 0)}/hr`
+    : undefined;
   const parts = [info.gpu, `${info.vram} VRAM`, priceLabel].filter(Boolean);
   return `${instanceType} (${parts.join(", ")})`;
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  return `$${value.toFixed(2)}/hr`;
+}
+
+function formatSeconds(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  if (value < 60) return `${value}s`;
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.floor(value % 60);
+  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainderMinutes = minutes % 60;
+  return remainderMinutes > 0 ? `${hours}h ${remainderMinutes}m` : `${hours}h`;
 }
 
 export default function AdminComfyUiFleetsPage() {
@@ -71,6 +94,7 @@ export default function AdminComfyUiFleetsPage() {
   const [detailName, setDetailName] = useState("");
   const [detailTemplateSlug, setDetailTemplateSlug] = useState("");
   const [detailInstanceType, setDetailInstanceType] = useState("");
+  const [economicsSettings, setEconomicsSettings] = useState<EconomicsSettings | null>(null);
 
   useEffect(() => {
     getComfyUiAssetBundles({ perPage: 200 }).then((data) => setBundleOptions(data.items ?? [])).catch(() => {});
@@ -78,6 +102,10 @@ export default function AdminComfyUiFleetsPage() {
 
   useEffect(() => {
     getComfyUiFleetTemplates().then((data) => setFleetTemplates(data.items ?? [])).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    getEconomicsSettings().then(setEconomicsSettings).catch(() => {});
   }, []);
 
   const templatesBySlug = useMemo(() => {
@@ -263,13 +291,16 @@ export default function AdminComfyUiFleetsPage() {
               <SelectContent>
                 {instanceTypes.map((instanceType) => (
                   <SelectItem key={instanceType} value={instanceType}>
-                    {formatInstanceTypeLabel(instanceType)}
+                    {formatInstanceTypeLabel(
+                      instanceType,
+                      economicsSettings?.instance_type_rates?.[instanceType] ?? null,
+                    )}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Prices are approximate on-demand (Linux) in us-east-1. Spot pricing varies.
+              Pricing comes from Economics settings (on-demand, us-east-1). Spot pricing varies.
             </p>
           </div>
         );
@@ -358,9 +389,34 @@ export default function AdminComfyUiFleetsPage() {
         activeBundleParam: `/bp/${detailFleet.stage}/fleets/${detailFleet.slug}/active_bundle`,
         amiParam: detailFleet.ami_ssm_parameter || `/bp/ami/fleets/${detailFleet.stage}/${detailFleet.slug}`,
         asgName: `asg-${detailFleet.stage}-${detailFleet.slug}`,
+        onDemandAsgName: `asg-${detailFleet.stage}-${detailFleet.slug}-od`,
         logGroup: `/gpu-workers/${detailFleet.slug}`,
         refreshCommand: `aws autoscaling start-instance-refresh --auto-scaling-group-name "asg-${detailFleet.stage}-${detailFleet.slug}" --preferences '{"MinHealthyPercentage":90,"InstanceWarmup":300}'`,
       }
+    : null;
+
+  const capacityMetrics = detailFleet
+    ? (() => {
+        const instanceType = detailFleet.instance_types?.[0] || "";
+        const onDemandRate = instanceType
+          ? economicsSettings?.instance_type_rates?.[instanceType] ?? null
+          : null;
+        const utilization = detailFleet.utilization ?? null;
+        const effectiveOnDemand = utilization && onDemandRate
+          ? onDemandRate / utilization
+          : null;
+
+        return {
+          spotWorkers: detailFleet.spot_workers ?? 0,
+          onDemandWorkers: detailFleet.on_demand_workers ?? 0,
+          unknownWorkers: detailFleet.unknown_workers ?? 0,
+          utilization,
+          busySeconds: detailFleet.busy_seconds ?? null,
+          runningSeconds: detailFleet.running_seconds ?? null,
+          onDemandRate,
+          effectiveOnDemand,
+        };
+      })()
     : null;
 
   return (
@@ -460,13 +516,16 @@ export default function AdminComfyUiFleetsPage() {
                     <SelectContent>
                       {(templatesBySlug.get(detailTemplateSlug)?.allowed_instance_types ?? []).map((instanceType) => (
                         <SelectItem key={instanceType} value={instanceType}>
-                          {formatInstanceTypeLabel(instanceType)}
+                          {formatInstanceTypeLabel(
+                            instanceType,
+                            economicsSettings?.instance_type_rates?.[instanceType] ?? null,
+                          )}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Prices are approximate on-demand (Linux) in us-east-1. Spot pricing varies.
+                    Pricing comes from Economics settings (on-demand, us-east-1). Spot pricing varies.
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -492,6 +551,48 @@ export default function AdminComfyUiFleetsPage() {
                 </div>
               </div>
             </AdminDetailSection>
+
+            {capacityMetrics && (
+              <AdminDetailSection title="Live Capacity & Economics">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Spot Workers</label>
+                    <Input value={String(capacityMetrics.spotWorkers)} disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">On-demand Workers</label>
+                    <Input value={String(capacityMetrics.onDemandWorkers)} disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Unknown Workers</label>
+                    <Input value={String(capacityMetrics.unknownWorkers)} disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Utilization (24h)</label>
+                    <Input value={formatPercent(capacityMetrics.utilization)} disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Busy Time (24h)</label>
+                    <Input value={formatSeconds(capacityMetrics.busySeconds)} disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Running Time (24h)</label>
+                    <Input value={formatSeconds(capacityMetrics.runningSeconds)} disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">On-demand Rate</label>
+                    <Input value={formatCurrency(capacityMetrics.onDemandRate)} disabled />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold uppercase text-muted-foreground">Est. $/Busy Hr (On-demand)</label>
+                    <Input value={formatCurrency(capacityMetrics.effectiveOnDemand)} disabled />
+                  </div>
+                  <p className="text-xs text-muted-foreground md:col-span-2">
+                    Utilization and costs are derived from the last 24h of worker sessions. Spot pricing is not applied.
+                  </p>
+                </div>
+              </AdminDetailSection>
+            )}
 
             <AdminDetailSection title="Activate Bundle">
               <div className="grid gap-4 md:grid-cols-2">
@@ -536,6 +637,10 @@ export default function AdminComfyUiFleetsPage() {
                   <div>
                     <p className="text-xs uppercase text-muted-foreground">ASG Name</p>
                     <Input value={derivedOps.asgName} disabled />
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground">On-demand ASG Name</p>
+                    <Input value={derivedOps.onDemandAsgName} disabled />
                   </div>
                   <div>
                     <p className="text-xs uppercase text-muted-foreground">Log Group</p>

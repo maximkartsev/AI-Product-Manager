@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\ComfyUiWorker;
+use App\Models\ComfyUiWorkerSession;
 use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
@@ -41,6 +42,8 @@ class ComfyUiWorkerController extends BaseController
             'max_concurrency' => 'integer|nullable|min:1',
             'fleet_slug' => 'required|string|max:128',
             'stage' => 'string|nullable|in:staging,production',
+            'capacity_type' => 'string|nullable|in:spot,on-demand',
+            'instance_type' => 'string|nullable|max:64',
         ]);
 
         if ($validator->fails()) {
@@ -131,9 +134,26 @@ class ComfyUiWorkerController extends BaseController
             'is_approved' => true,
             'last_ip' => $request->ip(),
             'registration_source' => 'fleet',
+            'capacity_type' => $request->input('capacity_type'),
         ]);
 
         $worker->workflows()->sync($workflowIds);
+
+        try {
+            ComfyUiWorkerSession::query()->create([
+                'worker_id' => $worker->id,
+                'worker_identifier' => $worker->worker_id,
+                'fleet_slug' => $fleetSlug,
+                'stage' => $stage,
+                'instance_type' => $request->input('instance_type'),
+                'lifecycle' => $worker->capacity_type,
+                'started_at' => now(),
+                'busy_seconds' => 0,
+                'running_seconds' => 0,
+            ]);
+        } catch (\Throwable $e) {
+            // non-blocking
+        }
 
         try {
             app(WorkerAuditService::class)->log(
@@ -142,7 +162,12 @@ class ComfyUiWorkerController extends BaseController
                 $worker->worker_id,
                 null,
                 $request->ip(),
-                ['registration_source' => 'fleet', 'fleet_slug' => $fleetSlug, 'stage' => $stage]
+                [
+                    'registration_source' => 'fleet',
+                    'fleet_slug' => $fleetSlug,
+                    'stage' => $stage,
+                    'capacity_type' => $worker->capacity_type,
+                ]
             );
         } catch (\Throwable $e) {
             // non-blocking
@@ -163,6 +188,7 @@ class ComfyUiWorkerController extends BaseController
     public function deregister(Request $request): JsonResponse
     {
         $worker = $request->attributes->get('authenticated_worker');
+        $reason = $request->input('reason');
 
         try {
             app(WorkerAuditService::class)->log(
@@ -170,11 +196,14 @@ class ComfyUiWorkerController extends BaseController
                 $worker->id,
                 $worker->worker_id,
                 null,
-                $request->ip()
+                $request->ip(),
+                $reason ? ['reason' => $reason] : null
             );
         } catch (\Throwable $e) {
             // non-blocking
         }
+
+        $this->closeWorkerSession($worker?->worker_id);
 
         $worker->workflows()->detach();
         $worker->delete();
@@ -601,6 +630,12 @@ class ComfyUiWorkerController extends BaseController
             $dispatch->lease_token = Str::uuid()->toString();
             $dispatch->lease_expires_at = $now->copy()->addSeconds($leaseTtlSeconds);
             $dispatch->attempts = (int) $dispatch->attempts + 1;
+            $isFirstLease = $dispatch->leased_at === null;
+            $dispatch->leased_at = $dispatch->leased_at ?? $now;
+            $dispatch->last_leased_at = $now;
+            if ($isFirstLease && $dispatch->created_at) {
+                $dispatch->queue_wait_seconds = $dispatch->created_at->diffInSeconds($now);
+            }
             $dispatch->save();
 
             return $dispatch;
@@ -782,29 +817,95 @@ class ComfyUiWorkerController extends BaseController
 
     private function markDispatchCompleted(AiJobDispatch $dispatch, ?string $workerId): void
     {
+        $now = now();
         $dispatch->status = 'completed';
         $dispatch->worker_id = $workerId ?? $dispatch->worker_id;
         $dispatch->lease_expires_at = null;
+        $dispatch->finished_at = $now;
 
-        // Compute duration from audit log poll event
-        $pollTime = \App\Models\WorkerAuditLog::query()
-            ->where('dispatch_id', $dispatch->id)
-            ->where('event', 'poll')
-            ->min('created_at');
-        if ($pollTime) {
-            $dispatch->duration_seconds = (int) abs(now()->diffInSeconds(\Carbon\Carbon::parse($pollTime)));
+        $lastLeaseAt = $dispatch->last_leased_at ?? $dispatch->leased_at;
+        if ($lastLeaseAt) {
+            $dispatch->processing_seconds = $now->diffInSeconds($lastLeaseAt);
+            $dispatch->duration_seconds = $dispatch->processing_seconds;
+        }
+        if ($dispatch->queue_wait_seconds === null && $dispatch->leased_at && $dispatch->created_at) {
+            $dispatch->queue_wait_seconds = $dispatch->created_at->diffInSeconds($dispatch->leased_at);
         }
 
         $dispatch->save();
+        $this->incrementWorkerBusySeconds($dispatch->worker_id, $dispatch->processing_seconds);
     }
 
     private function markDispatchFailed(AiJobDispatch $dispatch, string $error, ?string $workerId = null): void
     {
+        $now = now();
         $dispatch->status = 'failed';
         $dispatch->worker_id = $workerId ?? $dispatch->worker_id;
         $dispatch->last_error = $error;
         $dispatch->lease_expires_at = null;
+        $dispatch->finished_at = $now;
+
+        $lastLeaseAt = $dispatch->last_leased_at ?? $dispatch->leased_at;
+        if ($lastLeaseAt) {
+            $dispatch->processing_seconds = $now->diffInSeconds($lastLeaseAt);
+            $dispatch->duration_seconds = $dispatch->processing_seconds;
+        }
+        if ($dispatch->queue_wait_seconds === null && $dispatch->leased_at && $dispatch->created_at) {
+            $dispatch->queue_wait_seconds = $dispatch->created_at->diffInSeconds($dispatch->leased_at);
+        }
         $dispatch->save();
+        $this->incrementWorkerBusySeconds($dispatch->worker_id, $dispatch->processing_seconds);
+    }
+
+    private function incrementWorkerBusySeconds(?string $workerIdentifier, ?int $seconds): void
+    {
+        if (!$workerIdentifier || !$seconds || $seconds <= 0) {
+            return;
+        }
+
+        $session = ComfyUiWorkerSession::query()
+            ->where('worker_identifier', $workerIdentifier)
+            ->whereNull('ended_at')
+            ->orderByDesc('started_at')
+            ->first();
+        if (!$session) {
+            return;
+        }
+
+        $session->busy_seconds = (int) $session->busy_seconds + $seconds;
+        if ($session->started_at) {
+            $session->running_seconds = now()->diffInSeconds($session->started_at);
+            if ($session->running_seconds > 0) {
+                $session->utilization = round($session->busy_seconds / $session->running_seconds, 4);
+            }
+        }
+        $session->save();
+    }
+
+    private function closeWorkerSession(?string $workerIdentifier): void
+    {
+        if (!$workerIdentifier) {
+            return;
+        }
+
+        $session = ComfyUiWorkerSession::query()
+            ->where('worker_identifier', $workerIdentifier)
+            ->whereNull('ended_at')
+            ->orderByDesc('started_at')
+            ->first();
+        if (!$session) {
+            return;
+        }
+
+        $endedAt = now();
+        $session->ended_at = $endedAt;
+        if ($session->started_at) {
+            $session->running_seconds = $endedAt->diffInSeconds($session->started_at);
+            if ($session->running_seconds > 0) {
+                $session->utilization = round($session->busy_seconds / $session->running_seconds, 4);
+            }
+        }
+        $session->save();
     }
 
     private function withTenant(string $tenantId, \Closure $callback)

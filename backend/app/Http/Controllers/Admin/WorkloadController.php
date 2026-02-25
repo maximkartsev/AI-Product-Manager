@@ -40,6 +40,7 @@ class WorkloadController extends BaseController
                 'workflow_id',
                 DB::raw("SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) as queued"),
                 DB::raw("SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END) as processing"),
+                DB::raw("SUM(CASE WHEN status IN ('queued', 'leased') THEN COALESCE(work_units, 1) ELSE 0 END) as queue_units"),
             )
             ->whereIn('status', ['queued', 'leased'])
             ->groupBy('workflow_id')
@@ -61,6 +62,23 @@ class WorkloadController extends BaseController
             ->get()
             ->keyBy('workflow_id');
 
+        $dispatchSamples = AiJobDispatch::query()
+            ->select('workflow_id', 'queue_wait_seconds', 'processing_seconds', 'duration_seconds', 'work_units')
+            ->where('status', 'completed')
+            ->where('updated_at', '>=', $periodStart)
+            ->get()
+            ->groupBy('workflow_id');
+
+        $activeWorkerStats = DB::connection('central')
+            ->table('comfy_ui_workers as w')
+            ->join('worker_workflows as ww', 'w.id', '=', 'ww.worker_id')
+            ->where('w.is_approved', true)
+            ->where('w.last_seen_at', '>=', now()->subMinutes(5))
+            ->selectRaw('ww.workflow_id, COUNT(DISTINCT w.id) as active_workers')
+            ->groupBy('ww.workflow_id')
+            ->get()
+            ->keyBy('workflow_id');
+
         // Get worker assignments per workflow
         $workflowWorkerMap = DB::table('worker_workflows')
             ->select('workflow_id', 'worker_id')
@@ -68,9 +86,68 @@ class WorkloadController extends BaseController
             ->groupBy('workflow_id')
             ->map(fn ($rows) => $rows->pluck('worker_id')->toArray());
 
-        $workflowsData = $workflows->map(function ($workflow) use ($currentStats, $periodStats, $workflowWorkerMap) {
+        $workflowsData = $workflows->map(function ($workflow) use ($currentStats, $periodStats, $workflowWorkerMap, $dispatchSamples, $activeWorkerStats) {
             $current = $currentStats->get($workflow->id);
             $period = $periodStats->get($workflow->id);
+            $samples = $dispatchSamples->get($workflow->id, collect());
+            $activeWorkers = (int) ($activeWorkerStats->get($workflow->id)->active_workers ?? 0);
+
+            $queueWaits = $samples
+                ->pluck('queue_wait_seconds')
+                ->filter(fn ($value) => $value !== null)
+                ->map(fn ($value) => (float) $value)
+                ->values()
+                ->all();
+            $p95QueueWait = $this->percentile($queueWaits, 0.95);
+
+            $processingRatios = $samples
+                ->map(function ($row) {
+                    $units = (float) ($row->work_units ?? 0);
+                    $seconds = (float) ($row->processing_seconds ?? $row->duration_seconds ?? 0);
+                    if ($units <= 0 || $seconds <= 0) {
+                        return null;
+                    }
+                    return $seconds / $units;
+                })
+                ->filter()
+                ->values()
+                ->all();
+            $p95ProcessingPerUnit = $this->percentile($processingRatios, 0.95);
+
+            $queueUnits = (float) ($current?->queue_units ?? 0);
+            $estimatedWaitSeconds = null;
+            if ($p95ProcessingPerUnit !== null) {
+                $estimatedWaitSeconds = $activeWorkers > 0
+                    ? ($queueUnits / $activeWorkers) * $p95ProcessingPerUnit
+                    : $queueUnits * $p95ProcessingPerUnit;
+            }
+
+            $workloadKind = $workflow->workload_kind;
+            if (!in_array($workloadKind, ['image', 'video'], true)) {
+                $mimeType = strtolower((string) ($workflow->output_mime_type ?? ''));
+                $workloadKind = str_starts_with($mimeType, 'video/') ? 'video' : 'image';
+            }
+
+            $sloPressure = null;
+            if ($workloadKind === 'video') {
+                $sloVideo = (float) ($workflow->slo_video_seconds_per_processing_second_p95 ?? 0);
+                if ($sloVideo > 0 && $p95ProcessingPerUnit !== null) {
+                    $sloPressure = round($p95ProcessingPerUnit * $sloVideo, 4);
+                }
+            } else {
+                $sloWait = (float) ($workflow->slo_p95_wait_seconds ?? 0);
+                if ($sloWait > 0 && $estimatedWaitSeconds !== null) {
+                    $sloPressure = round($estimatedWaitSeconds / $sloWait, 4);
+                }
+            }
+
+            $recommendedWorkers = null;
+            if ($workloadKind === 'image') {
+                $sloWait = (float) ($workflow->slo_p95_wait_seconds ?? 0);
+                if ($sloWait > 0 && $p95ProcessingPerUnit !== null) {
+                    $recommendedWorkers = (int) ceil(($queueUnits * $p95ProcessingPerUnit) / $sloWait);
+                }
+            }
 
             return [
                 'id' => $workflow->id,
@@ -80,10 +157,21 @@ class WorkloadController extends BaseController
                 'stats' => [
                     'queued' => (int) ($current?->queued ?? 0),
                     'processing' => (int) ($current?->processing ?? 0),
+                    'queue_units' => $queueUnits,
+                    'active_workers' => $activeWorkers,
                     'completed' => (int) ($period?->completed ?? 0),
                     'failed' => (int) ($period?->failed ?? 0),
                     'avg_duration_seconds' => $period?->avg_duration_seconds !== null ? (int) round($period->avg_duration_seconds) : null,
                     'total_duration_seconds' => $period?->total_duration_seconds ? (int) $period->total_duration_seconds : null,
+                    'p95_queue_wait_seconds' => $p95QueueWait !== null ? (int) round($p95QueueWait) : null,
+                    'processing_seconds_per_unit_p95' => $p95ProcessingPerUnit !== null ? round($p95ProcessingPerUnit, 4) : null,
+                    'estimated_wait_seconds_p95' => $estimatedWaitSeconds !== null ? round($estimatedWaitSeconds, 2) : null,
+                    'slo_pressure' => $sloPressure,
+                    'slo_p95_wait_seconds' => $workflow->slo_p95_wait_seconds,
+                    'slo_video_seconds_per_processing_second_p95' => $workflow->slo_video_seconds_per_processing_second_p95,
+                    'workload_kind' => $workloadKind,
+                    'work_units_property_key' => $workflow->work_units_property_key,
+                    'recommended_workers' => $recommendedWorkers,
                 ],
                 'worker_ids' => $workflowWorkerMap->get($workflow->id, []),
             ];
@@ -123,5 +211,16 @@ class WorkloadController extends BaseController
             'workflow_id' => $workflow->id,
             'worker_ids' => $workflow->workers()->pluck('comfy_ui_workers.id')->toArray(),
         ], 'Workers assigned');
+    }
+
+    private function percentile(array $values, float $percentile): ?float
+    {
+        if (empty($values)) {
+            return null;
+        }
+        sort($values);
+        $index = (int) floor(count($values) * $percentile);
+        $index = min($index, count($values) - 1);
+        return (float) $values[$index];
     }
 }

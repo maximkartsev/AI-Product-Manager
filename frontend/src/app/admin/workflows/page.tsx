@@ -178,6 +178,10 @@ const initialFormState: Record<string, string> = {
   output_node_id: "",
   output_extension: "mp4",
   output_mime_type: "video/mp4",
+  workload_kind: "image",
+  work_units_property_key: "",
+  slo_p95_wait_seconds: "",
+  slo_video_seconds_per_processing_second_p95: "",
   properties: "[]",
   staging_fleet_id: "",
   production_fleet_id: "",
@@ -424,6 +428,69 @@ export default function AdminWorkflowsPage() {
     { key: "output_extension", label: "Output Extension", type: "text", placeholder: "mp4" },
     { key: "output_mime_type", label: "Output MIME Type", type: "text", placeholder: "video/mp4" },
     {
+      key: "workload_kind",
+      label: "Workload Kind",
+      section: "Autoscaling",
+      render: ({ value, onChange }) => (
+        <Select
+          value={value || "__none__"}
+          onValueChange={(nextValue) => onChange(nextValue === "__none__" ? "" : nextValue)}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select workload kind" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Unassigned</SelectItem>
+            <SelectItem value="image">Image</SelectItem>
+            <SelectItem value="video">Video</SelectItem>
+          </SelectContent>
+        </Select>
+      ),
+    },
+    {
+      key: "work_units_property_key",
+      label: "Work Units Property Key",
+      type: "text",
+      placeholder: "duration",
+      section: "Autoscaling",
+    },
+    {
+      key: "slo_p95_wait_seconds",
+      label: "SLO p95 Wait Seconds",
+      type: "text",
+      placeholder: "45",
+      section: "Autoscaling",
+      render: ({ value, onChange }) => (
+        <Input
+          id="slo_p95_wait_seconds"
+          type="number"
+          min={0}
+          step="1"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="45"
+        />
+      ),
+    },
+    {
+      key: "slo_video_seconds_per_processing_second_p95",
+      label: "SLO Video Seconds Per Processing Second p95",
+      type: "text",
+      placeholder: "0.35",
+      section: "Autoscaling",
+      render: ({ value, onChange }) => (
+        <Input
+          id="slo_video_seconds_per_processing_second_p95"
+          type="number"
+          min={0}
+          step="0.01"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="0.35"
+        />
+      ),
+    },
+    {
       key: "properties",
       label: "Properties",
       section: "Properties",
@@ -491,6 +558,12 @@ export default function AdminWorkflowsPage() {
       const v = String(formState[key] || "").trim();
       return v || null;
     };
+    const numberOrNull = (key: string) => {
+      const raw = String(formState[key] ?? "").trim();
+      if (!raw) return null;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
+    };
     const toOptionalId = (key: string) => {
       const raw = String(formState[key] || "").trim();
       if (!raw) return null;
@@ -517,6 +590,10 @@ export default function AdminWorkflowsPage() {
       output_node_id: str("output_node_id"),
       output_extension: str("output_extension"),
       output_mime_type: str("output_mime_type"),
+      workload_kind: str("workload_kind"),
+      work_units_property_key: str("work_units_property_key"),
+      slo_p95_wait_seconds: numberOrNull("slo_p95_wait_seconds"),
+      slo_video_seconds_per_processing_second_p95: numberOrNull("slo_video_seconds_per_processing_second_p95"),
       properties,
       staging_fleet_id: toOptionalId("staging_fleet_id"),
       production_fleet_id: toOptionalId("production_fleet_id"),

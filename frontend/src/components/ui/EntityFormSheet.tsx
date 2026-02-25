@@ -7,7 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import type { z } from "zod";
 import type { DataTableFormField } from "@/components/ui/DataTable";
@@ -165,11 +166,14 @@ export function EntityFormSheet<TCreate, TUpdate>({
           </SheetHeader>
 
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
-            <fieldset disabled={isSaving} className="grid gap-4 md:grid-cols-2">
-              {formFields.map((field) => {
+            <TooltipProvider delayDuration={150}>
+              <fieldset disabled={isSaving} className="grid gap-4 md:grid-cols-2">
+                {formFields.map((field, index) => {
                 const isFullWidth = field.type === "textarea" || field.fullWidth;
                 const isCheckbox = field.type === "checkbox";
                 const hasError = !!fieldErrors[field.key];
+                const prevSection = index > 0 ? formFields[index - 1]?.section : undefined;
+                const showSectionHeader = Boolean(field.section) && field.section !== prevSection;
 
                 const updateField = (key: string, value: string) => {
                   setFormState((prev) => ({ ...prev, [key]: value }));
@@ -191,7 +195,7 @@ export function EntityFormSheet<TCreate, TUpdate>({
 
                 return (
                   <React.Fragment key={field.key}>
-                    {field.section && (
+                    {showSectionHeader && field.section && (
                       <div className="md:col-span-2 pt-4 first:pt-0">
                         <h3 className="text-sm font-semibold text-foreground border-b border-border pb-2">
                           {field.section}
@@ -233,10 +237,28 @@ export function EntityFormSheet<TCreate, TUpdate>({
                       </div>
                     ) : (
                       <div className={`space-y-2 text-sm text-muted-foreground ${isFullWidth ? "md:col-span-2" : ""}`}>
-                        <label htmlFor={field.key}>
-                          {field.label}
-                          {field.required && <span className="text-red-400 ml-0.5">*</span>}
-                        </label>
+                        <div className="flex items-center gap-2">
+                          <label htmlFor={field.key}>
+                            {field.label}
+                            {field.required && <span className="text-red-400 ml-0.5">*</span>}
+                          </label>
+                          {field.helpText ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                  aria-label={`${field.label} help`}
+                                >
+                                  <Info className="h-3 w-3" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" align="start">
+                                {field.helpText}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : null}
+                        </div>
 
                         {field.render ? (
                           field.render({
@@ -319,8 +341,9 @@ export function EntityFormSheet<TCreate, TUpdate>({
                     )}
                   </React.Fragment>
                 );
-              })}
-            </fieldset>
+                })}
+              </fieldset>
+            </TooltipProvider>
 
             {formError && <p className="text-sm text-red-400">{formError}</p>}
 

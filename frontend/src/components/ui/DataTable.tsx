@@ -29,6 +29,7 @@ import type { UseDataTableReturn } from "@/hooks/useDataTable";
 export type DataTableFormField = {
   key: string;
   label: string;
+  helpText?: string;
   type?: "text" | "textarea" | "number" | "email" | "date" | "datetime-local" | "select" | "checkbox";
   required?: boolean;
   placeholder?: string;

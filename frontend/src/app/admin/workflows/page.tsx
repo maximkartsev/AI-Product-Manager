@@ -178,7 +178,7 @@ const initialFormState: Record<string, string> = {
   output_node_id: "",
   output_extension: "mp4",
   output_mime_type: "video/mp4",
-  workload_kind: "image",
+  workload_kind: "",
   work_units_property_key: "",
   slo_p95_wait_seconds: "",
   slo_video_seconds_per_processing_second_p95: "",
@@ -407,6 +407,7 @@ export default function AdminWorkflowsPage() {
       key: "comfyui_workflow_path",
       label: "ComfyUI Workflow JSON",
       section: "Workflow JSON",
+      fullWidth: true,
       render: ({ value, onChange }) => (
         <UploadField
           kind="workflow_json"
@@ -431,6 +432,11 @@ export default function AdminWorkflowsPage() {
       key: "workload_kind",
       label: "Workload Kind",
       section: "Autoscaling",
+      helpText:
+        "Controls which autoscaling math is used for this workflow.\n\n" +
+        "- image: jobs count as 1 unit each; scaling focuses on estimated wait time vs SLO.\n" +
+        "- video: jobs scale by work units (e.g. video seconds); scaling focuses on throughput vs SLO.\n\n" +
+        "If left Unassigned, the backend infers it from output MIME type (video/* → video, otherwise image). Set explicitly when possible for stability.",
       render: ({ value, onChange }) => (
         <Select
           value={value || "__none__"}
@@ -453,6 +459,12 @@ export default function AdminWorkflowsPage() {
       type: "text",
       placeholder: "duration",
       section: "Autoscaling",
+      helpText:
+        "Used for video workflows to compute work_units (the \"size\" of a job).\n\n" +
+        "Set this to a property key from the Properties section that resolves to a positive number.\n" +
+        "Typical choice: the requested video duration in seconds.\n\n" +
+        "Examples: duration, seconds, video_seconds, clip_duration.\n\n" +
+        "If missing/invalid/non-numeric, the system falls back to 1 unit.",
     },
     {
       key: "slo_p95_wait_seconds",
@@ -460,6 +472,11 @@ export default function AdminWorkflowsPage() {
       type: "text",
       placeholder: "45",
       section: "Autoscaling",
+      helpText:
+        "Image workflows only.\n\n" +
+        "Target p95 estimated wait time (seconds). Autoscaling pressure is:\n" +
+        "pressure = estimated_wait_seconds_p95 / slo_p95_wait_seconds\n\n" +
+        "Lower values scale more aggressively to keep queues short. Leave blank/0 to disable SLO pressure for images.",
       render: ({ value, onChange }) => (
         <Input
           id="slo_p95_wait_seconds"
@@ -478,6 +495,16 @@ export default function AdminWorkflowsPage() {
       type: "text",
       placeholder: "0.35",
       section: "Autoscaling",
+      helpText:
+        "Video workflows only.\n\n" +
+        "Target throughput at p95: how many video seconds should be produced per 1 processing second.\n" +
+        "Autoscaling pressure is computed as:\n" +
+        "pressure = processing_seconds_per_unit_p95 × slo_video_seconds_per_processing_second_p95\n\n" +
+        "Examples:\n" +
+        "- 1.0  ≈ realtime target (1s video per 1s processing)\n" +
+        "- 0.5  ≈ allow ~2× slower than realtime\n" +
+        "- 0.25 ≈ allow ~4× slower than realtime\n\n" +
+        "Leave blank/0 to disable SLO pressure for videos.",
       render: ({ value, onChange }) => (
         <Input
           id="slo_video_seconds_per_processing_second_p95"
@@ -558,6 +585,10 @@ export default function AdminWorkflowsPage() {
       const v = String(formState[key] || "").trim();
       return v || null;
     };
+    const workloadKindOrNull = (): "image" | "video" | null => {
+      const v = str("workload_kind");
+      return v === "image" || v === "video" ? v : null;
+    };
     const numberOrNull = (key: string) => {
       const raw = String(formState[key] ?? "").trim();
       if (!raw) return null;
@@ -590,7 +621,7 @@ export default function AdminWorkflowsPage() {
       output_node_id: str("output_node_id"),
       output_extension: str("output_extension"),
       output_mime_type: str("output_mime_type"),
-      workload_kind: str("workload_kind"),
+      workload_kind: workloadKindOrNull(),
       work_units_property_key: str("work_units_property_key"),
       slo_p95_wait_seconds: numberOrNull("slo_p95_wait_seconds"),
       slo_video_seconds_per_processing_second_p95: numberOrNull("slo_video_seconds_per_processing_second_p95"),

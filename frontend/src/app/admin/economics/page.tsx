@@ -350,9 +350,12 @@ export default function AdminEconomicsPage() {
     const hasMissingCompute = computeCosts.some((value) => value === null);
     const computeCostUsdTotal = hasMissingCompute
       ? null
-      : computeCosts.reduce((sum, value) => sum + (value ?? 0), 0);
-    const partnerCostUsdTotal = unitData.byEffect.reduce((sum, effect) => sum + (partnerCostUsd(effect) ?? 0), 0);
-    const revenueUsdTotal = unitData.byEffect.reduce((sum, effect) => sum + (revenueUsd(effect) ?? 0), 0);
+      : computeCosts.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+    const partnerCostUsdTotal = unitData.byEffect.reduce<number>(
+      (sum, effect) => sum + (partnerCostUsd(effect) ?? 0),
+      0,
+    );
+    const revenueUsdTotal = unitData.byEffect.reduce<number>((sum, effect) => sum + (revenueUsd(effect) ?? 0), 0);
     const marginUsdTotal =
       computeCostUsdTotal !== null ? revenueUsdTotal - computeCostUsdTotal - partnerCostUsdTotal : null;
 

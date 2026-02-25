@@ -237,8 +237,8 @@ export function EntityFormSheet<TCreate, TUpdate>({
                       </div>
                     ) : (
                       <div className={`space-y-2 text-sm text-muted-foreground ${isFullWidth ? "md:col-span-2" : ""}`}>
-                        <div className="flex items-center gap-2">
-                          <label htmlFor={field.key}>
+                        <div className="flex items-center gap-2 md:min-h-9">
+                          <label htmlFor={field.key} className="min-w-0 inline leading-tight">
                             {field.label}
                             {field.required && <span className="text-red-400 ml-0.5">*</span>}
                           </label>
@@ -247,7 +247,7 @@ export function EntityFormSheet<TCreate, TUpdate>({
                               <TooltipTrigger asChild>
                                 <button
                                   type="button"
-                                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                   aria-label={`${field.label} help`}
                                 >
                                   <Info className="h-3 w-3" />

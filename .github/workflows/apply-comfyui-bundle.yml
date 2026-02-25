@@ -170,17 +170,24 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --comment "Apply ComfyUI asset bundle" \
             --parameters "${PARAMS}" \
+            --timeout-seconds 21600 \
             --query "Command.CommandId" --output text)
           echo "command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
           echo "SSM command ID: $COMMAND_ID"
 
       - name: Wait for command completion
+        shell: bash
         run: |
+          # Default AWS CLI waiter is ~100 seconds which is too short for large bundles (60GB+).
+          # GitHub-hosted runner max runtime is 6 hours, so we wait up to ~6 hours.
           aws ssm wait command-executed \
             --command-id "${{ steps.send.outputs.command_id }}" \
-            --instance-id "${{ inputs.instance_id }}"
+            --instance-id "${{ inputs.instance_id }}" \
+            --delay 15 \
+            --max-attempts 1440
 
       - name: Fetch command output
+        if: always()
         run: |
           aws ssm get-command-invocation \
             --command-id "${{ steps.send.outputs.command_id }}" \
@@ -189,7 +196,7 @@ jobs:
           cat command-output.json
 
       - name: Upload command output (optional)
-        if: inputs.logs_bucket != ''
+        if: always() && inputs.logs_bucket != ''
         run: |
           BUNDLE_ID=$(basename "$BUNDLE_PREFIX")
           LOG_KEY="asset-sync/${{ inputs.fleet_slug }}/${BUNDLE_ID}/$(date -u +%Y%m%dT%H%M%SZ)-${{ inputs.instance_id }}.json"

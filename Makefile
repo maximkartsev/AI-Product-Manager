@@ -82,14 +82,16 @@ build-containers:
 create-minio-bucket:
 	@echo "🪣 Ensuring MinIO bucket exists..."
 	@cd $(LARADOCK_DIR) && \
-	BUCKET=$$(grep -E '^AWS_BUCKET=' ../backend/.env 2>/dev/null | head -n1 | cut -d= -f2); \
+	BUCKET=$$(grep -E '^AWS_BUCKET=' ../backend/.env 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '\r'); \
 	if [ -z "$$BUCKET" ]; then BUCKET=bp-media; fi; \
-	MINIO_USER=$$(grep -E '^MINIO_ROOT_USER=' .env 2>/dev/null | head -n1 | cut -d= -f2); \
-	MINIO_PASS=$$(grep -E '^MINIO_ROOT_PASSWORD=' .env 2>/dev/null | head -n1 | cut -d= -f2); \
+	MINIO_USER=$$(grep -E '^MINIO_ROOT_USER=' .env 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '\r'); \
+	MINIO_PASS=$$(grep -E '^MINIO_ROOT_PASSWORD=' .env 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '\r'); \
 	if [ -z "$$MINIO_USER" ]; then MINIO_USER=laradock; fi; \
 	if [ -z "$$MINIO_PASS" ]; then MINIO_PASS=laradock; fi; \
 	for i in 1 2 3 4 5; do \
-		if docker run --rm --network $(COMPOSE_PROJECT_NAME)_backend minio/mc sh -c "mc alias set local http://minio:9000 $$MINIO_USER $$MINIO_PASS >/dev/null 2>&1 && mc mb --ignore-existing local/$$BUCKET"; then \
+		if docker run --rm --network $(COMPOSE_PROJECT_NAME)_backend \
+			-e "MC_HOST_local=http://$$MINIO_USER:$$MINIO_PASS@minio:9000" \
+			minio/mc mb --ignore-existing local/$$BUCKET >/dev/null 2>&1; then \
 			echo "✅ MinIO bucket ready: $$BUCKET"; \
 			exit 0; \
 		fi; \

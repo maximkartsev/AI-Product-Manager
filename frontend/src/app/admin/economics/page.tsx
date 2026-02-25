@@ -326,18 +326,18 @@ export default function AdminEconomicsPage() {
     }
     const computeCosts = unitData.byEffect.map((effect) => computeCostUsd(effect));
     const hasMissingCompute = computeCosts.some((value) => value === null);
-    const computeCostUsd = hasMissingCompute
+    const computeCostUsdTotal = hasMissingCompute
       ? null
       : computeCosts.reduce((sum, value) => sum + (value ?? 0), 0);
-    const partnerCostUsd = unitData.byEffect.reduce((sum, effect) => sum + (partnerCostUsd(effect) ?? 0), 0);
+    const partnerCostUsdTotal = unitData.byEffect.reduce((sum, effect) => sum + (partnerCostUsd(effect) ?? 0), 0);
     const revenueUsdTotal = unitData.byEffect.reduce((sum, effect) => sum + (revenueUsd(effect) ?? 0), 0);
-    const marginUsd = computeCostUsd !== null ? revenueUsdTotal - computeCostUsd - partnerCostUsd : null;
+    const marginUsdTotal = computeCostUsdTotal !== null ? revenueUsdTotal - computeCostUsdTotal - partnerCostUsdTotal : null;
 
     return {
       totalTokens: unitData.totals.totalTokens,
-      computeCostUsd,
-      partnerCostUsd: partnerCostUsd > 0 ? partnerCostUsd : null,
-      marginUsd,
+      computeCostUsd: computeCostUsdTotal,
+      partnerCostUsd: partnerCostUsdTotal > 0 ? partnerCostUsdTotal : null,
+      marginUsd: marginUsdTotal,
     };
   }, [unitData, settingsSummary, computeCostUsd, partnerCostUsd, revenueUsd]);
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { format, subDays } from "date-fns";
-import { CalendarDays, Coins, DollarSign, Loader2, Settings2 } from "lucide-react";
+import { Coins, DollarSign, Info, Loader2, Settings2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,6 +77,19 @@ function buildRateRows(settings: EconomicsSettings | null): RateRow[] {
     instanceType,
     rate: String(rate),
   }));
+}
+
+function InfoIconButton({ title, ariaLabel }: { title: string; ariaLabel: string }) {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      title={title}
+      aria-label={ariaLabel}
+    >
+      <Info className="h-3 w-3" />
+    </button>
+  );
 }
 
 export default function AdminEconomicsPage() {
@@ -326,18 +339,18 @@ export default function AdminEconomicsPage() {
     }
     const computeCosts = unitData.byEffect.map((effect) => computeCostUsd(effect));
     const hasMissingCompute = computeCosts.some((value) => value === null);
-    const computeCostUsdTotal = hasMissingCompute
+    const computeCostUsd = hasMissingCompute
       ? null
       : computeCosts.reduce((sum, value) => sum + (value ?? 0), 0);
-    const partnerCostUsdTotal = unitData.byEffect.reduce((sum, effect) => sum + (partnerCostUsd(effect) ?? 0), 0);
+    const partnerCostUsd = unitData.byEffect.reduce((sum, effect) => sum + (partnerCostUsd(effect) ?? 0), 0);
     const revenueUsdTotal = unitData.byEffect.reduce((sum, effect) => sum + (revenueUsd(effect) ?? 0), 0);
-    const marginUsdTotal = computeCostUsdTotal !== null ? revenueUsdTotal - computeCostUsdTotal - partnerCostUsdTotal : null;
+    const marginUsd = computeCostUsd !== null ? revenueUsdTotal - computeCostUsd - partnerCostUsd : null;
 
     return {
       totalTokens: unitData.totals.totalTokens,
-      computeCostUsd: computeCostUsdTotal,
-      partnerCostUsd: partnerCostUsdTotal > 0 ? partnerCostUsdTotal : null,
-      marginUsd: marginUsdTotal,
+      computeCostUsd,
+      partnerCostUsd: partnerCostUsd > 0 ? partnerCostUsd : null,
+      marginUsd,
     };
   }, [unitData, settingsSummary, computeCostUsd, partnerCostUsd, revenueUsd]);
 
@@ -372,7 +385,17 @@ export default function AdminEconomicsPage() {
 
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Token USD Rate</label>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-muted-foreground">Token USD Rate</label>
+                <InfoIconButton
+                  ariaLabel="Token USD rate info"
+                  title={
+                    "Converts tokens to USD for unit economics.\n" +
+                    "Revenue (USD) = tokens × token_usd_rate.\n" +
+                    "This does not change billing/charging logic—it's used for analytics."
+                  }
+                />
+              </div>
               <Input value={tokenRate} onChange={(e) => setTokenRate(e.target.value)} />
             </div>
             <div className="space-y-1">
@@ -466,7 +489,21 @@ export default function AdminEconomicsPage() {
                 <TableRow>
                   <TableHead>Workflow</TableHead>
                   <TableHead>Workload</TableHead>
-                  <TableHead className="text-right">Partner Cost / Unit (USD)</TableHead>
+                  <TableHead className="text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <span>Partner Cost / Unit (USD)</span>
+                      <InfoIconButton
+                        ariaLabel="Partner cost per unit info"
+                        title={
+                          "Cost charged by a remote partner per work unit.\n" +
+                          "Unit = work_units.\n" +
+                          "Images: 1 unit per job.\n" +
+                          "Videos: video seconds (or the workflow's configured units).\n" +
+                          "Partner cost (USD) = cost_per_unit × total_units."
+                        }
+                      />
+                    </div>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

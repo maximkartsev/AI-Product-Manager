@@ -1261,38 +1261,7 @@ export function getAdminUserTokens(
   return apiGet<AdminTokenData>(`/admin/users/${userId}/tokens`, query);
 }
 
-// ---- Admin Analytics
-
-export type TokenSpendingTimeSeries = {
-  bucket: string;
-  totalTokens: number;
-};
-
-export type TokenSpendingByEffect = {
-  effectId: number;
-  effectName: string;
-  totalTokens: number;
-};
-
-export type TokenSpendingData = {
-  timeSeries: TokenSpendingTimeSeries[];
-  byEffect: TokenSpendingByEffect[];
-  totalTokens: number;
-};
-
-export function getTokenSpendingAnalytics(params: {
-  from?: string;
-  to?: string;
-  granularity?: "day" | "week" | "month";
-} = {}): Promise<TokenSpendingData> {
-  const query: Query = {
-    from: params.from ?? undefined,
-    to: params.to ?? undefined,
-    granularity: params.granularity ?? "day",
-  };
-  return apiGet<TokenSpendingData>("/admin/analytics/token-spending", query);
-}
-
+// ---- Unit Economics
 export type UnitEconomicsByEffect = {
   effectId: number;
   effectName: string;
@@ -1336,7 +1305,7 @@ export function getUnitEconomicsAnalytics(params: {
     from: params.from ?? undefined,
     to: params.to ?? undefined,
   };
-  return apiGet<UnitEconomicsData>("/admin/analytics/unit-economics", query);
+  return apiGet<UnitEconomicsData>("/admin/economics/unit-economics", query);
 }
 
 // ---- Admin Workflows

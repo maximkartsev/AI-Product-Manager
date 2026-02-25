@@ -365,6 +365,10 @@ export class DataStack extends cdk.Stack {
     ]);
     NagSuppressions.addResourceSuppressions(packerRole, [
       { id: 'AwsSolutions-IAM4', reason: 'Uses AWS managed policy for SSM access in packer builds' },
+      {
+        id: 'AwsSolutions-IAM5',
+        reason: 'Packer must read variable bundle/asset keys; access is scoped to models bucket prefixes only',
+      },
     ], true);
     NagSuppressions.addResourceSuppressions(this.mediaBucket, [
       { id: 'AwsSolutions-S1', reason: 'Access logs go to separate logs bucket via CloudFront' },

@@ -48,6 +48,8 @@ use \App\Http\Controllers\Admin\StudioEconomicsController as AdminStudioEconomic
 use \App\Http\Controllers\Admin\StudioExecutionEnvironmentsController as AdminStudioExecutionEnvironmentsController;
 use \App\Http\Controllers\Admin\StudioTestInputSetsController as AdminStudioTestInputSetsController;
 use \App\Http\Controllers\Admin\StudioEffectTestRunsController as AdminStudioEffectTestRunsController;
+use \App\Http\Controllers\Admin\StudioDevNodeInteractiveRunsController as AdminStudioDevNodeInteractiveRunsController;
+use \App\Http\Controllers\Admin\StudioBlackboxRunsController as AdminStudioBlackboxRunsController;
 use \App\Http\Controllers\Admin\StudioLoadTestRunsController as AdminStudioLoadTestRunsController;
 use \App\Http\Controllers\Admin\StudioWorkflowRevisionsController as AdminStudioWorkflowRevisionsController;
 use \App\Http\Controllers\Admin\StudioWorkflowJsonController as AdminStudioWorkflowJsonController;
@@ -254,6 +256,8 @@ Route::middleware([
             Route::get('/studio/effect-test-runs', [AdminStudioEffectTestRunsController::class, 'index']);
             Route::post('/studio/effect-test-runs', [AdminStudioEffectTestRunsController::class, 'store']);
             Route::get('/studio/effect-test-runs/{id}', [AdminStudioEffectTestRunsController::class, 'show']);
+            Route::post('/studio/devnode-runs', [AdminStudioDevNodeInteractiveRunsController::class, 'store']);
+            Route::post('/studio/blackbox-runs', [AdminStudioBlackboxRunsController::class, 'store']);
             Route::get('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'index']);
             Route::post('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'store']);
             Route::get('/studio/load-test-runs/{id}', [AdminStudioLoadTestRunsController::class, 'show']);

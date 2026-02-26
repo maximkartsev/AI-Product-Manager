@@ -1062,6 +1062,50 @@ export type StudioWorkflowAnalyzeJob = {
   updated_at?: string | null;
 };
 
+export type StudioDevNode = {
+  id: number;
+  name: string;
+  instance_type?: string | null;
+  stage?: "dev" | "test" | "staging" | "production" | null;
+  lifecycle?: "on-demand" | "spot" | null;
+  status?: "starting" | "ready" | "stopping" | "stopped" | "error" | null;
+  aws_instance_id?: string | null;
+  public_endpoint?: string | null;
+  private_endpoint?: string | null;
+  active_bundle_ref?: string | null;
+  assigned_to_user_id?: number | null;
+  started_at?: string | null;
+  ready_at?: string | null;
+  ended_at?: string | null;
+  last_activity_at?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+  execution_environment?: {
+    id: number;
+    kind?: string | null;
+    stage?: string | null;
+    is_active?: boolean;
+  } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioDevNodePayload = Partial<
+  Pick<
+    StudioDevNode,
+    | "name"
+    | "instance_type"
+    | "stage"
+    | "lifecycle"
+    | "status"
+    | "aws_instance_id"
+    | "public_endpoint"
+    | "private_endpoint"
+    | "active_bundle_ref"
+    | "assigned_to_user_id"
+    | "metadata_json"
+  >
+>;
+
 export type StudioExecutionEnvironment = {
   id: number;
   name: string;
@@ -1163,9 +1207,51 @@ export type StudioRunArtifact = {
   artifact_type?: string | null;
   storage_disk?: string | null;
   storage_path?: string | null;
+  preview_url?: string | null;
   metadata_json?: Record<string, unknown> | unknown[] | null;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type StudioDevNodeRunInputPayload = {
+  input_path: string;
+  input_disk?: string;
+  input_name?: string;
+  input_mime_type?: string;
+  properties?: Record<string, unknown>;
+};
+
+export type StudioDevNodeRunPayload = {
+  effect_revision_id: number;
+  execution_environment_id: number;
+  test_input_set_id?: number | null;
+  input_payload: StudioDevNodeRunInputPayload;
+};
+
+export type StudioDevNodeRunData = {
+  run: StudioEffectTestRun;
+  artifacts: StudioRunArtifact[];
+};
+
+export type StudioBlackboxRunPayload = {
+  effect_id: number;
+  effect_revision_id: number;
+  execution_environment_id: number;
+  input_file_id: number;
+  input_payload?: Record<string, unknown>;
+  count?: number;
+  run_counts?: number[];
+};
+
+export type StudioBlackboxRunData = {
+  run: StudioEffectTestRun;
+  job_ids: number[];
+  dispatch_ids: number[];
+  dispatch_count: number;
+  cost_report: {
+    assumptions?: Record<string, unknown>;
+    models?: Array<Record<string, unknown>>;
+  };
 };
 
 export type AdminEffectStressTestPayload = {
@@ -1346,6 +1432,28 @@ export function getStudioExecutionEnvironments(params: {
   return apiGet<StudioListResponse<StudioExecutionEnvironment>>("/admin/studio/execution-environments", query);
 }
 
+export function getStudioDevNodes(params: {
+  status?: string;
+  stage?: string;
+  search?: string;
+} = {}): Promise<StudioListResponse<StudioDevNode>> {
+  const query: Query = {
+    status: params.status ?? undefined,
+    stage: params.stage ?? undefined,
+    search: params.search ?? undefined,
+  };
+
+  return apiGet<StudioListResponse<StudioDevNode>>("/admin/studio/dev-nodes", query);
+}
+
+export function createStudioDevNode(payload: StudioDevNodePayload): Promise<StudioDevNode> {
+  return apiPost<StudioDevNode>("/admin/studio/dev-nodes", payload);
+}
+
+export function updateStudioDevNode(id: number, payload: StudioDevNodePayload): Promise<StudioDevNode> {
+  return apiRequest<StudioDevNode>(`/admin/studio/dev-nodes/${id}`, { method: "PATCH", body: payload });
+}
+
 export function getStudioTestInputSets(): Promise<StudioListResponse<StudioTestInputSet>> {
   return apiGet<StudioListResponse<StudioTestInputSet>>("/admin/studio/test-input-sets");
 }
@@ -1366,6 +1474,14 @@ export function getStudioEffectTestRuns(params: { status?: string; run_mode?: st
 
 export function createStudioEffectTestRun(payload: Record<string, unknown>): Promise<StudioEffectTestRun> {
   return apiPost<StudioEffectTestRun>("/admin/studio/effect-test-runs", payload);
+}
+
+export function createStudioDevNodeRun(payload: StudioDevNodeRunPayload): Promise<StudioDevNodeRunData> {
+  return apiPost<StudioDevNodeRunData>("/admin/studio/devnode-runs", payload);
+}
+
+export function createStudioBlackboxRun(payload: StudioBlackboxRunPayload): Promise<StudioBlackboxRunData> {
+  return apiPost<StudioBlackboxRunData>("/admin/studio/blackbox-runs", payload);
 }
 
 export function getStudioLoadTestRuns(params: { status?: string } = {}): Promise<StudioListResponse<StudioLoadTestRun>> {

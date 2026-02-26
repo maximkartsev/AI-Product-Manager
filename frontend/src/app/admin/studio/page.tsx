@@ -22,8 +22,20 @@ const studioSections = [
   {
     title: "Dev Nodes",
     description: "Manage test-stage dev nodes and inspect attached execution environments.",
-    href: "/admin/workers",
-    cta: "Open Workers",
+    href: "/admin/studio/dev-nodes",
+    cta: "Open Dev Nodes",
+  },
+  {
+    title: "Interactive Runs",
+    description: "Execute an effect revision directly on a DevNode endpoint and preview generated artifacts.",
+    href: "/admin/studio/runs/interactive",
+    cta: "Open Interactive Runs",
+  },
+  {
+    title: "Blackbox Runs",
+    description: "Queue token-billed blackbox test runs through staging dispatch and review cost report outputs.",
+    href: "/admin/studio/runs/blackbox",
+    cta: "Open Blackbox Runs",
   },
   {
     title: "Load Test Scenarios",
@@ -45,7 +57,7 @@ export default function AdminStudioPage() {
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Effects Design Studio</h1>
         <p className="text-sm text-muted-foreground">
-          Phase 1 entry points for create/clone flows and workflow JSON editing, plus Phase 0 studio surfaces.
+          Studio entry points for create/clone flows, workflow JSON editing, interactive DevNode runs, and blackbox test runs.
         </p>
       </div>
 

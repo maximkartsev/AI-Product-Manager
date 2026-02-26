@@ -94,13 +94,6 @@ class WorkloadTest extends TestCase
         return $this->getJson($url);
     }
 
-    private function adminPut(string $uri, array $data = [])
-    {
-        $this->actAsAdmin();
-
-        return $this->putJson($uri, $data);
-    }
-
     private function createWorkflow(array $overrides = []): Workflow
     {
         $uid = uniqid();
@@ -195,23 +188,12 @@ class WorkloadTest extends TestCase
         $this->getJson('/api/admin/workload')->assertStatus(403);
     }
 
-    public function test_assign_workers_requires_authentication(): void
+    public function test_assign_workers_endpoint_is_removed(): void
     {
-        $this->putJson('/api/admin/workload/workflows/1/workers')->assertStatus(401);
-    }
-
-    public function test_assign_workers_requires_admin_role(): void
-    {
-        $nonAdmin = User::factory()->create(['is_admin' => false]);
-        Tenant::query()->create([
-            'id' => (string) Str::uuid(),
-            'user_id' => $nonAdmin->id,
-            'db_pool' => 'tenant_pool_1',
-        ]);
-        Sanctum::actingAs($nonAdmin);
-
-        $this->putJson('/api/admin/workload/workflows/1/workers', ['worker_ids' => []])
-            ->assertStatus(403);
+        $workflow = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
+        $this->actAsAdmin();
+        $this->putJson("/api/admin/workload/workflows/{$workflow->id}/workers", ['worker_ids' => []])
+            ->assertStatus(404);
     }
 
     // ========================================================================
@@ -234,6 +216,64 @@ class WorkloadTest extends TestCase
     public function test_workload_index_defaults_to_24h_when_no_period(): void
     {
         $this->adminGet('/api/admin/workload')->assertStatus(200);
+    }
+
+    public function test_workload_index_rejects_invalid_stage(): void
+    {
+        $this->adminGet('/api/admin/workload', ['stage' => 'qa'])->assertStatus(422);
+    }
+
+    public function test_workload_index_filters_dispatches_by_stage(): void
+    {
+        $wf = $this->createWorkflow(['name' => 'Stage WF', 'slug' => 'stage-wf']);
+
+        $this->createDispatch([
+            'workflow_id' => $wf->id,
+            'status' => 'queued',
+            'stage' => 'production',
+        ]);
+        $this->createDispatch([
+            'workflow_id' => $wf->id,
+            'status' => 'queued',
+            'stage' => 'staging',
+        ]);
+        $this->createDispatch([
+            'workflow_id' => $wf->id,
+            'status' => 'completed',
+            'stage' => 'production',
+        ]);
+        $this->createDispatch([
+            'workflow_id' => $wf->id,
+            'status' => 'completed',
+            'stage' => 'staging',
+        ]);
+
+        $response = $this->adminGet('/api/admin/workload', ['stage' => 'staging']);
+        $response->assertStatus(200);
+
+        $workflow = collect($response->json('data.workflows'))->firstWhere('id', $wf->id);
+        $this->assertSame(1, $workflow['stats']['queued']);
+        $this->assertSame(1, $workflow['stats']['completed']);
+    }
+
+    public function test_workload_index_filters_workers_by_stage(): void
+    {
+        $wf = $this->createWorkflow(['name' => 'Stage Workers WF', 'slug' => 'stage-workers']);
+        $stagingWorker = $this->createWorker(['worker_id' => 'staging-worker', 'stage' => 'staging']);
+        $productionWorker = $this->createWorker(['worker_id' => 'production-worker', 'stage' => 'production']);
+
+        $this->assignWorkerToWorkflow($stagingWorker->id, $wf->id);
+        $this->assignWorkerToWorkflow($productionWorker->id, $wf->id);
+
+        $response = $this->adminGet('/api/admin/workload', ['stage' => 'staging']);
+        $response->assertStatus(200);
+
+        $workers = collect($response->json('data.workers'));
+        $this->assertCount(1, $workers);
+        $this->assertSame($stagingWorker->id, $workers->first()['id']);
+
+        $workflow = collect($response->json('data.workflows'))->firstWhere('id', $wf->id);
+        $this->assertSame([$stagingWorker->id], $workflow['worker_ids']);
     }
 
     // ========================================================================
@@ -591,142 +631,6 @@ class WorkloadTest extends TestCase
         $workerIds = collect($response->json('data.workers'))->pluck('worker_id')->toArray();
 
         $this->assertSame(['a-worker', 'z-worker'], $workerIds);
-    }
-
-    // ========================================================================
-    // I. Assign Workers — Validation
-    // ========================================================================
-
-    public function test_assign_workers_returns_404_for_nonexistent_workflow(): void
-    {
-        $this->adminPut('/api/admin/workload/workflows/99999/workers', ['worker_ids' => []])
-            ->assertStatus(404);
-    }
-
-    public function test_assign_workers_requires_worker_ids_array(): void
-    {
-        $wf = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-
-        $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", [])
-            ->assertStatus(422);
-
-        $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", ['worker_ids' => 'string'])
-            ->assertStatus(422);
-    }
-
-    public function test_assign_workers_rejects_nonexistent_worker_id(): void
-    {
-        $wf = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-
-        $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", ['worker_ids' => [99999]])
-            ->assertStatus(422);
-    }
-
-    // ========================================================================
-    // J. Assign Workers — Behavior
-    // ========================================================================
-
-    public function test_assign_workers_adds_workers_to_workflow(): void
-    {
-        $wf = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-        $w1 = $this->createWorker(['worker_id' => 'w1']);
-        $w2 = $this->createWorker(['worker_id' => 'w2']);
-
-        $response = $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", [
-            'worker_ids' => [$w1->id, $w2->id],
-        ]);
-        $response->assertStatus(200);
-
-        $workerIds = $response->json('data.worker_ids');
-        sort($workerIds);
-        $this->assertSame([$w1->id, $w2->id], $workerIds);
-
-        $pivotCount = DB::connection('central')->table('worker_workflows')
-            ->where('workflow_id', $wf->id)
-            ->count();
-        $this->assertSame(2, $pivotCount);
-    }
-
-    public function test_assign_workers_removes_unassigned_workers(): void
-    {
-        $wf = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-        $w1 = $this->createWorker(['worker_id' => 'w1']);
-        $w2 = $this->createWorker(['worker_id' => 'w2']);
-
-        $this->assignWorkerToWorkflow($w1->id, $wf->id);
-        $this->assignWorkerToWorkflow($w2->id, $wf->id);
-
-        $response = $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", [
-            'worker_ids' => [$w2->id],
-        ]);
-        $response->assertStatus(200);
-        $this->assertSame([$w2->id], $response->json('data.worker_ids'));
-
-        $this->assertSame(0, DB::connection('central')->table('worker_workflows')
-            ->where('workflow_id', $wf->id)
-            ->where('worker_id', $w1->id)
-            ->count());
-    }
-
-    public function test_assign_workers_with_empty_array_clears_all(): void
-    {
-        $wf = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-        $w1 = $this->createWorker(['worker_id' => 'w1']);
-        $w2 = $this->createWorker(['worker_id' => 'w2']);
-
-        $this->assignWorkerToWorkflow($w1->id, $wf->id);
-        $this->assignWorkerToWorkflow($w2->id, $wf->id);
-
-        $response = $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", [
-            'worker_ids' => [],
-        ]);
-        $response->assertStatus(200);
-        $this->assertSame([], $response->json('data.worker_ids'));
-    }
-
-    public function test_assign_workers_is_idempotent(): void
-    {
-        $wf = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-        $w1 = $this->createWorker(['worker_id' => 'w1']);
-        $w2 = $this->createWorker(['worker_id' => 'w2']);
-
-        $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", [
-            'worker_ids' => [$w1->id, $w2->id],
-        ])->assertStatus(200);
-
-        $response = $this->adminPut("/api/admin/workload/workflows/{$wf->id}/workers", [
-            'worker_ids' => [$w1->id, $w2->id],
-        ]);
-        $response->assertStatus(200);
-
-        $workerIds = $response->json('data.worker_ids');
-        sort($workerIds);
-        $this->assertSame([$w1->id, $w2->id], $workerIds);
-
-        $pivotCount = DB::connection('central')->table('worker_workflows')
-            ->where('workflow_id', $wf->id)
-            ->count();
-        $this->assertSame(2, $pivotCount);
-    }
-
-    public function test_assign_workers_does_not_affect_other_workflows(): void
-    {
-        $wfA = $this->createWorkflow(['name' => 'A', 'slug' => 'a']);
-        $wfB = $this->createWorkflow(['name' => 'B', 'slug' => 'b']);
-        $w1 = $this->createWorker(['worker_id' => 'w1']);
-
-        $this->assignWorkerToWorkflow($w1->id, $wfA->id);
-        $this->assignWorkerToWorkflow($w1->id, $wfB->id);
-
-        $this->adminPut("/api/admin/workload/workflows/{$wfA->id}/workers", [
-            'worker_ids' => [],
-        ])->assertStatus(200);
-
-        $bPivot = DB::connection('central')->table('worker_workflows')
-            ->where('workflow_id', $wfB->id)
-            ->where('worker_id', $w1->id)
-            ->count();
-        $this->assertSame(1, $bPivot);
     }
 
     // ========================================================================

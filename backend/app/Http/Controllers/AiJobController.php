@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
+use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
 use App\Models\File;
 use App\Models\User;
@@ -58,6 +59,21 @@ class AiJobController extends BaseController
         $idempotencyKey = (string) $request->input('idempotency_key');
         $existing = AiJob::query()->where('idempotency_key', $idempotencyKey)->first();
         if ($existing) {
+            $existingEffect = Effect::query()->find($existing->effect_id);
+            if (!$existingEffect || !$existingEffect->is_active || $existingEffect->publication_status !== 'published') {
+                return $this->sendError('Effect not found.', [], 404);
+            }
+            if (!$existingEffect->workflow_id) {
+                return $this->sendError('Effect has no configured workflow.', [], 422);
+            }
+            $hasProductionFleet = ComfyUiWorkflowFleet::query()
+                ->where('workflow_id', $existingEffect->workflow_id)
+                ->where('stage', 'production')
+                ->exists();
+            if (!$hasProductionFleet) {
+                return $this->sendError('Effect is not available for production processing.', [], 422);
+            }
+
             $dispatch = null;
             if (in_array($existing->status, ['queued', 'processing'], true)) {
                 $existingProvider = $existing->provider ?: (string) $request->input(
@@ -79,9 +95,19 @@ class AiJobController extends BaseController
         if (!$effect) {
             return $this->sendError('Effect not found.', [], 404);
         }
+        if (!$effect->is_active || $effect->publication_status !== 'published') {
+            return $this->sendError('Effect not found.', [], 404);
+        }
 
         if (!$effect->workflow_id) {
             return $this->sendError('Effect has no configured workflow.', [], 422);
+        }
+        $hasProductionFleet = ComfyUiWorkflowFleet::query()
+            ->where('workflow_id', $effect->workflow_id)
+            ->where('stage', 'production')
+            ->exists();
+        if (!$hasProductionFleet) {
+            return $this->sendError('Effect is not available for production processing.', [], 422);
         }
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
@@ -364,9 +390,11 @@ class AiJobController extends BaseController
     ): ?AiJobDispatch
     {
         $workflowId = null;
+        $dispatchStage = 'production';
         $effect = Effect::query()->find($job->effect_id);
         if ($effect && $effect->workflow_id) {
             $workflowId = $effect->workflow_id;
+            $dispatchStage = $effect->publication_status === 'development' ? 'staging' : 'production';
         }
 
         try {
@@ -376,6 +404,7 @@ class AiJobController extends BaseController
             ], [
                 'provider' => $provider ?: ($job->provider ?: config('services.comfyui.default_provider', 'self_hosted')),
                 'workflow_id' => $workflowId,
+                'stage' => $dispatchStage,
                 'status' => 'queued',
                 'priority' => $priority,
                 'attempts' => 0,

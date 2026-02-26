@@ -140,6 +140,8 @@ export type VideoEffectSummary = {
   description?: string | null;
   type?: string | null;
   is_premium?: boolean;
+  is_active?: boolean;
+  publication_status?: "development" | "published" | null;
 };
 
 export type GalleryEffect = {
@@ -150,6 +152,8 @@ export type GalleryEffect = {
   type?: string | null;
   is_premium?: boolean;
   credits_cost?: number | null;
+  is_active?: boolean;
+  publication_status?: "development" | "published" | null;
   configurable_properties?: ConfigurableProperty[] | null;
   category?: {
     id: number;
@@ -946,6 +950,7 @@ export type AdminEffect = {
   category_id?: number | null;
   workflow_id?: number | null;
   property_overrides?: Record<string, string> | null;
+  publication_status?: "development" | "published" | null;
   category?: { id: number; name?: string } | null;
   tags?: string[] | null;
   type?: string | null;
@@ -962,6 +967,19 @@ export type AdminEffect = {
 };
 
 export type AdminEffectPayload = Partial<AdminEffect>;
+
+export type AdminEffectStressTestPayload = {
+  count: number;
+  input_file_id: number;
+  input_payload?: Record<string, unknown> | null;
+  execute_on_production_fleet?: boolean;
+};
+
+export type AdminEffectStressTestResult = {
+  queued_count: number;
+  video_ids?: number[];
+  job_ids?: number[];
+};
 
 export type AdminEffectsIndexData = {
   items: AdminEffect[];
@@ -1055,6 +1073,13 @@ export function updateAdminEffect(id: number, payload: AdminEffectPayload): Prom
 
 export function deleteAdminEffect(id: number): Promise<void> {
   return apiRequest<void>(`/admin/effects/${id}`, { method: "DELETE" });
+}
+
+export function stressTestEffect(
+  effectId: number,
+  payload: AdminEffectStressTestPayload,
+): Promise<AdminEffectStressTestResult> {
+  return apiPost<AdminEffectStressTestResult>(`/admin/effects/${effectId}/stress-test`, payload);
 }
 
 export async function getAdminCategories(params: {
@@ -1799,9 +1824,6 @@ export function rotateWorkerToken(id: number): Promise<{ token: string; message:
   return apiPost<{ token: string; message: string }>(`/admin/workers/${id}/rotate-token`);
 }
 
-export function assignWorkerWorkflows(id: number, workflowIds: number[]): Promise<AdminWorker> {
-  return apiRequest<AdminWorker>(`/admin/workers/${id}/workflows`, { method: "PUT", body: { workflow_ids: workflowIds } });
-}
 
 export function getWorkerAuditLogs(workerId: number, params: { page?: number; perPage?: number } = {}): Promise<AdminAuditLogsIndexData> {
   const query: Query = { page: params.page ?? 1, perPage: params.perPage ?? 20 };
@@ -1855,16 +1877,15 @@ export type WorkloadData = {
   workers: WorkloadWorker[];
 };
 
-export function getWorkload(period?: string): Promise<WorkloadData> {
-  const query: Query = { period: period ?? undefined };
+export function getWorkload(params?: {
+  period?: string;
+  stage?: "staging" | "production";
+}): Promise<WorkloadData> {
+  const query: Query = {
+    period: params?.period ?? undefined,
+    stage: params?.stage ?? undefined,
+  };
   return apiGet<WorkloadData>("/admin/workload", query);
-}
-
-export function assignWorkflowWorkers(workflowId: number, workerIds: number[]): Promise<unknown> {
-  return apiRequest(`/admin/workload/workflows/${workflowId}/workers`, {
-    method: "PUT",
-    body: { worker_ids: workerIds },
-  });
 }
 
 // ---- Admin Audit Logs (global)

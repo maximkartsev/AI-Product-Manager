@@ -2,8 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Models\Effect;
 use App\Models\AiJob;
+use App\Models\AiJobDispatch;
+use App\Models\ComfyUiGpuFleet;
+use App\Models\ComfyUiWorkflowFleet;
+use App\Models\Effect;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\Workflow;
@@ -53,9 +56,14 @@ class AiJobSubmissionTest extends TestCase
     private function resetState(): void
     {
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('ai_job_dispatches')->truncate();
+        DB::connection('central')->table('comfyui_workflow_fleets')->truncate();
+        DB::connection('central')->table('comfyui_gpu_fleets')->truncate();
+        DB::connection('central')->table('effects')->truncate();
         DB::connection('central')->table('users')->truncate();
         DB::connection('central')->table('tenants')->truncate();
         DB::connection('central')->table('personal_access_tokens')->truncate();
+        DB::connection('central')->table('workflows')->truncate();
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
@@ -90,6 +98,75 @@ class AiJobSubmissionTest extends TestCase
 
         $this->assertSame(15, $this->getWalletBalance($tenant->id));
         $this->assertSame(1, $this->getJobTransactionCount($tenant->id, $jobId, 'JOB_RESERVE'));
+    }
+
+    public function test_ai_job_submission_rejects_development_effect(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0, ['publication_status' => 'development']);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+        ]);
+
+        $response->assertStatus(404);
+    }
+
+    public function test_ai_job_submission_rejects_development_effect_when_idempotent(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        Sanctum::actingAs($user);
+
+        $payload = [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+        ];
+
+        $first = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $first->assertStatus(200);
+
+        $effect->update(['publication_status' => 'development']);
+
+        $second = $this->postJsonWithHost($domain, '/api/ai-jobs', $payload);
+        $second->assertStatus(404);
+    }
+
+    public function test_ai_job_submission_sets_dispatch_stage_production(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+        ]);
+
+        $response->assertStatus(200);
+        $jobId = $response->json('data.id');
+
+        $dispatch = AiJobDispatch::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('tenant_job_id', $jobId)
+            ->first();
+
+        $this->assertNotNull($dispatch);
+        $this->assertSame('production', $dispatch->stage);
     }
 
     public function test_ai_job_submission_builds_payload_from_effect_workflow(): void
@@ -514,7 +591,7 @@ class AiJobSubmissionTest extends TestCase
         return [$user, $tenant, $domain];
     }
 
-    private function createEffect(float $creditsCost): Effect
+    private function createEffect(float $creditsCost, array $overrides = [], bool $withProductionFleet = true): Effect
     {
         $workflow = Workflow::query()->create([
             'name' => 'Workflow ' . uniqid(),
@@ -526,7 +603,11 @@ class AiJobSubmissionTest extends TestCase
             'is_active' => true,
         ]);
 
-        return Effect::query()->create([
+        if ($withProductionFleet) {
+            $this->createProductionFleetAssignment($workflow);
+        }
+
+        $defaults = [
             'name' => 'Effect ' . uniqid(),
             'slug' => 'effect-' . uniqid(),
             'description' => 'Effect description',
@@ -536,6 +617,26 @@ class AiJobSubmissionTest extends TestCase
             'is_premium' => false,
             'is_new' => false,
             'workflow_id' => $workflow->id,
+        ];
+
+        return Effect::query()->create(array_merge($defaults, $overrides));
+    }
+
+    private function createProductionFleetAssignment(Workflow $workflow): void
+    {
+        $fleet = ComfyUiGpuFleet::query()->create([
+            'stage' => 'production',
+            'slug' => 'prod-fleet-' . uniqid(),
+            'name' => 'Production Fleet',
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 1,
+        ]);
+
+        ComfyUiWorkflowFleet::query()->create([
+            'workflow_id' => $workflow->id,
+            'fleet_id' => $fleet->id,
+            'stage' => 'production',
+            'assigned_at' => now(),
         ]);
     }
 

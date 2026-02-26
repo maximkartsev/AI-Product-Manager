@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\AiJobDispatch;
+use App\Models\ComfyUiGpuFleet;
+use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
 use App\Models\GalleryVideo;
 use App\Models\Tenant;
@@ -78,11 +80,15 @@ class VideoUploadProcessingTest extends TestCase
     private function resetState(): void
     {
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::connection('central')->table('comfyui_workflow_fleets')->truncate();
+        DB::connection('central')->table('comfyui_gpu_fleets')->truncate();
         DB::connection('central')->table('users')->truncate();
         DB::connection('central')->table('tenants')->truncate();
         DB::connection('central')->table('personal_access_tokens')->truncate();
         DB::connection('central')->table('ai_job_dispatches')->truncate();
         DB::connection('central')->table('gallery_videos')->truncate();
+        DB::connection('central')->table('effects')->truncate();
+        DB::connection('central')->table('workflows')->truncate();
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
 
         DB::connection('tenant_pool_1')->statement('SET FOREIGN_KEY_CHECKS=0');
@@ -120,6 +126,70 @@ class VideoUploadProcessingTest extends TestCase
         $file = $this->fetchTenantFile($tenant->id, $fileId);
         $this->assertSame('video/mp4', $file['mime_type']);
         $this->assertSame('input.mp4', $file['original_filename']);
+    }
+
+    public function test_upload_rejects_development_effect_for_non_admin(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(['publication_status' => 'development']);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/videos/uploads', [
+            'effect_id' => $effect->id,
+            'mime_type' => 'video/mp4',
+            'size' => 1024,
+            'original_filename' => 'input.mp4',
+        ]);
+
+        $response->assertStatus(404);
+    }
+
+    public function test_asset_upload_rejects_development_effect_for_non_admin(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createConfigurableEffectWithProperty([
+            [
+                'key' => 'style_image',
+                'type' => 'image',
+                'user_configurable' => true,
+                'is_primary_input' => false,
+            ],
+        ]);
+        $effect->update(['publication_status' => 'development']);
+        $this->seedWallet($tenant->id, $user->id, 25);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/files/uploads', [
+            'effect_id' => $effect->id,
+            'upload_id' => 'upload_test',
+            'property_key' => 'style_image',
+            'kind' => 'image',
+            'mime_type' => 'image/png',
+            'size' => 1024,
+            'original_filename' => 'style.png',
+        ]);
+
+        $response->assertStatus(404);
+    }
+
+    public function test_video_store_rejects_development_effect_for_non_admin(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(['publication_status' => 'development']);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/videos', [
+            'effect_id' => $effect->id,
+            'original_file_id' => $fileId,
+        ]);
+
+        $response->assertStatus(404);
     }
 
     public function test_upload_fails_when_tokens_insufficient(): void
@@ -848,7 +918,7 @@ class VideoUploadProcessingTest extends TestCase
         return [$user, $tenant, $domain];
     }
 
-    private function createEffect(): Effect
+    private function createEffect(array $overrides = []): Effect
     {
         $workflow = Workflow::query()->create([
             'name' => 'Workflow ' . uniqid(),
@@ -860,7 +930,9 @@ class VideoUploadProcessingTest extends TestCase
             'is_active' => true,
         ]);
 
-        return Effect::query()->create([
+        $this->createProductionFleetAssignment($workflow->id);
+
+        $defaults = [
             'name' => 'Effect ' . uniqid(),
             'slug' => 'effect-' . uniqid(),
             'description' => 'Effect description',
@@ -870,10 +942,12 @@ class VideoUploadProcessingTest extends TestCase
             'is_premium' => false,
             'is_new' => false,
             'workflow_id' => $workflow->id,
-        ]);
+        ];
+
+        return Effect::query()->create(array_merge($defaults, $overrides));
     }
 
-    private function createConfigurableEffectWithProperty(array $properties): Effect
+    private function createConfigurableEffectWithProperty(array $properties, array $overrides = []): Effect
     {
         $workflow = Workflow::query()->create([
             'name' => 'Workflow ' . uniqid(),
@@ -886,7 +960,9 @@ class VideoUploadProcessingTest extends TestCase
             'properties' => $properties,
         ]);
 
-        return Effect::query()->create([
+        $this->createProductionFleetAssignment($workflow->id);
+
+        $defaults = [
             'name' => 'Effect ' . uniqid(),
             'slug' => 'effect-' . uniqid(),
             'description' => 'Effect description',
@@ -896,6 +972,26 @@ class VideoUploadProcessingTest extends TestCase
             'is_premium' => false,
             'is_new' => false,
             'workflow_id' => $workflow->id,
+        ];
+
+        return Effect::query()->create(array_merge($defaults, $overrides));
+    }
+
+    private function createProductionFleetAssignment(int $workflowId): void
+    {
+        $fleet = ComfyUiGpuFleet::query()->create([
+            'stage' => 'production',
+            'slug' => 'prod-fleet-' . uniqid(),
+            'name' => 'Production Fleet',
+            'instance_types' => ['g4dn.xlarge'],
+            'max_size' => 1,
+        ]);
+
+        ComfyUiWorkflowFleet::query()->create([
+            'workflow_id' => $workflowId,
+            'fleet_id' => $fleet->id,
+            'stage' => 'production',
+            'assigned_at' => now(),
         ]);
     }
 

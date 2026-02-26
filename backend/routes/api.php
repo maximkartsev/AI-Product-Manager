@@ -130,6 +130,7 @@ Route::middleware([
             Route::get('/effects/{id}', [AdminEffectsController::class, 'show']);
             Route::patch('/effects/{id}', [AdminEffectsController::class, 'update']);
             Route::delete('/effects/{id}', [AdminEffectsController::class, 'destroy']);
+            Route::post('/effects/{id}/stress-test', [AdminEffectsController::class, 'stressTest']);
 
             Route::get('/categories', [AdminCategoriesController::class, 'index']);
             Route::get('/categories/create', [AdminCategoriesController::class, 'create']);
@@ -197,12 +198,10 @@ Route::middleware([
             Route::post('/workers/{id}/approve', [AdminWorkersController::class, 'approve']);
             Route::post('/workers/{id}/revoke', [AdminWorkersController::class, 'revoke']);
             Route::post('/workers/{id}/rotate-token', [AdminWorkersController::class, 'rotateToken']);
-            Route::put('/workers/{id}/workflows', [AdminWorkersController::class, 'assignWorkflows']);
             Route::get('/workers/{id}/audit-logs', [AdminWorkersController::class, 'auditLogs']);
 
             // Workload
             Route::get('/workload', [AdminWorkloadController::class, 'index']);
-            Route::put('/workload/workflows/{id}/workers', [AdminWorkloadController::class, 'assignWorkers']);
 
             // Audit Logs
             Route::get('/audit-logs', [AdminAuditLogsController::class, 'index']);

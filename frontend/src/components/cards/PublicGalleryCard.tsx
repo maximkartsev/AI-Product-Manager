@@ -122,6 +122,8 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
   const title = effectName.trim() || "AI Effect";
   const showPlayOverlay = !item.processed_file_url || Boolean(item.thumbnail_url);
   const isConfigurable = item.effect?.type === "configurable";
+  const isAvailable = item.effect?.publication_status === "published" && Boolean(item.effect?.is_active);
+  const unavailableMessage = "Effect temporarily unavailable.";
   const gradient = gradientForSlug(item.effect?.slug ?? String(item.id));
   const g = gradientClass(gradient.from, gradient.to);
   const mediaSrcKey = item.thumbnail_url ?? item.processed_file_url ?? "";
@@ -188,14 +190,21 @@ export function PublicGalleryCard(props: PublicGalleryCardProps) {
             type="button"
             onClick={(event) => {
               event.stopPropagation();
+              if (!isAvailable) return;
               onTry();
             }}
-            className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/45 px-2.5 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition hover:bg-black/60"
+            disabled={!isAvailable}
+            aria-disabled={!isAvailable}
+            title={!isAvailable ? unavailableMessage : undefined}
+            className={cn(
+              "absolute left-3 top-3 inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/45 px-2.5 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition hover:bg-black/60",
+              !isAvailable && "opacity-60",
+            )}
           >
             <span className="grid h-4 w-4 place-items-center rounded-full bg-white/15 text-fuchsia-100">
               <IconSparkles className="h-3 w-3" />
             </span>
-            Try This
+            {isAvailable ? "Try This" : "Effect Unavailable"}
           </button>
           {isConfigurable ? (
             <span className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white/85 backdrop-blur-sm">

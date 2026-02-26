@@ -47,9 +47,11 @@ class ProcessAiJob implements ShouldQueue
             $workflowId = null;
             $workUnits = null;
             $workUnitKind = null;
+            $dispatchStage = 'production';
             $effect = Effect::query()->find($job->effect_id);
             if ($effect && $effect->workflow_id) {
                 $workflowId = $effect->workflow_id;
+                $dispatchStage = $effect->publication_status === 'development' ? 'staging' : 'production';
                 if ($effect->workflow) {
                     $computed = app(WorkflowPayloadService::class)->computeWorkUnits($effect->workflow, $effect, []);
                     $workUnits = $computed['units'] ?? null;
@@ -63,6 +65,7 @@ class ProcessAiJob implements ShouldQueue
             ], [
                 'provider' => $job->provider ?: config('services.comfyui.default_provider', 'self_hosted'),
                 'workflow_id' => $workflowId,
+                'stage' => $dispatchStage,
                 'status' => 'queued',
                 'priority' => 0,
                 'attempts' => 0,

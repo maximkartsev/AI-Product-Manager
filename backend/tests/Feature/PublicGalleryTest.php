@@ -82,6 +82,8 @@ class PublicGalleryTest extends TestCase
         $response->assertJsonFragment(['id' => $public->id]);
         $response->assertJsonMissing(['id' => $private->id]);
         $response->assertJsonPath('data.items.0.effect.slug', $effect->slug);
+        $response->assertJsonPath('data.items.0.effect.publication_status', 'published');
+        $response->assertJsonPath('data.items.0.effect.is_active', true);
         $response->assertJsonPath(
             'data.items.0.processed_file_url',
             'https://example.com/presigned/tenants/tenant-demo/processed.mp4'

@@ -329,7 +329,7 @@ aws ssm put-parameter \
 In AWS ECS, these are injected automatically (see `infrastructure/lib/stacks/compute-stack.ts`):
 - `COMFYUI_MODELS_BUCKET`, `COMFYUI_MODELS_DISK=comfyui_models`
 - `COMFYUI_LOGS_BUCKET`, `COMFYUI_LOGS_DISK=comfyui_logs`
-- `COMFYUI_FLEET_SECRET` from `/bp/<stage>/fleet-secret`
+- `COMFYUI_FLEET_SECRET_STAGING` (staging) or `COMFYUI_FLEET_SECRET_PRODUCTION` (production) from `/bp/<stage>/fleet-secret`
 
 For local admin use, follow `quickstart.md`:
 - Media uploads may use MinIO via `AWS_*`
@@ -577,8 +577,8 @@ Practical verification:
 
 CloudWatch namespace: `ComfyUI/Workers`
 
-Check metrics with dimension:
-`FleetSlug=<fleet_slug>`
+Check metrics with dimensions:
+`FleetSlug=<fleet_slug>, Stage=<stage>`
 
 Ensure alarms exist:
 - `<stage>-<fleet_slug>-queue-has-jobs`

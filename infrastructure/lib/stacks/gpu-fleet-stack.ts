@@ -70,6 +70,7 @@ cw = boto3.client("cloudwatch")
 spot_asg = os.environ.get("SPOT_ASG_NAME", "")
 od_asg = os.environ.get("ON_DEMAND_ASG_NAME", "")
 fleet_slug = os.environ.get("FLEET_SLUG", "")
+stage = os.environ.get("STAGE", "")
 slo_threshold = float(os.environ.get("SLO_PRESSURE_THRESHOLD", "1") or "1")
 
 
@@ -89,10 +90,13 @@ def _get_metric_value(metric_name: str) -> float:
     if not metric_name or not fleet_slug:
         return 0.0
     now = datetime.datetime.utcnow()
+    dimensions = [{"Name": "FleetSlug", "Value": fleet_slug}]
+    if stage:
+        dimensions.append({"Name": "Stage", "Value": stage})
     resp = cw.get_metric_statistics(
         Namespace="ComfyUI/Workers",
         MetricName=metric_name,
-        Dimensions=[{"Name": "FleetSlug", "Value": fleet_slug}],
+        Dimensions=dimensions,
         StartTime=now - datetime.timedelta(minutes=10),
         EndTime=now,
         Period=60,
@@ -171,7 +175,7 @@ def handler(event, context):
       const opsTopic = sns.Topic.fromTopicArn(this, 'OpsAlertsTopic', opsAlertTopicArn);
       const alarmAction = new cw_actions.SnsAction(opsTopic);
 
-      const dimensions = { FleetSlug: fleet.slug };
+      const dimensions = { FleetSlug: fleet.slug, Stage: stage };
 
       new cloudwatch.Alarm(this, 'QueueDeepAlarm', {
         alarmName: `${stage}-p3-${fleet.slug}-queue-deep`,

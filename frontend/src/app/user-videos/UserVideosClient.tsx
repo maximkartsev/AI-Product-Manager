@@ -325,6 +325,11 @@ export default function UserVideosClient() {
   const drawerPublishEnabled = Boolean(
     drawerVideo && drawerVideo.status === "completed" && drawerVideo.processed_file_url,
   );
+  const drawerEffectAvailable =
+    drawerVideo?.effect?.publication_status === "published" &&
+    Boolean(drawerVideo?.effect?.is_active);
+  const drawerRepeatLabel = drawerEffectAvailable ? "Repeat" : "Effect Unavailable";
+  const drawerRepeatTitle = !drawerEffectAvailable ? "Effect temporarily unavailable." : undefined;
 
   const groupedVideos = useMemo(() => {
     const order: string[] = [];
@@ -719,11 +724,12 @@ export default function UserVideosClient() {
                 <button
                   type="button"
                   onClick={() => handleRepeatVideo(drawerVideo)}
-                  disabled={!drawerVideo.effect?.slug}
+                  disabled={!drawerVideo.effect?.slug || !drawerEffectAvailable}
+                  title={drawerRepeatTitle}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-xs font-semibold text-white shadow-[0_12px_30px_rgba(236,72,153,0.25)] transition hover:from-fuchsia-400 hover:to-violet-400 disabled:opacity-70"
                 >
                   <Wand2 className="h-4 w-4" />
-                  Repeat
+                  {drawerRepeatLabel}
                 </button>
               </div>
 

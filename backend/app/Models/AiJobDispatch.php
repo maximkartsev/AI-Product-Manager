@@ -11,6 +11,7 @@ class AiJobDispatch extends CentralModel
         'tenant_job_id',
         'provider',
         'workflow_id',
+        'stage',
         'status',
         'priority',
         'attempts',

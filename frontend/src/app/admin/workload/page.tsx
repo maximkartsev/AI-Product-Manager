@@ -1,22 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { extractErrorMessage } from "@/lib/apiErrors";
-import {
-  getWorkload,
-  assignWorkflowWorkers,
-  type WorkloadData,
-  type WorkloadWorkflow,
-  type WorkloadWorker,
-} from "@/lib/api";
+import { getWorkload, type WorkloadData, type WorkloadWorkflow, type WorkloadWorker } from "@/lib/api";
 
 const PERIODS = [
   { label: "24h", value: "24h" },
   { label: "7d", value: "7d" },
   { label: "30d", value: "30d" },
+] as const;
+
+const STAGES = [
+  { label: "Production", value: "production" },
+  { label: "Staging", value: "staging" },
 ] as const;
 
 function formatDuration(seconds: number | null): string {
@@ -65,30 +62,15 @@ function isOnline(lastSeenAt: string | null): boolean {
 
 export default function AdminWorkloadPage() {
   const [period, setPeriod] = useState<string>("24h");
+  const [stage, setStage] = useState<string>("production");
   const [data, setData] = useState<WorkloadData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
-  // Track local assignment changes: workflowId -> workerIds
-  const [localAssignments, setLocalAssignments] = useState<Record<number, number[]>>({});
-  const [dirty, setDirty] = useState(false);
-
-  const originalAssignments = useRef<Record<number, number[]>>({});
-
-  const loadData = useCallback(async (p: string) => {
+  const loadData = useCallback(async (p: string, s: string) => {
     setLoading(true);
     try {
-      const result = await getWorkload(p);
+      const result = await getWorkload({ period: p, stage: s });
       setData(result);
-
-      // Initialize assignments from server
-      const assignments: Record<number, number[]> = {};
-      for (const wf of result.workflows) {
-        assignments[wf.id] = [...wf.worker_ids];
-      }
-      setLocalAssignments(assignments);
-      originalAssignments.current = JSON.parse(JSON.stringify(assignments));
-      setDirty(false);
     } catch (error) {
       toast.error(extractErrorMessage(error, "Failed to load workload data"));
     } finally {
@@ -97,60 +79,8 @@ export default function AdminWorkloadPage() {
   }, []);
 
   useEffect(() => {
-    loadData(period);
-  }, [period, loadData]);
-
-  const toggleAssignment = (workflowId: number, workerId: number) => {
-    setLocalAssignments((prev) => {
-      const current = prev[workflowId] ?? [];
-      const next = current.includes(workerId)
-        ? current.filter((id) => id !== workerId)
-        : [...current, workerId];
-      const updated = { ...prev, [workflowId]: next };
-
-      // Check if dirty
-      const orig = originalAssignments.current;
-      const isDirty = Object.keys(updated).some((key) => {
-        const id = Number(key);
-        const origSet = new Set(orig[id] ?? []);
-        const newSet = new Set(updated[id] ?? []);
-        if (origSet.size !== newSet.size) return true;
-        for (const v of origSet) if (!newSet.has(v)) return true;
-        return false;
-      });
-      setDirty(isDirty);
-
-      return updated;
-    });
-  };
-
-  const handleSave = async () => {
-    if (!data) return;
-    setSaving(true);
-
-    const orig = originalAssignments.current;
-    const changedWorkflows = data.workflows.filter((wf) => {
-      const origSet = new Set(orig[wf.id] ?? []);
-      const newSet = new Set(localAssignments[wf.id] ?? []);
-      if (origSet.size !== newSet.size) return true;
-      for (const v of origSet) if (!newSet.has(v)) return true;
-      return false;
-    });
-
-    try {
-      await Promise.all(
-        changedWorkflows.map((wf) =>
-          assignWorkflowWorkers(wf.id, localAssignments[wf.id] ?? []),
-        ),
-      );
-      toast.success("Assignments saved");
-      await loadData(period);
-    } catch (error) {
-      toast.error(extractErrorMessage(error, "Failed to save assignments"));
-    } finally {
-      setSaving(false);
-    }
-  };
+    loadData(period, stage);
+  }, [period, stage, loadData]);
 
   const workflows = data?.workflows ?? [];
   const workers = data?.workers ?? [];
@@ -162,11 +92,32 @@ export default function AdminWorkloadPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Workload &amp; Capacity</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Workflow execution stats and worker assignment matrix.
+            Workflow execution stats and fleet-routed capacity.
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Assignments come from Workflow → ComfyUI Routing (fleets).
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-2 py-1">
+            <span className="text-xs text-muted-foreground">Stage</span>
+            <div className="inline-flex items-center rounded-md border border-border bg-background/60 p-0.5">
+              {STAGES.map((s) => (
+                <button
+                  key={s.value}
+                  onClick={() => setStage(s.value)}
+                  className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                    stage === s.value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
           {/* Period pills */}
           <div className="inline-flex items-center rounded-lg border border-border bg-muted/40 p-0.5">
             {PERIODS.map((p) => (
@@ -294,30 +245,27 @@ export default function AdminWorkloadPage() {
                     <td className="text-center px-3 py-3 font-mono tabular-nums text-muted-foreground">
                       {wf.stats.recommended_workers ?? "-"}
                     </td>
-                    {workers.map((w) => (
-                      <td key={w.id} className="text-center px-3 py-3">
-                        <div className="flex items-center justify-center">
-                          <Checkbox
-                            checked={(localAssignments[wf.id] ?? []).includes(w.id)}
-                            onCheckedChange={() => toggleAssignment(wf.id, w.id)}
-                          />
-                        </div>
-                      </td>
-                    ))}
+                    {workers.map((w) => {
+                      const assigned = wf.worker_ids.includes(w.id);
+                      return (
+                        <td key={w.id} className="text-center px-3 py-3">
+                          <div className="flex items-center justify-center">
+                            <span
+                              className={`inline-block h-2 w-2 rounded-full ${
+                                assigned ? "bg-emerald-400" : "bg-muted-foreground/30"
+                              }`}
+                              title={assigned ? "Assigned" : "Not assigned"}
+                            />
+                          </div>
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          {/* Save bar */}
-          {workers.length > 0 && (
-            <div className="flex items-center justify-end border-t border-border px-4 py-3 bg-muted/20">
-              <Button size="sm" disabled={!dirty || saving} onClick={handleSave}>
-                {saving ? "Saving..." : "Save Assignments"}
-              </Button>
-            </div>
-          )}
         </div>
       )}
     </div>

@@ -17,6 +17,7 @@ class WorkloadController extends BaseController
     {
         $validator = Validator::make($request->all(), [
             'period' => 'string|nullable|in:24h,7d,30d',
+            'stage' => 'string|nullable|in:staging,production',
         ]);
 
         if ($validator->fails()) {
@@ -24,6 +25,7 @@ class WorkloadController extends BaseController
         }
 
         $period = $request->input('period', '24h');
+        $stage = $request->input('stage', 'production');
         $periodStart = match ($period) {
             '7d' => now()->subDays(7),
             '30d' => now()->subDays(30),
@@ -43,6 +45,7 @@ class WorkloadController extends BaseController
                 DB::raw("SUM(CASE WHEN status IN ('queued', 'leased') THEN COALESCE(work_units, 1) ELSE 0 END) as queue_units"),
             )
             ->whereIn('status', ['queued', 'leased'])
+            ->where('stage', $stage)
             ->groupBy('workflow_id')
             ->get()
             ->keyBy('workflow_id');
@@ -57,6 +60,7 @@ class WorkloadController extends BaseController
                 DB::raw("SUM(CASE WHEN status = 'completed' AND duration_seconds IS NOT NULL THEN duration_seconds ELSE 0 END) as total_duration_seconds"),
             )
             ->whereIn('status', ['completed', 'failed'])
+            ->where('stage', $stage)
             ->where('updated_at', '>=', $periodStart)
             ->groupBy('workflow_id')
             ->get()
@@ -65,6 +69,7 @@ class WorkloadController extends BaseController
         $dispatchSamples = AiJobDispatch::query()
             ->select('workflow_id', 'queue_wait_seconds', 'processing_seconds', 'duration_seconds', 'work_units')
             ->where('status', 'completed')
+            ->where('stage', $stage)
             ->where('updated_at', '>=', $periodStart)
             ->get()
             ->groupBy('workflow_id');
@@ -73,6 +78,7 @@ class WorkloadController extends BaseController
             ->table('comfy_ui_workers as w')
             ->join('worker_workflows as ww', 'w.id', '=', 'ww.worker_id')
             ->where('w.is_approved', true)
+            ->where('w.stage', $stage)
             ->where('w.last_seen_at', '>=', now()->subMinutes(5))
             ->selectRaw('ww.workflow_id, COUNT(DISTINCT w.id) as active_workers')
             ->groupBy('ww.workflow_id')
@@ -80,8 +86,10 @@ class WorkloadController extends BaseController
             ->keyBy('workflow_id');
 
         // Get worker assignments per workflow
-        $workflowWorkerMap = DB::table('worker_workflows')
-            ->select('workflow_id', 'worker_id')
+        $workflowWorkerMap = DB::table('worker_workflows as ww')
+            ->join('comfy_ui_workers as w', 'w.id', '=', 'ww.worker_id')
+            ->where('w.stage', $stage)
+            ->select('ww.workflow_id', 'ww.worker_id')
             ->get()
             ->groupBy('workflow_id')
             ->map(fn ($rows) => $rows->pluck('worker_id')->toArray());
@@ -180,6 +188,7 @@ class WorkloadController extends BaseController
         // Get all workers with relevant fields
         $workers = ComfyUiWorker::query()
             ->select('id', 'worker_id', 'display_name', 'is_approved', 'is_draining', 'current_load', 'max_concurrency', 'last_seen_at')
+            ->where('stage', $stage)
             ->orderBy('worker_id')
             ->get();
 

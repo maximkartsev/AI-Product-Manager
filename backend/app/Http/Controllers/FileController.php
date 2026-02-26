@@ -103,6 +103,9 @@ class FileController extends BaseController
         if (!$effect) {
             return $this->sendError('Effect not found.', [], 404);
         }
+        if ($effect->publication_status === 'development' && !(bool) ($user->is_admin ?? false)) {
+            return $this->sendError('Effect not found.', [], 404);
+        }
         if (!$effect->workflow) {
             return $this->sendError('Effect workflow not configured.', [], 422);
         }

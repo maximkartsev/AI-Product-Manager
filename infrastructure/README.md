@@ -143,7 +143,7 @@ aws ssm put-parameter \
   --value "$(openssl rand -hex 32)" \
   --type String \
   --overwrite
-# Used by backend (COMFYUI_FLEET_SECRET) and GPU workers
+# Used by backend (`COMFYUI_FLEET_SECRET_STAGING` or `COMFYUI_FLEET_SECRET_PRODUCTION`) and GPU workers
 
 # 3. OAuth secrets (if using social login)
 aws secretsmanager put-secret-value \
@@ -544,7 +544,7 @@ Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **runni
 
 ### Monitoring Workers
 
-Custom CloudWatch metrics (namespace: `ComfyUI/Workers`, dimension: `FleetSlug`):
+Custom CloudWatch metrics (namespace: `ComfyUI/Workers`, dimensions: `FleetSlug` + `Stage`):
 - `QueueDepth` — pending jobs for this fleet
 - `BacklogPerInstance` — jobs per active worker
 - `ActiveWorkers` — running instances

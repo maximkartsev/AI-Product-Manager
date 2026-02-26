@@ -42,6 +42,9 @@ class VideoController extends BaseController
         if (!$effect) {
             return $this->sendError('Effect not found.', [], 404);
         }
+        if ($effect->publication_status === 'development' && !(bool) ($request->user()->is_admin ?? false)) {
+            return $this->sendError('Effect not found.', [], 404);
+        }
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
         if ($tokenCost > 0) {
@@ -190,6 +193,8 @@ class VideoController extends BaseController
                         'description' => $effectModel->description,
                         'type' => $effectModel->type,
                         'is_premium' => $effectModel->is_premium,
+                        'is_active' => (bool) $effectModel->is_active,
+                        'publication_status' => $effectModel->publication_status,
                     ];
                 }
             }
@@ -241,6 +246,9 @@ class VideoController extends BaseController
 
         $effect = Effect::query()->find((int) $request->input('effect_id'));
         if (!$effect) {
+            return $this->sendError('Effect not found.', [], 404);
+        }
+        if ($effect->publication_status === 'development' && !(bool) ($request->user()->is_admin ?? false)) {
             return $this->sendError('Effect not found.', [], 404);
         }
 

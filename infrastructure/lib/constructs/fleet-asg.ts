@@ -267,7 +267,7 @@ export class FleetAsg extends Construct {
     // ========================================
 
     const namespace = 'ComfyUI/Workers';
-    const dimensions = { FleetSlug: fleetSlug };
+    const dimensions = { FleetSlug: fleetSlug, Stage: stage };
 
     // QueueDepth metric
     const queueDepthMetric = new cloudwatch.Metric({

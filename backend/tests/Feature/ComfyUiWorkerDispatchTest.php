@@ -85,6 +85,75 @@ class ComfyUiWorkerDispatchTest extends TestCase
         });
     }
 
+    public function test_dispatch_accepts_stage_attribute(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+
+        $dispatch = $this->createDispatch($tenant->id, $job->id, [
+            'stage' => 'staging',
+        ]);
+
+        $dispatch->refresh();
+
+        $this->assertSame('staging', $dispatch->stage);
+    }
+
+    public function test_worker_accepts_stage_attribute(): void
+    {
+        $worker = ComfyUiWorker::query()->create([
+            'worker_id' => 'stage-worker-' . uniqid(),
+            'token_hash' => hash('sha256', 'token-' . uniqid()),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 5,
+            'stage' => 'staging',
+        ]);
+
+        $worker->refresh();
+
+        $this->assertSame('staging', $worker->stage);
+    }
+
+    public function test_poll_does_not_lease_dispatch_from_other_stage(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+
+        $dispatch = $this->createDispatch($tenant->id, $job->id, [
+            'stage' => 'production',
+        ]);
+        AiJobDispatch::query()->whereKey($dispatch->id)->update(['created_at' => null]);
+
+        $token = 'stage-token-' . uniqid();
+        $worker = ComfyUiWorker::query()->create([
+            'worker_id' => 'stage-worker',
+            'token_hash' => hash('sha256', $token),
+            'is_approved' => true,
+            'is_draining' => false,
+            'current_load' => 0,
+            'max_concurrency' => 5,
+            'stage' => 'staging',
+        ]);
+        $worker->workflows()->sync([$this->defaultWorkflow->id]);
+
+        $response = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'stage-worker',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer ' . $token,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('data.job', null);
+    }
+
     private function resetState(): void
     {
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=0');

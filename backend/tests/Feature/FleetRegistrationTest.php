@@ -37,7 +37,8 @@ class FleetRegistrationTest extends TestCase
             static::$prepared = true;
         }
 
-        config(['services.comfyui.fleet_secret' => 'test-fleet-secret']);
+        config(['services.comfyui.fleet_secret_staging' => 'test-fleet-secret']);
+        config(['services.comfyui.fleet_secret_production' => 'prod-secret']);
         config(['services.comfyui.max_fleet_workers' => 5]);
         config(['app.env' => 'staging']);
 
@@ -87,6 +88,7 @@ class FleetRegistrationTest extends TestCase
         $this->assertSame('fleet', $worker->registration_source);
         $this->assertTrue($worker->is_approved);
         $this->assertSame(2, $worker->max_concurrency);
+        $this->assertSame('staging', $worker->stage);
     }
 
     public function test_fleet_register_assigns_workflows_by_slug(): void
@@ -186,6 +188,64 @@ class FleetRegistrationTest extends TestCase
         $response->assertStatus(401);
     }
 
+    public function test_fleet_register_requires_stage_specific_secret_for_staging(): void
+    {
+        config([
+            'services.comfyui.fleet_secret_staging' => 'staging-secret',
+            'services.comfyui.fleet_secret_production' => 'production-secret',
+        ]);
+
+        $workflow = Workflow::query()->create(['name' => 'Stage Test', 'slug' => 'stage-test', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'staging-fleet', [$workflow]);
+
+        $bad = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-stage-wrong',
+            'fleet_slug' => 'staging-fleet',
+            'stage' => 'staging',
+        ], [
+            'X-Fleet-Secret' => 'production-secret',
+        ]);
+        $bad->assertStatus(401);
+
+        $good = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-stage-right',
+            'fleet_slug' => 'staging-fleet',
+            'stage' => 'staging',
+        ], [
+            'X-Fleet-Secret' => 'staging-secret',
+        ]);
+        $good->assertStatus(200);
+    }
+
+    public function test_fleet_register_requires_stage_specific_secret_for_production(): void
+    {
+        config([
+            'services.comfyui.fleet_secret_staging' => 'staging-secret',
+            'services.comfyui.fleet_secret_production' => 'production-secret',
+        ]);
+
+        $workflow = Workflow::query()->create(['name' => 'Prod Test', 'slug' => 'prod-test', 'is_active' => true]);
+        $this->createFleetWithWorkflows('production', 'prod-fleet', [$workflow]);
+
+        $bad = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-prod-wrong',
+            'fleet_slug' => 'prod-fleet',
+            'stage' => 'production',
+        ], [
+            'X-Fleet-Secret' => 'staging-secret',
+        ]);
+        $bad->assertStatus(401);
+
+        $good = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-prod-right',
+            'fleet_slug' => 'prod-fleet',
+            'stage' => 'production',
+        ], [
+            'X-Fleet-Secret' => 'production-secret',
+        ]);
+        $good->assertStatus(200);
+    }
+
     public function test_fleet_register_rejects_duplicate_worker_id(): void
     {
         $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
@@ -267,7 +327,10 @@ class FleetRegistrationTest extends TestCase
 
     public function test_fleet_register_returns_503_when_not_configured(): void
     {
-        config(['services.comfyui.fleet_secret' => null]);
+        config([
+            'services.comfyui.fleet_secret_staging' => null,
+            'services.comfyui.fleet_secret_production' => null,
+        ]);
 
         $response = $this->postJson('/api/worker/register', [
             'worker_id' => 'i-noconfig',

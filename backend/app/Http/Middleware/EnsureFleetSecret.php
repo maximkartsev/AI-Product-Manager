@@ -9,7 +9,13 @@ class EnsureFleetSecret
 {
     public function handle(Request $request, Closure $next)
     {
-        $configured = (string) config('services.comfyui.fleet_secret');
+        $stage = (string) ($request->input('stage') ?: 'production');
+        if (!in_array($stage, ['staging', 'production'], true)) {
+            $stage = 'production';
+        }
+
+        $stageKey = $stage === 'staging' ? 'fleet_secret_staging' : 'fleet_secret_production';
+        $configured = (string) config("services.comfyui.{$stageKey}");
         if ($configured === '') {
             return response()->json([
                 'success' => false,

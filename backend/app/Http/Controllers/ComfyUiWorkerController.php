@@ -135,6 +135,7 @@ class ComfyUiWorkerController extends BaseController
             'last_ip' => $request->ip(),
             'registration_source' => 'fleet',
             'capacity_type' => $request->input('capacity_type'),
+            'stage' => $stage,
         ]);
 
         $worker->workflows()->sync($workflowIds);
@@ -303,7 +304,14 @@ class ComfyUiWorkerController extends BaseController
         // Get worker's assigned workflow IDs for dispatch filtering
         $workflowIds = $worker->workflows()->pluck('workflows.id')->toArray();
 
-        $dispatch = $this->leaseDispatch($worker->worker_id, $leaseTtlSeconds, $maxAttempts, $providers, $workflowIds);
+        $dispatch = $this->leaseDispatch(
+            $worker->worker_id,
+            $leaseTtlSeconds,
+            $maxAttempts,
+            $providers,
+            $workflowIds,
+            $worker->stage ?: 'production'
+        );
         if (!$dispatch) {
             return $this->sendResponse(['job' => null], 'No jobs available');
         }
@@ -590,12 +598,21 @@ class ComfyUiWorkerController extends BaseController
         return $worker;
     }
 
-    private function leaseDispatch(string $workerId, int $leaseTtlSeconds, int $maxAttempts, array $providers, array $workflowIds = []): ?AiJobDispatch
+    private function leaseDispatch(
+        string $workerId,
+        int $leaseTtlSeconds,
+        int $maxAttempts,
+        array $providers,
+        array $workflowIds = [],
+        ?string $stage = null
+    ): ?AiJobDispatch
     {
-        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts, $providers, $workflowIds) {
+        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts, $providers, $workflowIds, $stage) {
             $now = now();
+            $effectiveStage = $stage ?: 'production';
 
             $query = AiJobDispatch::query()
+                ->where('stage', $effectiveStage)
                 ->whereIn('provider', $providers)
                 ->where('attempts', '<', $maxAttempts)
                 ->where(function ($q) use ($now) {

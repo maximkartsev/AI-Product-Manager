@@ -15,7 +15,7 @@ AWS CDK infrastructure, and provides a targeted risk register with mitigations.
    - ECS service and task family names do not match CI/CD expectations.
 5. **Backend secrets missing**:
    - `APP_KEY` is created but never injected into ECS.
-   - `COMFYUI_FLEET_SECRET` is required but not injected, so worker registration fails.
+   - `COMFYUI_FLEET_SECRET_STAGING` / `COMFYUI_FLEET_SECRET_PRODUCTION` are required but not injected, so worker registration fails.
 6. **RDS init custom resource is broken**:
    - `pymysql` is not packaged in the Lambda.
    - Lambda uses the RDS SG (no egress + no self-ingress), so it cannot call
@@ -53,7 +53,7 @@ AWS CDK infrastructure, and provides a targeted risk register with mitigations.
 
 | Risk | Trigger | Impact | Mitigation | Owner |
 |------|---------|--------|------------|-------|
-| GPU workers fail to register | Missing `COMFYUI_FLEET_SECRET` in ECS | No jobs processed | Inject secret from SSM/Secrets Manager; add startup checks | Platform |
+| GPU workers fail to register | Missing `COMFYUI_FLEET_SECRET_STAGING` / `COMFYUI_FLEET_SECRET_PRODUCTION` in ECS | No jobs processed | Inject secret from SSM/Secrets Manager; add startup checks | Platform |
 | AMI boots but worker crashes | `python3` used outside venv or missing script | Queue backlog, stuck scale-in protection | Install worker into AMI and run via venv/systemd | Platform |
 | NAT data charges spike | High outbound traffic to ALB/S3 | Surprise monthly costs | Add VPC endpoints, consider internal ALB, monitor NAT bytes | Platform/Finance |
 | Stuck GPU instances | Scale-in protection never cleared | Cost leak | Ensure worker clears protection, add alarms on ActiveWorkers vs QueueDepth | Platform |

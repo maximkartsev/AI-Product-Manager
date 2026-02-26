@@ -21,6 +21,7 @@ class ComfyUiWorker extends CentralModel
         'last_ip',
         'registration_source',
         'capacity_type',
+        'stage',
     ];
 
     protected $casts = [

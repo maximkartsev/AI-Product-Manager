@@ -85,7 +85,11 @@ Workers run a background thread polling EC2 instance metadata every 5 seconds fo
 
 ### CloudWatch Metrics (8 per fleet)
 
-Published every minute by `workers:publish-metrics` artisan command:
+Published every minute by `workers:publish-metrics` artisan command.
+
+Dimensions:
+- `FleetSlug=<fleet-slug>`
+- `Stage=<stage>`
 
 | Metric | Purpose |
 |---|---|

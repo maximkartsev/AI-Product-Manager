@@ -67,6 +67,8 @@ class GalleryVideoResource extends JsonResource
                 'type' => $effect->type,
                 'is_premium' => $effect->is_premium,
                 'credits_cost' => $effect->credits_cost,
+                'is_active' => (bool) $effect->is_active,
+                'publication_status' => $effect->publication_status,
                 'configurable_properties' => $configurableProps,
                 'category' => $category ? [
                     'id' => $category->id,

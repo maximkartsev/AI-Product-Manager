@@ -252,9 +252,12 @@ export class ComputeStack extends cdk.Stack {
       TENANT_POOL_2_DB_HOST: ecs.Secret.fromSecretsManager(dbSecret, 'host'),
       TENANT_POOL_2_DB_USERNAME: ecs.Secret.fromSecretsManager(dbSecret, 'username'),
       TENANT_POOL_2_DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
-      COMFYUI_FLEET_SECRET: ecs.Secret.fromSsmParameter(this.fleetSecretParam),
       COMFYUI_ASSET_OPS_SECRET: ecs.Secret.fromSecretsManager(this.assetOpsSecret),
     };
+    const fleetSecretEnvKey = stage === 'production'
+      ? 'COMFYUI_FLEET_SECRET_PRODUCTION'
+      : 'COMFYUI_FLEET_SECRET_STAGING';
+    phpSecrets[fleetSecretEnvKey] = ecs.Secret.fromSsmParameter(this.fleetSecretParam);
 
     // Container 2: PHP-FPM (Laravel app)
     backendTaskDef.addContainer('php-fpm', {

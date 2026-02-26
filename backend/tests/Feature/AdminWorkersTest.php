@@ -98,12 +98,6 @@ class AdminWorkersTest extends TestCase
         return $this->patchJson($uri, $data);
     }
 
-    private function adminPut(string $uri, array $data = [])
-    {
-        $this->actAsAdmin();
-        return $this->putJson($uri, $data);
-    }
-
     private function createWorker(array $overrides = []): ComfyUiWorker
     {
         $uid = uniqid();
@@ -321,54 +315,11 @@ class AdminWorkersTest extends TestCase
         $this->assertSame(hash('sha256', $newToken), $dbHash);
     }
 
-    public function test_workers_assign_workflows_syncs_pivot(): void
+    public function test_workers_assign_workflows_endpoint_is_removed(): void
     {
         $worker = $this->createWorker();
-        $wf1 = $this->createWorkflow();
-        $wf2 = $this->createWorkflow();
-        $wf3 = $this->createWorkflow();
-
-        // Initially assign wf3
-        $worker->workflows()->sync([$wf3->id]);
-
-        // Sync to wf1 and wf2 (should remove wf3)
-        $response = $this->adminPut("/api/admin/workers/{$worker->id}/workflows", [
-            'workflow_ids' => [$wf1->id, $wf2->id],
-        ]);
-        $response->assertStatus(200);
-
-        $assignedIds = $worker->workflows()->pluck('workflows.id')->sort()->values()->toArray();
-        $this->assertSame([$wf1->id, $wf2->id], $assignedIds);
-    }
-
-    public function test_workers_assign_workflows_with_empty_array_clears_all(): void
-    {
-        $worker = $this->createWorker();
-        $wf = $this->createWorkflow();
-        $worker->workflows()->sync([$wf->id]);
-
-        $response = $this->adminPut("/api/admin/workers/{$worker->id}/workflows", [
-            'workflow_ids' => [],
-        ]);
-
-        $response->assertStatus(200);
-        $this->assertSame(0, $worker->workflows()->count());
-    }
-
-    public function test_workers_assign_workflows_rejects_nonexistent_workflow(): void
-    {
-        $worker = $this->createWorker();
-
-        $response = $this->adminPut("/api/admin/workers/{$worker->id}/workflows", [
-            'workflow_ids' => [99999],
-        ]);
-
-        $response->assertStatus(422);
-    }
-
-    public function test_workers_assign_workflows_returns_404_for_missing_worker(): void
-    {
-        $this->adminPut('/api/admin/workers/99999/workflows', [
+        $this->actAsAdmin();
+        $this->putJson("/api/admin/workers/{$worker->id}/workflows", [
             'workflow_ids' => [],
         ])->assertStatus(404);
     }

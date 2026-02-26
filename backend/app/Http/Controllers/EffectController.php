@@ -18,6 +18,7 @@ class EffectController extends BaseController
     {
         $query = Effect::query()
             ->where('is_active', true)
+            ->where('publication_status', 'published')
             ->with(['category', 'workflow']);
 
         $categorySlug = $request->get('category');
@@ -67,6 +68,7 @@ class EffectController extends BaseController
     {
         $query = Effect::query()
             ->where('is_active', true)
+            ->where('publication_status', 'published')
             ->with(['category', 'workflow']);
 
         if (is_numeric($slugOrId)) {

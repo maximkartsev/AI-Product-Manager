@@ -92,6 +92,7 @@ export default function ExploreClient() {
     slug: null,
     onError: setUploadError,
   });
+  const unavailableMessage = "Effect temporarily unavailable.";
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -169,6 +170,12 @@ export default function ExploreClient() {
 
   const handleTryItem = async (item: GalleryVideo) => {
     clearUploadError();
+    const isAvailable =
+      item.effect?.publication_status === "published" && Boolean(item.effect?.is_active);
+    if (!isAvailable) {
+      setUploadError(unavailableMessage);
+      return;
+    }
     if (item.effect?.type === "configurable") {
       requireAuthForNavigation(`/explore/${item.id}`);
       return;

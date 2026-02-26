@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTableView } from "@/components/ui/DataTable";
 import { useDataTable } from "@/hooks/useDataTable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { AdminDetailSheet, AdminDetailSection } from "@/components/admin/AdminDetailSheet";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
@@ -18,10 +17,7 @@ import {
   approveWorker,
   revokeWorker,
   rotateWorkerToken,
-  assignWorkerWorkflows,
-  getAdminWorkflows,
   type AdminWorker,
-  type AdminWorkflow,
   type WorkerAuditLog,
 } from "@/lib/api";
 
@@ -54,17 +50,11 @@ function Badge({ label, variant }: { label: string; variant: "green" | "red" | "
 export default function AdminWorkersPage() {
   const [detailWorker, setDetailWorker] = useState<AdminWorker | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [workflows, setWorkflows] = useState<AdminWorkflow[]>([]);
-  const [assignedWorkflowIds, setAssignedWorkflowIds] = useState<number[]>([]);
   const [displayName, setDisplayName] = useState("");
   const [isDraining, setIsDraining] = useState(false);
   const [saving, setSaving] = useState(false);
   const [plainToken, setPlainToken] = useState("");
   const [auditLogs, setAuditLogs] = useState<WorkerAuditLog[]>([]);
-
-  useEffect(() => {
-    getAdminWorkflows({ perPage: 100 }).then((d) => setWorkflows(d.items ?? [])).catch(() => {});
-  }, []);
 
   const openDetail = useCallback(async (worker: AdminWorker) => {
     try {
@@ -72,7 +62,6 @@ export default function AdminWorkersPage() {
       setDetailWorker(full);
       setDisplayName(full.display_name || "");
       setIsDraining(!!full.is_draining);
-      setAssignedWorkflowIds((full.workflows ?? []).map((w) => w.id));
       setAuditLogs(full.recent_audit_logs ?? []);
       setDetailOpen(true);
     } catch (error) {
@@ -86,7 +75,6 @@ export default function AdminWorkersPage() {
       setDetailWorker(full);
       setDisplayName(full.display_name || "");
       setIsDraining(!!full.is_draining);
-      setAssignedWorkflowIds((full.workflows ?? []).map((w) => w.id));
       setAuditLogs(full.recent_audit_logs ?? []);
     } catch {
       // silently ignore refresh failures
@@ -198,21 +186,6 @@ export default function AdminWorkersPage() {
     }
   };
 
-  const handleAssignWorkflows = async () => {
-    if (!detailWorker) return;
-    try {
-      await assignWorkerWorkflows(detailWorker.id, assignedWorkflowIds);
-      toast.success("Workflows assigned");
-      state.loadItems();
-    } catch (error) {
-      toast.error(extractErrorMessage(error, "Failed to assign workflows"));
-    }
-  };
-
-  const toggleWorkflow = (id: number) => {
-    setAssignedWorkflowIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
   return (
     <>
       <DataTableView
@@ -265,19 +238,21 @@ export default function AdminWorkersPage() {
               </div>
             </AdminDetailSection>
 
-            <AdminDetailSection title="Workflow Assignment">
-              {assignedWorkflowIds.length > 1 && (
-                <p className="text-xs text-yellow-400">Switching workflows takes time on the node and is not recommended due to performance issues</p>
+            <AdminDetailSection title="Assigned Workflows">
+              <p className="text-xs text-muted-foreground">
+                Assignments come from Workflow → ComfyUI Routing (fleets).
+              </p>
+              {detailWorker.workflows && detailWorker.workflows.length > 0 ? (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {detailWorker.workflows.map((wf) => (
+                    <div key={wf.id} className="text-sm text-muted-foreground">
+                      {wf.name || wf.slug || `Workflow #${wf.id}`}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">No workflows assigned.</p>
               )}
-              <div className="flex flex-col gap-1.5">
-                {workflows.filter((w) => w.is_active).map((wf) => (
-                  <div key={wf.id} className="flex items-center gap-2">
-                    <Checkbox checked={assignedWorkflowIds.includes(wf.id)} onCheckedChange={() => toggleWorkflow(wf.id)} id={`wf-${wf.id}`} />
-                    <label htmlFor={`wf-${wf.id}`} className="text-sm text-muted-foreground cursor-pointer">{wf.name || wf.slug}</label>
-                  </div>
-                ))}
-              </div>
-              <Button size="sm" className="mt-2" onClick={handleAssignWorkflows}>Save Workflows</Button>
             </AdminDetailSection>
 
             <AdminDetailSection title="Authentication">

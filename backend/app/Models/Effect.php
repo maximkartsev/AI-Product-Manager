@@ -28,6 +28,7 @@ class Effect extends CentralModel
         'is_active',
         'is_premium',
         'is_new',
+        'publication_status',
     ];
 
     protected $casts = [
@@ -62,6 +63,7 @@ class Effect extends CentralModel
             'is_active' => 'boolean|required',
             'is_premium' => 'boolean|required',
             'is_new' => 'boolean|required',
+            'publication_status' => 'string|in:development,published|nullable',
             'deleted_at' => 'date_format:Y-m-d H:i:s|nullable',
         ];
     }

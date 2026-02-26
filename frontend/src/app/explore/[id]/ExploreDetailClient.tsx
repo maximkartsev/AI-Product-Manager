@@ -28,6 +28,11 @@ export default function ExploreDetailClient({ id }: { id: number }) {
   const token = useAuthToken();
   const seededPromptsRef = useRef(false);
   const effectSlug = state.status === "success" ? state.data.effect?.slug ?? null : null;
+  const effectAvailable =
+    state.status === "success"
+      ? state.data.effect?.publication_status === "published" && Boolean(state.data.effect?.is_active)
+      : true;
+  const unavailableMessage = "Effect temporarily unavailable.";
   const {
     fileInputRef,
     startUpload,
@@ -53,7 +58,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
 
   const hasEnoughTokens = creditsCost === 0 || (walletBalance !== null && walletBalance >= creditsCost);
 
-  const uploadLabel = !token ? "Sign in to try" : "Try This Effect";
+  const uploadLabel = effectAvailable ? (!token ? "Sign in to try" : "Try This Effect") : "Effect Unavailable";
 
   useEffect(() => {
     if (!token) return;
@@ -62,6 +67,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
 
   const onUploadClick = async () => {
     clearUploadError();
+    if (!effectAvailable) return;
     if (!requireAuth()) return;
     const okTokens = await ensureTokens(creditsCost);
     if (!okTokens) return;
@@ -241,6 +247,11 @@ export default function ExploreDetailClient({ id }: { id: number }) {
                 isAuthenticated={!!token}
                 onTopUp={() => openPlans(creditsCost)}
               />
+              {!effectAvailable ? (
+                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] text-white/70">
+                  {unavailableMessage}
+                </div>
+              ) : null}
 
               {isConfigurable ? (
                 <EffectConfigFields
@@ -265,7 +276,7 @@ export default function ExploreDetailClient({ id }: { id: number }) {
       {state.status === "success" ? (
         <EffectUploadFooter
           label={uploadLabel}
-          disabled={!effectSlug}
+          disabled={!effectSlug || !effectAvailable}
           onClick={onUploadClick}
         />
       ) : null}

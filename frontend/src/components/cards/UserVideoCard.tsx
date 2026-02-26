@@ -47,7 +47,11 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
   const status = resolveVideoStatus(video.status);
   const previewUrl = video.processed_file_url || video.original_file_url;
   const canOpen = true;
-  const canRepeat = Boolean(video.effect?.slug);
+  const effectAvailable =
+    video.effect?.publication_status === "published" && Boolean(video.effect?.is_active);
+  const canRepeat = Boolean(video.effect?.slug && effectAvailable);
+  const repeatLabel = effectAvailable ? "Repeat" : "Effect Unavailable";
+  const repeatTitle = !effectAvailable ? "Effect temporarily unavailable." : undefined;
   const canDownload = Boolean(video.processed_file_url);
   const isCarousel = variant === "carousel";
   const actionTextSize = isCarousel ? "text-[10px]" : "text-[11px]";
@@ -154,6 +158,7 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
             type="button"
             onClick={onRepeat}
             disabled={!canRepeat}
+            title={repeatTitle}
             className={cn(
               "inline-flex w-full items-center justify-center gap-1 rounded-xl px-2 py-1.5 font-semibold text-white transition shadow-[0_12px_30px_rgba(236,72,153,0.25)]",
               "bg-gradient-to-r from-fuchsia-500 to-violet-500 hover:from-fuchsia-400 hover:to-violet-400",
@@ -162,7 +167,7 @@ export default function UserVideoCard({ variant, video, onOpen, onRepeat }: User
             )}
           >
             <Wand2 className={cn(isCarousel ? "h-3 w-3" : "h-3.5 w-3.5")} />
-            Repeat
+            {repeatLabel}
           </button>
         </>
       }

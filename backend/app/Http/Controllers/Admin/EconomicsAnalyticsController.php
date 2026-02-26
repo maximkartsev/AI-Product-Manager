@@ -6,6 +6,8 @@ use App\Http\Controllers\BaseController;
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\Effect;
+use App\Models\PartnerUsageEvent;
+use App\Models\PartnerUsagePrice;
 use App\Models\Tenant;
 use App\Models\TokenTransaction;
 use Illuminate\Http\JsonResponse;
@@ -140,7 +142,124 @@ class EconomicsAnalyticsController extends BaseController
             }
         }
 
-        $effectIds = array_keys($byEffectAgg);
+        $pricingByKey = [];
+        $partnerPricingRows = PartnerUsagePrice::query()->get([
+            'provider',
+            'node_class_type',
+            'model',
+            'usd_per_1m_input_tokens',
+            'usd_per_1m_output_tokens',
+            'usd_per_1m_total_tokens',
+            'usd_per_credit',
+        ]);
+        foreach ($partnerPricingRows as $priceRow) {
+            $providerKey = strtolower((string) ($priceRow->provider ?? 'unknown'));
+            $nodeClassKey = strtolower((string) ($priceRow->node_class_type ?? 'unknown'));
+            $modelKey = strtolower((string) ($priceRow->model ?? ''));
+            $pricingByKey[$providerKey . '|' . $nodeClassKey . '|' . $modelKey] = [
+                'usd_per_1m_input_tokens' => $priceRow->usd_per_1m_input_tokens,
+                'usd_per_1m_output_tokens' => $priceRow->usd_per_1m_output_tokens,
+                'usd_per_1m_total_tokens' => $priceRow->usd_per_1m_total_tokens,
+                'usd_per_credit' => $priceRow->usd_per_credit,
+            ];
+        }
+
+        $partnerUsageQuery = PartnerUsageEvent::query()->whereNotNull('effect_id');
+        if ($from) {
+            $partnerUsageQuery->where('created_at', '>=', $from);
+        }
+        if ($to) {
+            $partnerUsageQuery->where('created_at', '<=', $to . ' 23:59:59');
+        }
+
+        $partnerUsageRows = $partnerUsageQuery
+            ->select('effect_id', 'provider', 'node_class_type')
+            ->selectRaw("COALESCE(model, '') as model_key")
+            ->selectRaw('SUM(COALESCE(input_tokens, 0)) as input_tokens')
+            ->selectRaw('SUM(COALESCE(output_tokens, 0)) as output_tokens')
+            ->selectRaw('SUM(COALESCE(total_tokens, COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0))) as total_tokens')
+            ->selectRaw('SUM(COALESCE(credits, 0)) as credits')
+            ->selectRaw('SUM(COALESCE(cost_usd_reported, 0)) as cost_usd_reported')
+            ->groupBy('effect_id', 'provider', 'node_class_type', DB::raw("COALESCE(model, '')"))
+            ->get();
+
+        $partnerUsageByEffect = [];
+        $totalPartnerUsageInputTokens = 0;
+        $totalPartnerUsageOutputTokens = 0;
+        $totalPartnerUsageTokens = 0;
+        $totalPartnerUsageCredits = 0.0;
+        $totalPartnerUsageCostUsd = 0.0;
+        $totalPartnerUsageCostUsdReported = 0.0;
+
+        foreach ($partnerUsageRows as $usageRow) {
+            $effectId = (int) $usageRow->effect_id;
+            $providerKey = strtolower((string) ($usageRow->provider ?? 'unknown'));
+            $nodeClassKey = strtolower((string) ($usageRow->node_class_type ?? 'unknown'));
+            $modelKey = strtolower((string) ($usageRow->model_key ?? ''));
+            $pricing = $pricingByKey[$providerKey . '|' . $nodeClassKey . '|' . $modelKey] ?? null;
+
+            $inputTokens = (int) round((float) ($usageRow->input_tokens ?? 0));
+            $outputTokens = (int) round((float) ($usageRow->output_tokens ?? 0));
+            $totalTokens = (int) round((float) ($usageRow->total_tokens ?? 0));
+            $credits = (float) ($usageRow->credits ?? 0);
+            $costUsdReported = (float) ($usageRow->cost_usd_reported ?? 0);
+
+            $estimatedCostUsd = 0.0;
+            $hasPricing = false;
+            if ($pricing) {
+                $inputRate = $pricing['usd_per_1m_input_tokens'];
+                $outputRate = $pricing['usd_per_1m_output_tokens'];
+                $totalRate = $pricing['usd_per_1m_total_tokens'];
+                $creditRate = $pricing['usd_per_credit'];
+
+                if ($inputRate !== null) {
+                    $estimatedCostUsd += ((float) $inputRate * $inputTokens) / 1000000;
+                    $hasPricing = true;
+                }
+                if ($outputRate !== null) {
+                    $estimatedCostUsd += ((float) $outputRate * $outputTokens) / 1000000;
+                    $hasPricing = true;
+                }
+                if (!$hasPricing && $totalRate !== null) {
+                    $estimatedCostUsd += ((float) $totalRate * $totalTokens) / 1000000;
+                    $hasPricing = true;
+                }
+                if ($creditRate !== null) {
+                    $estimatedCostUsd += ((float) $creditRate * $credits);
+                    $hasPricing = true;
+                }
+            }
+            if (!$hasPricing && $costUsdReported > 0) {
+                $estimatedCostUsd = $costUsdReported;
+            }
+
+            if (!isset($partnerUsageByEffect[$effectId])) {
+                $partnerUsageByEffect[$effectId] = [
+                    'inputTokens' => 0,
+                    'outputTokens' => 0,
+                    'totalTokens' => 0,
+                    'credits' => 0.0,
+                    'costUsd' => 0.0,
+                    'costUsdReported' => 0.0,
+                ];
+            }
+
+            $partnerUsageByEffect[$effectId]['inputTokens'] += $inputTokens;
+            $partnerUsageByEffect[$effectId]['outputTokens'] += $outputTokens;
+            $partnerUsageByEffect[$effectId]['totalTokens'] += $totalTokens;
+            $partnerUsageByEffect[$effectId]['credits'] += $credits;
+            $partnerUsageByEffect[$effectId]['costUsd'] += $estimatedCostUsd;
+            $partnerUsageByEffect[$effectId]['costUsdReported'] += $costUsdReported;
+
+            $totalPartnerUsageInputTokens += $inputTokens;
+            $totalPartnerUsageOutputTokens += $outputTokens;
+            $totalPartnerUsageTokens += $totalTokens;
+            $totalPartnerUsageCredits += $credits;
+            $totalPartnerUsageCostUsd += $estimatedCostUsd;
+            $totalPartnerUsageCostUsdReported += $costUsdReported;
+        }
+
+        $effectIds = array_values(array_unique(array_merge(array_keys($byEffectAgg), array_keys($partnerUsageByEffect))));
         $effects = $effectIds
             ? Effect::with('workflow.fleets')->whereIn('id', $effectIds)->get()->keyBy('id')
             : collect();
@@ -148,7 +267,25 @@ class EconomicsAnalyticsController extends BaseController
         $byEffectResult = [];
         $totalPartnerCostUsd = 0.0;
 
-        foreach ($byEffectAgg as $effectId => $stats) {
+        foreach ($effectIds as $effectId) {
+            $stats = $byEffectAgg[$effectId] ?? [
+                'effectId' => $effectId,
+                'totalTokens' => 0,
+                'totalJobs' => 0,
+                'totalProcessingSeconds' => 0,
+                'totalQueueWaitSeconds' => 0,
+                'totalWorkUnits' => 0.0,
+                'workUnitKind' => null,
+            ];
+            $partnerUsageStats = $partnerUsageByEffect[$effectId] ?? [
+                'inputTokens' => 0,
+                'outputTokens' => 0,
+                'totalTokens' => 0,
+                'credits' => 0.0,
+                'costUsd' => 0.0,
+                'costUsdReported' => 0.0,
+            ];
+
             $effect = $effects->get($effectId);
             $workflow = $effect?->workflow;
             $partnerCostPerWorkUnit = $workflow?->partner_cost_per_work_unit;
@@ -156,6 +293,16 @@ class EconomicsAnalyticsController extends BaseController
             if ($partnerCostPerWorkUnit !== null && $stats['totalWorkUnits'] > 0) {
                 $partnerCostUsd = round($partnerCostPerWorkUnit * $stats['totalWorkUnits'], 4);
                 $totalPartnerCostUsd += $partnerCostUsd;
+            }
+            $partnerUsageCostUsd = $partnerUsageStats['costUsd'] > 0
+                ? round((float) $partnerUsageStats['costUsd'], 4)
+                : null;
+            $partnerUsageCostUsdReported = $partnerUsageStats['costUsdReported'] > 0
+                ? round((float) $partnerUsageStats['costUsdReported'], 4)
+                : null;
+            $partnerCostUsdTotal = null;
+            if ($partnerCostUsd !== null || $partnerUsageCostUsd !== null) {
+                $partnerCostUsdTotal = round((float) ($partnerCostUsd ?? 0) + (float) ($partnerUsageCostUsd ?? 0), 4);
             }
 
             $fleetSlugs = [];
@@ -204,6 +351,13 @@ class EconomicsAnalyticsController extends BaseController
                 'avgTokensPerWorkUnit' => $avgTokensPerWorkUnit,
                 'partnerCostPerWorkUnit' => $partnerCostPerWorkUnit,
                 'partnerCostUsd' => $partnerCostUsd,
+                'partnerUsageInputTokens' => (int) $partnerUsageStats['inputTokens'],
+                'partnerUsageOutputTokens' => (int) $partnerUsageStats['outputTokens'],
+                'partnerUsageTotalTokens' => (int) $partnerUsageStats['totalTokens'],
+                'partnerUsageCredits' => round((float) $partnerUsageStats['credits'], 6),
+                'partnerUsageCostUsd' => $partnerUsageCostUsd,
+                'partnerUsageCostUsdReported' => $partnerUsageCostUsdReported,
+                'partnerCostUsdTotal' => $partnerCostUsdTotal,
                 'fleetSlugs' => array_values(array_unique($fleetSlugs)),
                 'fleetInstanceTypes' => array_values(array_unique(array_keys($fleetInstanceTypes))),
             ];
@@ -220,6 +374,21 @@ class EconomicsAnalyticsController extends BaseController
                 'totalQueueWaitSeconds' => $totalQueueWaitSeconds,
                 'totalWorkUnits' => round($totalWorkUnits, 4),
                 'totalPartnerCostUsd' => $totalPartnerCostUsd > 0 ? round($totalPartnerCostUsd, 4) : null,
+                'totalPartnerUsageInputTokens' => $totalPartnerUsageInputTokens,
+                'totalPartnerUsageOutputTokens' => $totalPartnerUsageOutputTokens,
+                'totalPartnerUsageTokens' => $totalPartnerUsageTokens,
+                'totalPartnerUsageCredits' => $totalPartnerUsageCredits > 0
+                    ? round($totalPartnerUsageCredits, 6)
+                    : null,
+                'totalPartnerUsageCostUsd' => $totalPartnerUsageCostUsd > 0
+                    ? round($totalPartnerUsageCostUsd, 4)
+                    : null,
+                'totalPartnerUsageCostUsdReported' => $totalPartnerUsageCostUsdReported > 0
+                    ? round($totalPartnerUsageCostUsdReported, 4)
+                    : null,
+                'totalPartnerCostUsdCombined' => ($totalPartnerCostUsd > 0 || $totalPartnerUsageCostUsd > 0)
+                    ? round($totalPartnerCostUsd + $totalPartnerUsageCostUsd, 4)
+                    : null,
             ],
         ], 'Unit economics analytics retrieved successfully');
     }

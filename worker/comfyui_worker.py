@@ -1,7 +1,9 @@
 import hashlib
 import json
+import math
 import mimetypes
 import os
+import re
 import signal
 import tempfile
 import threading
@@ -256,7 +258,13 @@ def heartbeat(dispatch_id: int, lease_token: str) -> None:
     })
 
 
-def complete_job(dispatch_id: int, lease_token: str, provider_job_id: str, output_path: str) -> None:
+def complete_job(
+    dispatch_id: int,
+    lease_token: str,
+    provider_job_id: str,
+    output_path: str,
+    output_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     mime_type, _ = mimetypes.guess_type(output_path)
     payload = {
         "dispatch_id": dispatch_id,
@@ -268,6 +276,8 @@ def complete_job(dispatch_id: int, lease_token: str, provider_job_id: str, outpu
             "mime_type": mime_type or "video/mp4",
         },
     }
+    if output_metadata:
+        payload["output"]["metadata"] = output_metadata
     _backend_post("/api/worker/complete", payload)
 
 
@@ -423,11 +433,368 @@ def prepare_workflow(input_payload: Dict[str, Any], input_reference: Optional[st
     return workflow
 
 
+_INPUT_TOKEN_KEYS = {
+    "prompt_tokens",
+    "input_tokens",
+    "tokens_in",
+    "prompt_token_count",
+    "input_token_count",
+}
+_OUTPUT_TOKEN_KEYS = {
+    "completion_tokens",
+    "output_tokens",
+    "tokens_out",
+    "completion_token_count",
+    "output_token_count",
+}
+_TOTAL_TOKEN_KEYS = {
+    "total_tokens",
+    "token_count",
+    "total_token_count",
+}
+_CREDIT_KEYS = {
+    "credits",
+    "credit",
+    "credits_used",
+    "token_cost",
+    "partner_tokens",
+}
+_COST_USD_KEYS = {
+    "cost",
+    "usd_cost",
+    "cost_usd",
+    "price_usd",
+    "cost_in_usd",
+}
+_MODEL_KEYS = {
+    "model",
+    "model_name",
+    "model_id",
+    "engine",
+    "provider_model",
+    "llm_model",
+    "chat_model",
+}
+_USAGE_CONTAINER_KEYS = {
+    "usage",
+    "token_usage",
+    "usage_data",
+    "usage_metadata",
+    "billing",
+    "cost_breakdown",
+}
+_USAGE_HINT_KEYS = (
+    _INPUT_TOKEN_KEYS
+    | _OUTPUT_TOKEN_KEYS
+    | _TOTAL_TOKEN_KEYS
+    | _CREDIT_KEYS
+    | _COST_USD_KEYS
+    | _MODEL_KEYS
+)
+_PROVIDER_HINTS = {
+    "openai": "openai",
+    "gemini": "google",
+    "google": "google",
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "kling": "kling",
+    "runway": "runway",
+    "stability": "stability",
+    "vidu": "vidu",
+    "tripo": "tripo",
+    "luma": "luma",
+    "minimax": "minimax",
+    "ideogram": "ideogram",
+    "pixverse": "pixverse",
+    "recraft": "recraft",
+}
+_TEXT_PATTERNS = {
+    "input_tokens": re.compile(r"(?:input|prompt)\s*tokens?\D+([0-9][0-9,]*)", re.IGNORECASE),
+    "output_tokens": re.compile(r"(?:output|completion)\s*tokens?\D+([0-9][0-9,]*)", re.IGNORECASE),
+    "total_tokens": re.compile(r"total\s*tokens?\D+([0-9][0-9,]*)", re.IGNORECASE),
+    "credits": re.compile(r"credits?\D+([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
+    "cost_usd_reported": re.compile(r"(?:cost|price)\D+\$?\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
+}
+
+
+def _normalize_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            if cleaned == "":
+                return None
+            number = float(cleaned)
+        else:
+            number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _to_int(value: Any) -> Optional[int]:
+    number = _to_float(value)
+    if number is None or number < 0:
+        return None
+    return int(round(number))
+
+
+def _sanitize_json(value: Any, depth: int = 0) -> Any:
+    if depth > 4:
+        return None
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for index, (key, nested) in enumerate(value.items()):
+            if index >= 30:
+                result["__truncated__"] = True
+                break
+            key_str = str(key)
+            if len(key_str) > 80:
+                key_str = key_str[:80] + "...(truncated)"
+            result[key_str] = _sanitize_json(nested, depth + 1)
+        return result
+    if isinstance(value, list):
+        items = [_sanitize_json(item, depth + 1) for item in value[:30]]
+        if len(value) > 30:
+            items.append({"__truncated__": True})
+        return items
+    if isinstance(value, str):
+        text = value.strip()
+        if len(text) > 800:
+            return text[:800] + "...(truncated)"
+        return text
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    text = str(value)
+    return text[:200] + ("...(truncated)" if len(text) > 200 else "")
+
+
+def _iter_nested_dicts(payload: Any, depth: int = 0):
+    if depth > 5:
+        return
+    if isinstance(payload, dict):
+        yield payload
+        for nested in payload.values():
+            yield from _iter_nested_dicts(nested, depth + 1)
+    elif isinstance(payload, list):
+        for nested in payload[:30]:
+            yield from _iter_nested_dicts(nested, depth + 1)
+
+
+def _lookup_number(payload: Any, keys: set[str]) -> Optional[float]:
+    normalized_keys = {_normalize_key(key) for key in keys}
+    for dictionary in _iter_nested_dicts(payload):
+        for key, value in dictionary.items():
+            if _normalize_key(str(key)) not in normalized_keys:
+                continue
+            number = _to_float(value)
+            if number is not None:
+                return number
+    return None
+
+
+def _lookup_string(payload: Any, keys: set[str]) -> Optional[str]:
+    normalized_keys = {_normalize_key(key) for key in keys}
+    for dictionary in _iter_nested_dicts(payload):
+        for key, value in dictionary.items():
+            if _normalize_key(str(key)) not in normalized_keys:
+                continue
+            if value is None:
+                continue
+            text = str(value).strip()
+            if not text:
+                continue
+            if len(text) > 255:
+                text = text[:255] + "...(truncated)"
+            return text
+    return None
+
+
+def _dict_has_usage_hint(payload: Dict[str, Any]) -> bool:
+    return any(_normalize_key(str(key)) in _USAGE_HINT_KEYS for key in payload.keys())
+
+
+def _extract_usage_payload(node_output: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    for key in _USAGE_CONTAINER_KEYS:
+        value = node_output.get(key)
+        if isinstance(value, dict):
+            return value
+    for dictionary in _iter_nested_dicts(node_output):
+        if dictionary is node_output:
+            continue
+        if _dict_has_usage_hint(dictionary):
+            return dictionary
+    return None
+
+
+def _collect_text(payload: Any, acc: List[str], depth: int = 0) -> None:
+    if depth > 4 or len(acc) >= 25:
+        return
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text:
+            acc.append(text[:400])
+        return
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            normalized = _normalize_key(str(key))
+            if normalized in {"filename", "subfolder", "type"}:
+                continue
+            _collect_text(value, acc, depth + 1)
+            if len(acc) >= 25:
+                return
+    elif isinstance(payload, list):
+        for value in payload[:25]:
+            _collect_text(value, acc, depth + 1)
+            if len(acc) >= 25:
+                return
+
+
+def _extract_metrics_from_text(payload: Any) -> Dict[str, Optional[float]]:
+    chunks: List[str] = []
+    _collect_text(payload, chunks)
+    if not chunks:
+        return {}
+    text = "\n".join(chunks)[:4000]
+    metrics: Dict[str, Optional[float]] = {}
+    for metric, pattern in _TEXT_PATTERNS.items():
+        match = pattern.search(text)
+        if not match:
+            continue
+        metrics[metric] = _to_float(match.group(1))
+    return metrics
+
+
+def _detect_provider(node_class_type: str, node_inputs: Dict[str, Any]) -> str:
+    haystack_parts: List[str] = [node_class_type]
+    provider_hint = _lookup_string(node_inputs, {"provider", "vendor", "service"})
+    if provider_hint:
+        haystack_parts.append(provider_hint)
+    haystack = " ".join(haystack_parts).lower()
+    for hint, provider in _PROVIDER_HINTS.items():
+        if hint in haystack:
+            return provider
+    if "api" in haystack:
+        return "comfy_partner"
+    return "unknown"
+
+
+def extract_partner_usage_events(
+    workflow: Dict[str, Any],
+    history_entry: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    outputs = history_entry.get("outputs")
+    if not isinstance(outputs, dict):
+        return []
+
+    events: List[Dict[str, Any]] = []
+    for node_id, node_output in outputs.items():
+        if not isinstance(node_output, dict):
+            continue
+
+        node_id_str = str(node_id)
+        workflow_node = workflow.get(node_id_str, {}) if isinstance(workflow, dict) else {}
+        workflow_inputs = workflow_node.get("inputs", {}) if isinstance(workflow_node, dict) else {}
+        node_class_type = (
+            str(workflow_node.get("class_type") or node_output.get("class_type") or "unknown")
+            if isinstance(workflow_node, dict)
+            else "unknown"
+        )
+        node_display_name = None
+        if isinstance(workflow_node, dict):
+            meta = workflow_node.get("_meta")
+            if isinstance(meta, dict):
+                title = meta.get("title")
+                if title:
+                    node_display_name = str(title)
+
+        usage_payload = _extract_usage_payload(node_output)
+        ui_payload = node_output.get("ui") if isinstance(node_output.get("ui"), (dict, list)) else None
+
+        input_tokens = _lookup_number(usage_payload, _INPUT_TOKEN_KEYS) if usage_payload else None
+        output_tokens = _lookup_number(usage_payload, _OUTPUT_TOKEN_KEYS) if usage_payload else None
+        total_tokens = _lookup_number(usage_payload, _TOTAL_TOKEN_KEYS) if usage_payload else None
+        credits = _lookup_number(usage_payload, _CREDIT_KEYS) if usage_payload else None
+        cost_usd = _lookup_number(usage_payload, _COST_USD_KEYS) if usage_payload else None
+
+        if input_tokens is None:
+            input_tokens = _lookup_number(node_output, _INPUT_TOKEN_KEYS)
+        if output_tokens is None:
+            output_tokens = _lookup_number(node_output, _OUTPUT_TOKEN_KEYS)
+        if total_tokens is None:
+            total_tokens = _lookup_number(node_output, _TOTAL_TOKEN_KEYS)
+        if credits is None:
+            credits = _lookup_number(node_output, _CREDIT_KEYS)
+        if cost_usd is None:
+            cost_usd = _lookup_number(node_output, _COST_USD_KEYS)
+
+        text_metrics = _extract_metrics_from_text(ui_payload if ui_payload is not None else node_output)
+        if input_tokens is None:
+            input_tokens = text_metrics.get("input_tokens")
+        if output_tokens is None:
+            output_tokens = text_metrics.get("output_tokens")
+        if total_tokens is None:
+            total_tokens = text_metrics.get("total_tokens")
+        if credits is None:
+            credits = text_metrics.get("credits")
+        if cost_usd is None:
+            cost_usd = text_metrics.get("cost_usd_reported")
+
+        input_tokens_int = _to_int(input_tokens)
+        output_tokens_int = _to_int(output_tokens)
+        total_tokens_int = _to_int(total_tokens)
+        if total_tokens_int is None and input_tokens_int is not None and output_tokens_int is not None:
+            total_tokens_int = input_tokens_int + output_tokens_int
+
+        credits_float = _to_float(credits)
+        cost_usd_float = _to_float(cost_usd)
+        model = _lookup_string(workflow_inputs, _MODEL_KEYS)
+        if model is None and usage_payload is not None:
+            model = _lookup_string(usage_payload, _MODEL_KEYS)
+        provider = _detect_provider(node_class_type, workflow_inputs if isinstance(workflow_inputs, dict) else {})
+
+        if (
+            input_tokens_int is None
+            and output_tokens_int is None
+            and total_tokens_int is None
+            and credits_float is None
+            and cost_usd_float is None
+            and usage_payload is None
+            and ui_payload is None
+        ):
+            continue
+
+        event: Dict[str, Any] = {
+            "node_id": node_id_str,
+            "node_class_type": node_class_type,
+            "node_display_name": node_display_name,
+            "provider": provider,
+            "model": model,
+            "input_tokens": input_tokens_int,
+            "output_tokens": output_tokens_int,
+            "total_tokens": total_tokens_int,
+            "credits": round(credits_float, 6) if credits_float is not None else None,
+            "cost_usd_reported": round(cost_usd_float, 8) if cost_usd_float is not None else None,
+            "usage_json": _sanitize_json(usage_payload) if usage_payload is not None else None,
+            "ui_json": _sanitize_json(ui_payload) if ui_payload is not None else None,
+        }
+        events.append(event)
+
+    return events
+
+
 def run_comfyui(
     workflow: Dict[str, Any],
     output_node_id: Optional[str],
     extra_data: Optional[Dict[str, Any]] = None
-) -> Tuple[str, Dict[str, Any]]:
+) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     prompt_payload: Dict[str, Any] = {"prompt": workflow, "client_id": WORKER_ID}
     if extra_data:
         prompt_payload["extra_data"] = extra_data
@@ -455,7 +822,7 @@ def run_comfyui(
 
             outputs = record.get("outputs", {})
             if outputs:
-                return prompt_id, outputs
+                return str(prompt_id), outputs, record
 
         time.sleep(2)
 
@@ -554,7 +921,7 @@ def cloud_wait_for_job(prompt_id: str) -> None:
         time.sleep(2)
 
 
-def cloud_fetch_outputs(prompt_id: str) -> Dict[str, Any]:
+def cloud_fetch_outputs(prompt_id: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     history_resp = _cloud_request("GET", f"/api/history_v2/{prompt_id}")
     history = history_resp.json()
     record = history.get(prompt_id) or history.get(str(prompt_id))
@@ -563,7 +930,7 @@ def cloud_fetch_outputs(prompt_id: str) -> Dict[str, Any]:
     outputs = record.get("outputs", {})
     if not outputs:
         raise RuntimeError("Comfy Cloud outputs missing.")
-    return outputs
+    return outputs, record
 
 
 def cloud_download_output(file_info: Dict[str, Any]) -> str:
@@ -647,12 +1014,26 @@ def process_job(job: Dict[str, Any]) -> None:
             extra_data = dict(input_payload.get("extra_data") or {})
             prompt_id = cloud_submit_prompt(workflow, extra_data or None)
             cloud_wait_for_job(prompt_id)
-            outputs = cloud_fetch_outputs(prompt_id)
+            outputs, history_entry = cloud_fetch_outputs(prompt_id)
             output_file_info = extract_output_file(outputs, output_node_id)
             output_path = cloud_download_output(output_file_info)
 
+            output_metadata: Dict[str, Any] = {}
+            try:
+                usage_events = extract_partner_usage_events(workflow, history_entry)
+                if usage_events:
+                    output_metadata["partner_usage_events"] = usage_events
+            except Exception as exc:
+                print(f"[worker] Partner usage extraction skipped: {exc}")
+
             upload_output(output_url, output_headers, output_path)
-            complete_job(dispatch_id, lease_token, prompt_id, output_path)
+            complete_job(
+                dispatch_id,
+                lease_token,
+                prompt_id,
+                output_path,
+                output_metadata if output_metadata else None,
+            )
             return
 
         # self_hosted: run on local ComfyUI instance
@@ -660,12 +1041,26 @@ def process_job(job: Dict[str, Any]) -> None:
         workflow = prepare_workflow(input_payload, input_path, asset_placeholder_map)
 
         extra_data = input_payload.get("extra_data")
-        provider_job_id, outputs = run_comfyui(workflow, output_node_id, extra_data)
+        provider_job_id, outputs, history_entry = run_comfyui(workflow, output_node_id, extra_data)
         output_file_info = extract_output_file(outputs, output_node_id)
         output_path = download_comfyui_output(output_file_info)
 
+        output_metadata: Dict[str, Any] = {}
+        try:
+            usage_events = extract_partner_usage_events(workflow, history_entry)
+            if usage_events:
+                output_metadata["partner_usage_events"] = usage_events
+        except Exception as exc:
+            print(f"[worker] Partner usage extraction skipped: {exc}")
+
         upload_output(output_url, output_headers, output_path)
-        complete_job(dispatch_id, lease_token, provider_job_id, output_path)
+        complete_job(
+            dispatch_id,
+            lease_token,
+            provider_job_id,
+            output_path,
+            output_metadata if output_metadata else None,
+        )
     finally:
         _safe_unlink(input_path)
         _safe_unlink(output_path)

@@ -105,14 +105,15 @@ Called inside `ComfyUiWorkerController.poll()` within a central DB transaction:
 
 ## 4. Worker Registration
 
-**Single path: fleet self-registration.** Admin panel provides management (approve, revoke, drain, rotate token, assign workflows) but cannot create workers.
+**Single path: fleet self-registration.** Admin panel provides management (approve, revoke, drain, rotate token) and read-only visibility into fleet-derived assignments, but cannot create workers or manually assign workflows.
 
 ```
 POST /api/worker/register
 Header: X-Fleet-Secret: <shared secret>
 Body: {
   worker_id: "i-abc123",        // typically EC2 instance ID
-  workflow_slugs: ["face-swap"], // REQUIRED, min:1, must exist in workflows table
+  fleet_slug: "face-swap-fleet", // REQUIRED, must match comfyui_gpu_fleets.slug for the stage
+  stage: "production",           // REQUIRED in multi-stage deployments (staging|production)
   max_concurrency: 1,
   capabilities: {...}
 }
@@ -125,7 +126,7 @@ Response: {
 
 **Registration logic** (`ComfyUiWorkerController.register()`):
 
-1. Validate inputs; `workflow_slugs` must exist in `workflows` table.
+1. Validate inputs (`fleet_slug`, `stage`); enforce stage safety; resolve active workflows from `comfyui_workflow_fleets`.
 2. Fleet worker count cap check (`max_fleet_workers` config, default 50).
 3. Duplicate check — reject if `worker_id` already registered.
 4. **ASG instance validation** — if `worker_id` starts with `i-` and `validate_asg_instance` config is enabled, calls AWS `describeAutoScalingInstances` to verify the instance belongs to a known ASG. Fails open if AWS API unreachable.
@@ -350,9 +351,9 @@ JOB_RESERVE  ──────────────▶  JOB_CONSUME (on succ
                      │  (input/output)   │
                      └──────────────────┘
 
-ASG per workflow:
-  face-swap ASG  ──▶  [i-001, i-002]  (workflow_slugs=["face-swap"])
-  upscale ASG    ──▶  [i-003]         (workflow_slugs=["upscale"])
+ASG per fleet:
+  face-swap ASG  ──▶  [i-001, i-002]  (fleet_slug="face-swap-fleet", stage="production")
+  upscale ASG    ──▶  [i-003]         (fleet_slug="upscale-fleet", stage="production")
 ```
 
 ---

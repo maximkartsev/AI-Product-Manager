@@ -198,30 +198,6 @@ class WorkloadController extends BaseController
         ], 'Workload data retrieved');
     }
 
-    public function assignWorkers(Request $request, $id): JsonResponse
-    {
-        $workflow = Workflow::find($id);
-        if (!$workflow) {
-            return $this->sendError('Workflow not found');
-        }
-
-        $validator = Validator::make($request->all(), [
-            'worker_ids' => 'present|array',
-            'worker_ids.*' => 'integer|exists:comfy_ui_workers,id',
-        ]);
-
-        if ($validator->fails()) {
-            return $this->sendError('Validation Error', $validator->errors(), 422);
-        }
-
-        $workflow->workers()->sync($request->input('worker_ids', []));
-
-        return $this->sendResponse([
-            'workflow_id' => $workflow->id,
-            'worker_ids' => $workflow->workers()->pluck('comfy_ui_workers.id')->toArray(),
-        ], 'Workers assigned');
-    }
-
     private function percentile(array $values, float $percentile): ?float
     {
         if (empty($values)) {

@@ -165,29 +165,6 @@ class WorkersController extends BaseController
         ], 'Token rotated');
     }
 
-    public function assignWorkflows(Request $request, $id): JsonResponse
-    {
-        $worker = ComfyUiWorker::find($id);
-        if (!$worker) {
-            return $this->sendError('Worker not found');
-        }
-
-        $validator = Validator::make($request->all(), [
-            'workflow_ids' => 'present|array',
-            'workflow_ids.*' => 'integer|exists:workflows,id',
-        ]);
-
-        if ($validator->fails()) {
-            return $this->sendError('Validation Error', $validator->errors(), 422);
-        }
-
-        $worker->workflows()->sync($request->input('workflow_ids', []));
-
-        $worker->load('workflows');
-
-        return $this->sendResponse($worker, 'Workflows assigned');
-    }
-
     public function auditLogs(Request $request, $id): JsonResponse
     {
         $worker = ComfyUiWorker::find($id);

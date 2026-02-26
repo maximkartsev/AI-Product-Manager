@@ -12,12 +12,19 @@ import { toast } from "sonner";
 import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   getEconomicsSettings,
+  getPartnerUsageAnalytics,
+  getPartnerUsagePricing,
   updateEconomicsSettings,
+  updatePartnerUsagePricing,
   getUnitEconomicsAnalytics,
   getAdminWorkflows,
   updateAdminWorkflow,
   type EconomicsSettings,
   type EconomicsSettingsPayload,
+  type PartnerUsageAnalyticsData,
+  type PartnerUsageByProviderNodeModel,
+  type PartnerUsagePricingItem,
+  type PartnerUsagePricingPayload,
   type UnitEconomicsByEffect,
   type UnitEconomicsData,
   type AdminWorkflow,
@@ -27,6 +34,18 @@ type RateRow = {
   id: string;
   instanceType: string;
   rate: string;
+};
+
+type PartnerPricingDraftRow = {
+  id: number;
+  provider: string;
+  nodeClassType: string;
+  model: string;
+  usdPer1mInputTokens: string;
+  usdPer1mOutputTokens: string;
+  usdPer1mTotalTokens: string;
+  usdPerCredit: string;
+  lastSeenAt?: string | null;
 };
 
 type InstanceTypeMeta = {
@@ -80,6 +99,32 @@ function buildRateRows(settings: EconomicsSettings | null): RateRow[] {
   }));
 }
 
+function toDraftNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function buildPartnerPricingDraftRows(items: PartnerUsagePricingItem[]): PartnerPricingDraftRow[] {
+  return items.map((item) => ({
+    id: item.id,
+    provider: item.provider,
+    nodeClassType: item.nodeClassType,
+    model: item.model ?? "",
+    usdPer1mInputTokens: toDraftNumber(item.usdPer1mInputTokens),
+    usdPer1mOutputTokens: toDraftNumber(item.usdPer1mOutputTokens),
+    usdPer1mTotalTokens: toDraftNumber(item.usdPer1mTotalTokens),
+    usdPerCredit: toDraftNumber(item.usdPerCredit),
+    lastSeenAt: item.lastSeenAt ?? null,
+  }));
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 function InfoIconButton({ title, ariaLabel }: { title: string; ariaLabel: string }) {
   return (
     <TooltipProvider delayDuration={150}>
@@ -117,6 +162,11 @@ export default function AdminEconomicsPage() {
   const [toDate, setToDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [unitData, setUnitData] = useState<UnitEconomicsData | null>(null);
   const [loadingUnitData, setLoadingUnitData] = useState(false);
+  const [partnerUsageData, setPartnerUsageData] = useState<PartnerUsageAnalyticsData | null>(null);
+  const [loadingPartnerUsage, setLoadingPartnerUsage] = useState(false);
+  const [partnerPricingDraftRows, setPartnerPricingDraftRows] = useState<PartnerPricingDraftRow[]>([]);
+  const [loadingPartnerPricing, setLoadingPartnerPricing] = useState(true);
+  const [savingPartnerPricing, setSavingPartnerPricing] = useState(false);
 
   const loadSettings = useCallback(async () => {
     setLoadingSettings(true);
@@ -152,6 +202,30 @@ export default function AdminEconomicsPage() {
     }
   }, []);
 
+  const loadPartnerPricing = useCallback(async () => {
+    setLoadingPartnerPricing(true);
+    try {
+      const result = await getPartnerUsagePricing();
+      setPartnerPricingDraftRows(buildPartnerPricingDraftRows(result.items ?? []));
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to load partner pricing."));
+    } finally {
+      setLoadingPartnerPricing(false);
+    }
+  }, []);
+
+  const loadPartnerUsage = useCallback(async () => {
+    setLoadingPartnerUsage(true);
+    try {
+      const result = await getPartnerUsageAnalytics({ from: fromDate, to: toDate });
+      setPartnerUsageData(result);
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to load partner usage."));
+    } finally {
+      setLoadingPartnerUsage(false);
+    }
+  }, [fromDate, toDate]);
+
   const loadUnitEconomics = useCallback(async () => {
     setLoadingUnitData(true);
     try {
@@ -167,11 +241,17 @@ export default function AdminEconomicsPage() {
   useEffect(() => {
     loadSettings();
     loadWorkflows();
-  }, [loadSettings, loadWorkflows]);
+    loadPartnerPricing();
+  }, [loadSettings, loadWorkflows, loadPartnerPricing]);
 
   useEffect(() => {
     loadUnitEconomics();
-  }, [loadUnitEconomics]);
+    loadPartnerUsage();
+  }, [loadUnitEconomics, loadPartnerUsage]);
+
+  const refreshEconomicsPreview = useCallback(async () => {
+    await Promise.all([loadUnitEconomics(), loadPartnerUsage()]);
+  }, [loadPartnerUsage, loadUnitEconomics]);
 
   const handleSaveSettings = async () => {
     const tokenValue = parseOptionalNumber(tokenRate);
@@ -237,6 +317,42 @@ export default function AdminEconomicsPage() {
       toast.error(extractErrorMessage(error, "Failed to update partner costs."));
     } finally {
       setSavingPartnerCosts(false);
+    }
+  };
+
+  const updatePartnerPricingDraftRow = (id: number, patch: Partial<PartnerPricingDraftRow>) => {
+    setPartnerPricingDraftRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  const handleSavePartnerUsagePricing = async () => {
+    const items = partnerPricingDraftRows
+      .map((row) => ({
+        provider: row.provider.trim(),
+        nodeClassType: row.nodeClassType.trim(),
+        model: row.model.trim() || null,
+        usdPer1mInputTokens: parseOptionalNumber(row.usdPer1mInputTokens),
+        usdPer1mOutputTokens: parseOptionalNumber(row.usdPer1mOutputTokens),
+        usdPer1mTotalTokens: parseOptionalNumber(row.usdPer1mTotalTokens),
+        usdPerCredit: parseOptionalNumber(row.usdPerCredit),
+      }))
+      .filter((row) => row.provider && row.nodeClassType);
+
+    if (items.length === 0) {
+      toast.error("No partner pricing rows available to save.");
+      return;
+    }
+
+    const payload: PartnerUsagePricingPayload = { items };
+    setSavingPartnerPricing(true);
+    try {
+      const result = await updatePartnerUsagePricing(payload);
+      setPartnerPricingDraftRows(buildPartnerPricingDraftRows(result.items ?? []));
+      await Promise.all([loadPartnerUsage(), loadUnitEconomics()]);
+      toast.success("Partner token/credit pricing updated.");
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to update partner pricing."));
+    } finally {
+      setSavingPartnerPricing(false);
     }
   };
 
@@ -314,7 +430,7 @@ export default function AdminEconomicsPage() {
     [settingsSummary],
   );
 
-  const partnerCostUsd = useCallback(
+  const partnerWorkflowCostUsd = useCallback(
     (effect: UnitEconomicsByEffect) => {
       if (!effect.workflowId) return effect.partnerCostUsd ?? null;
       const cost = workflowPartnerCost.get(effect.workflowId);
@@ -324,6 +440,20 @@ export default function AdminEconomicsPage() {
       return cost * effect.totalWorkUnits;
     },
     [workflowPartnerCost],
+  );
+
+  const partnerUsageCostUsd = useCallback((effect: UnitEconomicsByEffect) => effect.partnerUsageCostUsd ?? null, []);
+
+  const partnerCostUsd = useCallback(
+    (effect: UnitEconomicsByEffect) => {
+      const workflowCost = partnerWorkflowCostUsd(effect);
+      const usageCost = partnerUsageCostUsd(effect);
+      if (workflowCost === null && usageCost === null) {
+        return null;
+      }
+      return (workflowCost ?? 0) + (usageCost ?? 0);
+    },
+    [partnerUsageCostUsd, partnerWorkflowCostUsd],
   );
 
   const marginUsd = useCallback(
@@ -366,6 +496,11 @@ export default function AdminEconomicsPage() {
       marginUsd: marginUsdTotal,
     };
   }, [unitData, settingsSummary, computeCostUsd, partnerCostUsd, revenueUsd]);
+
+  const partnerUsageRows = useMemo<PartnerUsageByProviderNodeModel[]>(
+    () => partnerUsageData?.byProviderNodeModel ?? [],
+    [partnerUsageData],
+  );
 
   return (
     <div>
@@ -552,6 +687,187 @@ export default function AdminEconomicsPage() {
           </div>
         </section>
 
+        <section className="space-y-4 rounded-lg border border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold">Partner Token/Credit Pricing</h2>
+              <p className="text-xs text-muted-foreground">
+                Auto-discovered from real executions. Configure token (per 1M) and credit prices for unit economics.
+              </p>
+            </div>
+            <Button onClick={handleSavePartnerUsagePricing} disabled={savingPartnerPricing || loadingPartnerPricing}>
+              {savingPartnerPricing ? "Saving..." : "Save Partner Pricing"}
+            </Button>
+          </div>
+
+          {loadingPartnerPricing ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>Node</TableHead>
+                    <TableHead>Model</TableHead>
+                    <TableHead className="text-right">Input $ / 1M</TableHead>
+                    <TableHead className="text-right">Output $ / 1M</TableHead>
+                    <TableHead className="text-right">Total $ / 1M</TableHead>
+                    <TableHead className="text-right">$ / Credit</TableHead>
+                    <TableHead className="text-right">Last Seen</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {partnerPricingDraftRows.length > 0 ? (
+                    partnerPricingDraftRows.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-medium">{row.provider}</TableCell>
+                        <TableCell>{row.nodeClassType}</TableCell>
+                        <TableCell>{row.model || "-"}</TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            value={row.usdPer1mInputTokens}
+                            onChange={(event) =>
+                              updatePartnerPricingDraftRow(row.id, { usdPer1mInputTokens: event.target.value })
+                            }
+                            className="text-right"
+                            placeholder="1.25"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            value={row.usdPer1mOutputTokens}
+                            onChange={(event) =>
+                              updatePartnerPricingDraftRow(row.id, { usdPer1mOutputTokens: event.target.value })
+                            }
+                            className="text-right"
+                            placeholder="5.00"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            value={row.usdPer1mTotalTokens}
+                            onChange={(event) =>
+                              updatePartnerPricingDraftRow(row.id, { usdPer1mTotalTokens: event.target.value })
+                            }
+                            className="text-right"
+                            placeholder="2.00"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            value={row.usdPerCredit}
+                            onChange={(event) =>
+                              updatePartnerPricingDraftRow(row.id, { usdPerCredit: event.target.value })
+                            }
+                            className="text-right"
+                            placeholder="0.01"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-muted-foreground">
+                          {formatDateTime(row.lastSeenAt)}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                        No partner nodes discovered yet. Run workflows with partner nodes to populate this table.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-4 rounded-lg border border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold">Partner Usage (Real)</h2>
+              <p className="text-xs text-muted-foreground">
+                Aggregated usage by provider/node/model for the selected period.
+              </p>
+            </div>
+            <Button variant="outline" onClick={loadPartnerUsage} disabled={loadingPartnerUsage}>
+              {loadingPartnerUsage ? "Refreshing..." : "Refresh Partner Usage"}
+            </Button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-md border border-border bg-muted px-3 py-2">
+              <div className="text-xs text-muted-foreground">Partner Usage Tokens</div>
+              <div className="text-lg font-semibold">
+                {formatTokens(partnerUsageData?.totals.totalTokens ?? unitData?.totals.totalPartnerUsageTokens ?? 0)}
+              </div>
+            </div>
+            <div className="rounded-md border border-border bg-muted px-3 py-2">
+              <div className="text-xs text-muted-foreground">Partner Credits</div>
+              <div className="text-lg font-semibold">{formatNumber(partnerUsageData?.totals.credits ?? 0, 4)}</div>
+            </div>
+            <div className="rounded-md border border-border bg-muted px-3 py-2">
+              <div className="text-xs text-muted-foreground">Reported Partner Cost (USD)</div>
+              <div className="text-lg font-semibold">
+                {formatCurrency(partnerUsageData?.totals.costUsdReported ?? unitData?.totals.totalPartnerUsageCostUsdReported)}
+              </div>
+            </div>
+          </div>
+
+          {loadingPartnerUsage ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>Node</TableHead>
+                    <TableHead>Model</TableHead>
+                    <TableHead className="text-right">Events</TableHead>
+                    <TableHead className="text-right">Input Tokens</TableHead>
+                    <TableHead className="text-right">Output Tokens</TableHead>
+                    <TableHead className="text-right">Total Tokens</TableHead>
+                    <TableHead className="text-right">Credits</TableHead>
+                    <TableHead className="text-right">Reported $</TableHead>
+                    <TableHead className="text-right">Last Seen</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {partnerUsageRows.length > 0 ? (
+                    partnerUsageRows.map((row, index) => (
+                      <TableRow key={`${row.provider}-${row.nodeClassType}-${row.model ?? "none"}-${index}`}>
+                        <TableCell className="font-medium">{row.provider}</TableCell>
+                        <TableCell>{row.nodeClassType}</TableCell>
+                        <TableCell>{row.model ?? "-"}</TableCell>
+                        <TableCell className="text-right">{formatNumber(row.eventsCount, 0)}</TableCell>
+                        <TableCell className="text-right">{formatTokens(row.inputTokens)}</TableCell>
+                        <TableCell className="text-right">{formatTokens(row.outputTokens)}</TableCell>
+                        <TableCell className="text-right">{formatTokens(row.totalTokens)}</TableCell>
+                        <TableCell className="text-right">{formatNumber(row.credits, 4)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(row.costUsdReported)}</TableCell>
+                        <TableCell className="text-right text-xs text-muted-foreground">
+                          {formatDateTime(row.lastSeenAt)}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center text-muted-foreground py-10">
+                        No partner usage for this period.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </section>
+
         <section className="space-y-4">
           <header className="flex flex-wrap items-center justify-between gap-2">
             <div className="space-y-1">
@@ -579,8 +895,8 @@ export default function AdminEconomicsPage() {
                   className="w-36 bg-muted border-border"
                 />
               </div>
-              <Button variant="outline" onClick={loadUnitEconomics} disabled={loadingUnitData}>
-                {loadingUnitData ? "Refreshing..." : "Refresh"}
+              <Button variant="outline" onClick={refreshEconomicsPreview} disabled={loadingUnitData || loadingPartnerUsage}>
+                {loadingUnitData || loadingPartnerUsage ? "Refreshing..." : "Refresh"}
               </Button>
             </div>
           </header>

@@ -47,7 +47,7 @@ Every dispatch has a `workflow_id`. Workers only receive jobs matching their ass
 
 - **Effects** must have a `workflow_id` (NOT NULL). An effect without a workflow cannot create jobs.
 - **Dispatches** must have a `workflow_id` (NOT NULL). Orphaned dispatches are cleaned up.
-- **Workers** must register with `workflow_slugs` (required, min:1). A worker without workflows gets zero jobs.
+- **Workers** register with `fleet_slug` + `stage`; backend resolves active workflow assignments from `comfyui_workflow_fleets`. A worker with no mapped active workflows gets zero jobs.
 - **leaseDispatch()** uses strict `whereIn('workflow_id', $workflowIds)` — no `orWhereNull` fallback.
 
 This prevents a face-swap worker from receiving an upscale job (wrong models loaded = crash + wasted GPU time).
@@ -64,11 +64,11 @@ All workers register via fleet self-registration:
 ```
 POST /api/worker/register
 Header: X-Fleet-Secret: <secret>
-Body: { worker_id, workflow_slugs: [...], max_concurrency, ... }
+Body: { worker_id, fleet_slug, stage, max_concurrency, ... }
 Response: { token, worker_id, workflows_assigned }
 ```
 
-Admin panel provides management (approve/revoke/drain/rotate-token/assign-workflows) but not creation.
+Admin panel provides management (approve/revoke/drain/rotate-token) and read-only visibility into fleet-derived assignments, but not worker creation or manual workflow assignment.
 
 ### Worker protocol (pull-based)
 

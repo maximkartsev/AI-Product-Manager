@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTableView } from "@/components/ui/DataTable";
 import { useDataTable } from "@/hooks/useDataTable";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { AdminDetailSheet, AdminDetailSection } from "@/components/admin/AdminDetailSheet";
 import { toast } from "sonner";
@@ -240,7 +242,11 @@ export default function AdminWorkersPage() {
 
             <AdminDetailSection title="Assigned Workflows">
               <p className="text-xs text-muted-foreground">
-                Assignments come from Workflow → ComfyUI Routing (fleets).
+                Assignments come from{" "}
+                <Link href="/admin/workflows" className="underline underline-offset-2 hover:text-foreground">
+                  Workflow -&gt; ComfyUI Routing
+                </Link>
+                .
               </p>
               {detailWorker.workflows && detailWorker.workflows.length > 0 ? (
                 <div className="mt-2 flex flex-col gap-1.5">

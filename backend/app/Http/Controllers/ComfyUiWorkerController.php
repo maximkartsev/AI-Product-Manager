@@ -1072,8 +1072,12 @@ class ComfyUiWorkerController extends BaseController
             $totalTokens = $this->normalizeUsageInt($event['total_tokens'] ?? null);
             $credits = $this->normalizeUsageFloat($event['credits'] ?? null, 6);
             $costUsdReported = $this->normalizeUsageFloat($event['cost_usd_reported'] ?? null, 8);
-            $usageJson = is_array($event['usage_json'] ?? null) ? $event['usage_json'] : null;
-            $uiJson = is_array($event['ui_json'] ?? null) ? $event['ui_json'] : null;
+            $usageJson = $this->normalizeUsageJson(
+                is_array($event['usage_json'] ?? null) ? $event['usage_json'] : null
+            );
+            $uiJson = $this->normalizeUsageJson(
+                is_array($event['ui_json'] ?? null) ? $event['ui_json'] : null
+            );
 
             if (
                 $inputTokens === null
@@ -1225,6 +1229,18 @@ class ComfyUiWorkerController extends BaseController
             return null;
         }
         return round($number, $precision);
+    }
+
+    private function normalizeUsageJson(?array $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($encoded === false) {
+            return null;
+        }
+        return $encoded;
     }
 
     private function withTenant(string $tenantId, \Closure $callback)

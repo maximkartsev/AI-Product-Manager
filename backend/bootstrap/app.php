@@ -6,7 +6,9 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\RateLimiter;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -50,6 +52,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(function (\Throwable $e, $request) {
             if ($e instanceof AuthenticationException) {
                 return null; // handled above
+            }
+            if ($e instanceof ValidationException) {
+                return null; // let Laravel render standard 422 validation response
+            }
+            if ($e instanceof HttpExceptionInterface) {
+                return null; // preserve framework HTTP status handling (e.g. 404)
             }
             if ($request->expectsJson() || $request->is('api/*')) {
                 \Illuminate\Support\Facades\Log::error('Unhandled exception', [

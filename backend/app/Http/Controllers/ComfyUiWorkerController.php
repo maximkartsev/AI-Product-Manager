@@ -13,10 +13,13 @@ use App\Models\File;
 use App\Models\Tenant;
 use App\Models\Video;
 use App\Models\Workflow;
+use App\Models\WorkerAuditLog;
 use App\Services\OutputValidationService;
 use App\Services\PresignedUrlService;
 use App\Services\TokenLedgerService;
 use App\Services\WorkerAuditService;
+use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -425,7 +428,10 @@ class ComfyUiWorkerController extends BaseController
             $job->save();
 
             if ($job->started_at && $job->completed_at) {
-                $durationSeconds = (int) $job->started_at->diffInSeconds($job->completed_at);
+                $durationSeconds = $this->elapsedSeconds(
+                    $this->asCarbon($job->started_at),
+                    $this->asCarbon($job->completed_at)
+                ) ?? 0;
                 if ($durationSeconds > 0) {
                     Effect::query()
                         ->whereKey($job->effect_id)
@@ -650,8 +656,11 @@ class ComfyUiWorkerController extends BaseController
             $isFirstLease = $dispatch->leased_at === null;
             $dispatch->leased_at = $dispatch->leased_at ?? $now;
             $dispatch->last_leased_at = $now;
-            if ($isFirstLease && $dispatch->created_at) {
-                $dispatch->queue_wait_seconds = $dispatch->created_at->diffInSeconds($now);
+            if ($isFirstLease) {
+                $createdAt = $this->dispatchTimestamp($dispatch, 'created_at');
+                if ($createdAt) {
+                    $dispatch->queue_wait_seconds = $this->elapsedSeconds($createdAt, $now);
+                }
             }
             $dispatch->save();
 
@@ -840,13 +849,30 @@ class ComfyUiWorkerController extends BaseController
         $dispatch->lease_expires_at = null;
         $dispatch->finished_at = $now;
 
-        $lastLeaseAt = $dispatch->last_leased_at ?? $dispatch->leased_at;
+        $lastLeaseAt = $this->dispatchTimestamp($dispatch, 'last_leased_at')
+            ?? $this->dispatchTimestamp($dispatch, 'leased_at');
         if ($lastLeaseAt) {
-            $dispatch->processing_seconds = $now->diffInSeconds($lastLeaseAt);
-            $dispatch->duration_seconds = $dispatch->processing_seconds;
+            $dispatch->processing_seconds = $this->elapsedSeconds($lastLeaseAt, $now);
         }
-        if ($dispatch->queue_wait_seconds === null && $dispatch->leased_at && $dispatch->created_at) {
-            $dispatch->queue_wait_seconds = $dispatch->created_at->diffInSeconds($dispatch->leased_at);
+
+        // Duration is measured from the earliest poll audit event for this dispatch.
+        $dispatch->duration_seconds = null;
+        $firstPollAtRaw = WorkerAuditLog::query()
+            ->where('dispatch_id', $dispatch->id)
+            ->where('event', 'poll')
+            ->orderBy('created_at')
+            ->value('created_at');
+        $firstPollAt = $this->asCarbon($firstPollAtRaw);
+        if ($firstPollAt) {
+            $dispatch->duration_seconds = $this->elapsedSeconds($firstPollAt, $now);
+        }
+
+        if ($dispatch->queue_wait_seconds === null) {
+            $createdAt = $this->dispatchTimestamp($dispatch, 'created_at');
+            $leasedAt = $this->dispatchTimestamp($dispatch, 'leased_at');
+            if ($createdAt && $leasedAt) {
+                $dispatch->queue_wait_seconds = $this->elapsedSeconds($createdAt, $leasedAt);
+            }
         }
 
         $dispatch->save();
@@ -862,16 +888,65 @@ class ComfyUiWorkerController extends BaseController
         $dispatch->lease_expires_at = null;
         $dispatch->finished_at = $now;
 
-        $lastLeaseAt = $dispatch->last_leased_at ?? $dispatch->leased_at;
+        $lastLeaseAt = $this->dispatchTimestamp($dispatch, 'last_leased_at')
+            ?? $this->dispatchTimestamp($dispatch, 'leased_at');
         if ($lastLeaseAt) {
-            $dispatch->processing_seconds = $now->diffInSeconds($lastLeaseAt);
+            $dispatch->processing_seconds = $this->elapsedSeconds($lastLeaseAt, $now);
             $dispatch->duration_seconds = $dispatch->processing_seconds;
         }
-        if ($dispatch->queue_wait_seconds === null && $dispatch->leased_at && $dispatch->created_at) {
-            $dispatch->queue_wait_seconds = $dispatch->created_at->diffInSeconds($dispatch->leased_at);
+        if ($dispatch->queue_wait_seconds === null) {
+            $createdAt = $this->dispatchTimestamp($dispatch, 'created_at');
+            $leasedAt = $this->dispatchTimestamp($dispatch, 'leased_at');
+            if ($createdAt && $leasedAt) {
+                $dispatch->queue_wait_seconds = $this->elapsedSeconds($createdAt, $leasedAt);
+            }
         }
         $dispatch->save();
         $this->incrementWorkerBusySeconds($dispatch->worker_id, $dispatch->processing_seconds);
+    }
+
+    private function dispatchTimestamp(AiJobDispatch $dispatch, string $attribute): ?Carbon
+    {
+        $raw = $dispatch->getRawOriginal($attribute);
+        if ($raw !== null && $raw !== '') {
+            return $this->asCarbon($raw);
+        }
+
+        return $this->asCarbon($dispatch->{$attribute});
+    }
+
+    private function asCarbon(mixed $value): ?Carbon
+    {
+        if ($value instanceof Carbon) {
+            return $value;
+        }
+
+        if ($value instanceof CarbonInterface) {
+            return Carbon::instance($value);
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return Carbon::instance($value);
+        }
+
+        if (is_string($value) && trim($value) !== '') {
+            try {
+                return Carbon::parse($value);
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private function elapsedSeconds(?CarbonInterface $from, ?CarbonInterface $to): ?int
+    {
+        if (!$from || !$to) {
+            return null;
+        }
+
+        return max(0, (int) floor($from->diffInSeconds($to, true)));
     }
 
     private function incrementWorkerBusySeconds(?string $workerIdentifier, ?int $seconds): void
@@ -890,8 +965,9 @@ class ComfyUiWorkerController extends BaseController
         }
 
         $session->busy_seconds = (int) $session->busy_seconds + $seconds;
-        if ($session->started_at) {
-            $session->running_seconds = now()->diffInSeconds($session->started_at);
+        $startedAt = $this->asCarbon($session->started_at);
+        if ($startedAt) {
+            $session->running_seconds = $this->elapsedSeconds($startedAt, now()) ?? 0;
             if ($session->running_seconds > 0) {
                 $session->utilization = round($session->busy_seconds / $session->running_seconds, 4);
             }
@@ -916,8 +992,9 @@ class ComfyUiWorkerController extends BaseController
 
         $endedAt = now();
         $session->ended_at = $endedAt;
-        if ($session->started_at) {
-            $session->running_seconds = $endedAt->diffInSeconds($session->started_at);
+        $startedAt = $this->asCarbon($session->started_at);
+        if ($startedAt) {
+            $session->running_seconds = $this->elapsedSeconds($startedAt, $endedAt) ?? 0;
             if ($session->running_seconds > 0) {
                 $session->utilization = round($session->busy_seconds / $session->running_seconds, 4);
             }

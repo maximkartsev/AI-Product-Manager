@@ -202,7 +202,12 @@ class EffectsController extends BaseController
         try {
             [$jobPayload, $workUnits] = $this->preparePayloadAndUnits($effect, $inputPayload, $inputFile, $user);
         } catch (\RuntimeException $e) {
-            return $this->sendError($e->getMessage(), [], 422);
+            if (!$this->shouldFallbackStressTestPayload($e)) {
+                return $this->sendError($e->getMessage(), [], 422);
+            }
+
+            $jobPayload = $this->stressTestFallbackPayload($effect);
+            $workUnits = ['units' => 1.0, 'kind' => 'job'];
         }
 
         $executeOnProduction = (bool) $request->input('execute_on_production_fleet', false);
@@ -377,6 +382,27 @@ class EffectsController extends BaseController
         }
 
         return $executeOnProduction ? 'production' : 'staging';
+    }
+
+    private function shouldFallbackStressTestPayload(\RuntimeException $exception): bool
+    {
+        return in_array($exception->getMessage(), [
+            'Effect is not configured for processing.',
+            'Workflow has no workflow JSON path configured.',
+            'Workflow file not found.',
+            'Workflow JSON is invalid or empty.',
+        ], true);
+    }
+
+    private function stressTestFallbackPayload(Effect $effect): array
+    {
+        return [
+            'workflow' => [],
+            'assets' => [],
+            'output_node_id' => $effect->workflow?->output_node_id,
+            'output_extension' => $effect->workflow?->output_extension ?: 'mp4',
+            'output_mime_type' => $effect->workflow?->output_mime_type ?: 'video/mp4',
+        ];
     }
 
     /**

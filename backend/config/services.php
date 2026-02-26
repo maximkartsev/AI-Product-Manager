@@ -77,6 +77,7 @@ return [
         ],
         'fleet_secret_staging' => env('COMFYUI_FLEET_SECRET_STAGING'),
         'fleet_secret_production' => env('COMFYUI_FLEET_SECRET_PRODUCTION'),
+        'registration_stage' => env('COMFYUI_REGISTRATION_STAGE', env('APP_ENV')),
         'max_fleet_workers' => env('COMFYUI_MAX_FLEET_WORKERS', 50),
         'stale_worker_hours' => env('COMFYUI_STALE_WORKER_HOURS', 2),
         'validate_asg_instance' => env('COMFYUI_VALIDATE_ASG_INSTANCE', false),

@@ -165,6 +165,8 @@ class ComfyUiWorkerDispatchTest extends TestCase
         DB::connection('central')->table('worker_audit_logs')->truncate();
         DB::connection('central')->table('worker_workflows')->truncate();
         DB::connection('central')->table('workflows')->truncate();
+        DB::connection('central')->table('partner_usage_events')->truncate();
+        DB::connection('central')->table('partner_usage_prices')->truncate();
         DB::connection('central')->statement('SET FOREIGN_KEY_CHECKS=1');
 
         DB::connection('tenant_pool_1')->statement('SET FOREIGN_KEY_CHECKS=0');
@@ -628,6 +630,85 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $this->assertSame(999, $file->size);
         $this->assertSame('video/mp4', $file->mime_type);
         $this->assertNotEmpty($file->url);
+    }
+
+    public function test_complete_persists_partner_usage_events_and_catalog_entries(): void
+    {
+        [$user, $tenant] = $this->createUserTenant();
+        $effect = $this->createEffect();
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+        $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $this->reserveTokens($tenant, $job, 5);
+        $this->createDispatch($tenant->id, $job->id);
+
+        $poll = $this->postJson('/api/worker/poll', [
+            'worker_id' => 'worker-partner-usage',
+            'current_load' => 0,
+            'max_concurrency' => 1,
+        ], [
+            'Authorization' => 'Bearer ' . $this->defaultToken,
+        ]);
+
+        $dispatchId = $poll->json('data.job.dispatch_id');
+        $leaseToken = $poll->json('data.job.lease_token');
+        $this->postJson('/api/worker/complete', [
+            'dispatch_id' => $dispatchId,
+            'lease_token' => $leaseToken,
+            'worker_id' => 'worker-partner-usage',
+            'provider_job_id' => 'prompt-partner-usage',
+            'output' => [
+                'size' => 123,
+                'mime_type' => 'video/mp4',
+                'metadata' => [
+                    'partner_usage_events' => [
+                        [
+                            'node_id' => '18',
+                            'node_class_type' => 'OpenAIChat',
+                            'node_display_name' => 'OpenAI Chat',
+                            'provider' => 'openai',
+                            'model' => 'gpt-4o-mini',
+                            'input_tokens' => 120,
+                            'output_tokens' => 45,
+                            'total_tokens' => 165,
+                            'credits' => 1.5,
+                            'cost_usd_reported' => 0.0123,
+                            'usage_json' => ['prompt_tokens' => 120, 'completion_tokens' => 45],
+                            'ui_json' => ['text' => ['Prompt tokens: 120', 'Completion tokens: 45']],
+                        ],
+                    ],
+                ],
+            ],
+        ], [
+            'Authorization' => 'Bearer ' . $this->defaultToken,
+        ])->assertStatus(200);
+
+        $event = DB::connection('central')
+            ->table('partner_usage_events')
+            ->where('dispatch_id', $dispatchId)
+            ->first();
+        $this->assertNotNull($event);
+        $this->assertSame((string) $tenant->id, $event->tenant_id);
+        $this->assertSame($job->id, (int) $event->tenant_job_id);
+        $this->assertSame($effect->id, (int) $event->effect_id);
+        $this->assertSame($user->id, (int) $event->user_id);
+        $this->assertSame('openai', $event->provider);
+        $this->assertSame('OpenAIChat', $event->node_class_type);
+        $this->assertSame('gpt-4o-mini', $event->model);
+        $this->assertSame(120, (int) $event->input_tokens);
+        $this->assertSame(45, (int) $event->output_tokens);
+        $this->assertSame(165, (int) $event->total_tokens);
+
+        $pricingCatalogRow = DB::connection('central')
+            ->table('partner_usage_prices')
+            ->where('provider', 'openai')
+            ->where('node_class_type', 'OpenAIChat')
+            ->where('model', 'gpt-4o-mini')
+            ->first();
+        $this->assertNotNull($pricingCatalogRow);
+        $this->assertNotNull($pricingCatalogRow->first_seen_at);
+        $this->assertNotNull($pricingCatalogRow->last_seen_at);
     }
 
     public function test_complete_without_output_file_still_completes(): void

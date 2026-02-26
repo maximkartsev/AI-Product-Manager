@@ -39,6 +39,7 @@ class FleetRegistrationTest extends TestCase
 
         config(['services.comfyui.fleet_secret_staging' => 'test-fleet-secret']);
         config(['services.comfyui.fleet_secret_production' => 'prod-secret']);
+        config(['services.comfyui.registration_stage' => 'staging']);
         config(['services.comfyui.max_fleet_workers' => 5]);
         config(['app.env' => 'staging']);
 
@@ -222,6 +223,7 @@ class FleetRegistrationTest extends TestCase
         config([
             'services.comfyui.fleet_secret_staging' => 'staging-secret',
             'services.comfyui.fleet_secret_production' => 'production-secret',
+            'services.comfyui.registration_stage' => 'production',
         ]);
 
         $workflow = Workflow::query()->create(['name' => 'Prod Test', 'slug' => 'prod-test', 'is_active' => true]);
@@ -244,6 +246,29 @@ class FleetRegistrationTest extends TestCase
             'X-Fleet-Secret' => 'production-secret',
         ]);
         $good->assertStatus(200);
+    }
+
+    public function test_fleet_register_rejects_stage_mismatch_with_backend_registration_stage(): void
+    {
+        config([
+            'services.comfyui.fleet_secret_staging' => 'staging-secret',
+            'services.comfyui.fleet_secret_production' => 'production-secret',
+            'services.comfyui.registration_stage' => 'production',
+        ]);
+
+        $workflow = Workflow::query()->create(['name' => 'Mismatch Test', 'slug' => 'mismatch-test', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'staging-fleet', [$workflow]);
+
+        $response = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-stage-mismatch',
+            'fleet_slug' => 'staging-fleet',
+            'stage' => 'staging',
+        ], [
+            'X-Fleet-Secret' => 'staging-secret',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'Stage mismatch. This backend accepts only production workers.');
     }
 
     public function test_fleet_register_rejects_duplicate_worker_id(): void

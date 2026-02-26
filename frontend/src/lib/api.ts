@@ -1163,6 +1163,138 @@ export function updateEconomicsSettings(payload: EconomicsSettingsPayload): Prom
   return apiRequest<EconomicsSettings>("/admin/economics/settings", { method: "PUT", body: payload });
 }
 
+export type PartnerUsagePricingItem = {
+  id: number;
+  provider: string;
+  nodeClassType: string;
+  model?: string | null;
+  usdPer1mInputTokens?: number | null;
+  usdPer1mOutputTokens?: number | null;
+  usdPer1mTotalTokens?: number | null;
+  usdPerCredit?: number | null;
+  firstSeenAt?: string | null;
+  lastSeenAt?: string | null;
+  sampleUiJson?: Record<string, unknown> | unknown[] | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type PartnerUsagePricingData = {
+  items: PartnerUsagePricingItem[];
+};
+
+export type PartnerUsagePricingPayload = {
+  items: Array<{
+    provider: string;
+    nodeClassType: string;
+    model?: string | null;
+    usdPer1mInputTokens?: number | null;
+    usdPer1mOutputTokens?: number | null;
+    usdPer1mTotalTokens?: number | null;
+    usdPerCredit?: number | null;
+  }>;
+};
+
+export function getPartnerUsagePricing(): Promise<PartnerUsagePricingData> {
+  return apiGet<PartnerUsagePricingData>("/admin/economics/partner-pricing");
+}
+
+export function updatePartnerUsagePricing(payload: PartnerUsagePricingPayload): Promise<PartnerUsagePricingData> {
+  return apiRequest<PartnerUsagePricingData>("/admin/economics/partner-pricing", { method: "PUT", body: payload });
+}
+
+export type PartnerUsageTotals = {
+  eventsCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  credits: number;
+  costUsdReported: number;
+};
+
+export type PartnerUsageByProviderNodeModel = {
+  provider: string;
+  nodeClassType: string;
+  model?: string | null;
+  eventsCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  credits: number;
+  costUsdReported: number;
+  lastSeenAt?: string | null;
+};
+
+export type PartnerUsageByEffect = {
+  effectId: number;
+  effectName: string;
+  eventsCount: number;
+  totalTokens: number;
+  credits: number;
+  costUsdReported: number;
+};
+
+export type PartnerUsageByWorkflow = {
+  workflowId: number;
+  workflowName: string;
+  eventsCount: number;
+  totalTokens: number;
+  credits: number;
+  costUsdReported: number;
+};
+
+export type PartnerUsageByUser = {
+  userId: number;
+  userName: string;
+  userEmail?: string | null;
+  eventsCount: number;
+  totalTokens: number;
+  credits: number;
+  costUsdReported: number;
+};
+
+export type PartnerUsageByWorker = {
+  workerId: string;
+  workerName: string;
+  capacityType?: string | null;
+  instanceType?: string | null;
+  stage?: string | null;
+  eventsCount: number;
+  totalTokens: number;
+  credits: number;
+  costUsdReported: number;
+};
+
+export type PartnerUsageAnalyticsData = {
+  totals: PartnerUsageTotals;
+  byProviderNodeModel: PartnerUsageByProviderNodeModel[];
+  byEffect: PartnerUsageByEffect[];
+  byWorkflow: PartnerUsageByWorkflow[];
+  byUser: PartnerUsageByUser[];
+  byWorker: PartnerUsageByWorker[];
+};
+
+export function getPartnerUsageAnalytics(params: {
+  from?: string;
+  to?: string;
+  effect_id?: number;
+  workflow_id?: number;
+  user_id?: number;
+  worker_id?: string;
+  provider?: string;
+} = {}): Promise<PartnerUsageAnalyticsData> {
+  const query: Query = {
+    from: params.from ?? undefined,
+    to: params.to ?? undefined,
+    effect_id: params.effect_id ?? undefined,
+    workflow_id: params.workflow_id ?? undefined,
+    user_id: params.user_id ?? undefined,
+    worker_id: params.worker_id ?? undefined,
+    provider: params.provider ?? undefined,
+  };
+  return apiGet<PartnerUsageAnalyticsData>("/admin/economics/partner-usage", query);
+}
+
 // ---- Admin Users
 
 export type AdminUser = {
@@ -1305,6 +1437,13 @@ export type UnitEconomicsByEffect = {
   avgTokensPerWorkUnit?: number | null;
   partnerCostPerWorkUnit?: number | null;
   partnerCostUsd?: number | null;
+  partnerUsageInputTokens?: number | null;
+  partnerUsageOutputTokens?: number | null;
+  partnerUsageTotalTokens?: number | null;
+  partnerUsageCredits?: number | null;
+  partnerUsageCostUsd?: number | null;
+  partnerUsageCostUsdReported?: number | null;
+  partnerCostUsdTotal?: number | null;
   fleetSlugs?: string[] | null;
   fleetInstanceTypes?: string[] | null;
 };
@@ -1315,6 +1454,13 @@ export type UnitEconomicsTotals = {
   totalProcessingSeconds: number;
   totalWorkUnits: number;
   totalPartnerCostUsd?: number | null;
+  totalPartnerUsageInputTokens?: number | null;
+  totalPartnerUsageOutputTokens?: number | null;
+  totalPartnerUsageTokens?: number | null;
+  totalPartnerUsageCredits?: number | null;
+  totalPartnerUsageCostUsd?: number | null;
+  totalPartnerUsageCostUsdReported?: number | null;
+  totalPartnerCostUsdCombined?: number | null;
 };
 
 export type UnitEconomicsData = {

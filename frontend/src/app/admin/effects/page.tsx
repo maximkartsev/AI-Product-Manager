@@ -130,6 +130,13 @@ function parseBoolean(value: string): boolean {
   return ["true", "1", "yes", "y", "on"].includes(value.trim().toLowerCase());
 }
 
+function parsePublicationStatus(value: string | null): "development" | "published" | null {
+  if (value === "development" || value === "published") {
+    return value;
+  }
+  return null;
+}
+
 // ---- Zod Schema ----
 
 const effectSchema = z.object({
@@ -265,7 +272,7 @@ const NON_PREMIUM_CREDITS = "3";
 
 export default function AdminEffectsPage() {
   const [showPanel, setShowPanel] = useState(false);
-  const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, any> } | null>(null);
+  const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, string> } | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<AdminEffect | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -307,7 +314,7 @@ export default function AdminEffectsPage() {
   deletingIdRef.current = deletingId;
 
   const handleEdit = (item: AdminEffect) => {
-    const newFormState: Record<string, any> = { ...initialFormState };
+    const newFormState: Record<string, string> = { ...initialFormState };
     Object.keys(newFormState).forEach((key) => {
       if (key === "property_overrides") {
         newFormState[key] = item.property_overrides ? JSON.stringify(item.property_overrides) : "{}";
@@ -680,7 +687,7 @@ export default function AdminEffectsPage() {
     },
   ];
 
-  const getFormData = (formState: Record<string, any>): AdminEffectPayload => {
+  const getFormData = (formState: Record<string, unknown>): AdminEffectPayload => {
     const str = (key: string) => {
       const v = String(formState[key] || "").trim();
       return v || null;
@@ -692,15 +699,17 @@ export default function AdminEffectsPage() {
       return trimmed.split(/[?#]/)[0] || null;
     };
 
-    const rawTags = String(formState.tags || "").trim();
+    const rawTags = str("tags");
     const tags = rawTags
       ? rawTags.split(",").map((t) => t.trim()).filter(Boolean)
       : null;
 
-    const catId = formState.category_id ? Number(formState.category_id) : null;
-    const publicationStatus = str("publication_status");
+    const categoryIdValue = str("category_id");
+    const catId = categoryIdValue ? Number(categoryIdValue) : null;
+    const publicationStatus = parsePublicationStatus(str("publication_status"));
 
-    const wfId = formState.workflow_id ? Number(formState.workflow_id) : null;
+    const workflowIdValue = str("workflow_id");
+    const wfId = workflowIdValue ? Number(workflowIdValue) : null;
     let propertyOverrides: Record<string, string> | null = null;
     try {
       const parsed = JSON.parse(String(formState.property_overrides || "{}"));
@@ -718,11 +727,11 @@ export default function AdminEffectsPage() {
       property_overrides: propertyOverrides,
       tags,
       type: str("type") || "",
-      credits_cost: parseNumber(String(formState.credits_cost || "")) ?? 0,
-      popularity_score: parseNumber(String(formState.popularity_score || "")) ?? 0,
-      is_active: parseBoolean(String(formState.is_active || "")),
-      is_premium: parseBoolean(String(formState.is_premium || "")),
-      is_new: parseBoolean(String(formState.is_new || "")),
+      credits_cost: parseNumber(str("credits_cost") || "") ?? 0,
+      popularity_score: parseNumber(str("popularity_score") || "") ?? 0,
+      is_active: parseBoolean(str("is_active") || ""),
+      is_premium: parseBoolean(str("is_premium") || ""),
+      is_new: parseBoolean(str("is_new") || ""),
       publication_status: publicationStatus,
       thumbnail_url: stripQuery(str("thumbnail_url")),
       preview_video_url: stripQuery(str("preview_video_url")),
@@ -810,7 +819,7 @@ export default function AdminEffectsPage() {
         return;
       }
 
-      let payload: Record<string, unknown> = { ...stressTestInputPayload };
+      const payload: Record<string, unknown> = { ...stressTestInputPayload };
       const pendingAssets = Object.values(stressTestPendingAssets);
       if (pendingAssets.length > 0) {
         const uploadId = stressTestUploadId || makeUploadId("stress");

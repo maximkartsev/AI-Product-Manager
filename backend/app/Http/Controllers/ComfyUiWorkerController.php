@@ -10,6 +10,8 @@ use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
 use App\Models\File;
+use App\Models\PartnerUsageEvent;
+use App\Models\PartnerUsagePrice;
 use App\Models\Tenant;
 use App\Models\Video;
 use App\Models\Workflow;
@@ -95,6 +97,15 @@ class ComfyUiWorkerController extends BaseController
         $stage = (string) ($request->input('stage') ?: config('app.env'));
         if (!in_array($stage, ['staging', 'production'], true)) {
             return $this->sendError('Invalid stage. Expected staging or production.', [], 422);
+        }
+
+        $registrationStage = (string) config('services.comfyui.registration_stage', config('app.env'));
+        if (in_array($registrationStage, ['staging', 'production'], true) && $stage !== $registrationStage) {
+            return $this->sendError(
+                "Stage mismatch. This backend accepts only {$registrationStage} workers.",
+                [],
+                422
+            );
         }
 
         $fleetSlug = (string) $request->input('fleet_slug');
@@ -383,6 +394,19 @@ class ComfyUiWorkerController extends BaseController
             'output.size' => 'integer|nullable|min:0',
             'output.mime_type' => 'string|nullable|max:255',
             'output.metadata' => 'array|nullable',
+            'output.metadata.partner_usage_events' => 'array|nullable',
+            'output.metadata.partner_usage_events.*.node_id' => 'string|nullable|max:128',
+            'output.metadata.partner_usage_events.*.node_class_type' => 'string|nullable|max:255',
+            'output.metadata.partner_usage_events.*.node_display_name' => 'string|nullable|max:255',
+            'output.metadata.partner_usage_events.*.provider' => 'string|nullable|max:100',
+            'output.metadata.partner_usage_events.*.model' => 'string|nullable|max:255',
+            'output.metadata.partner_usage_events.*.input_tokens' => 'numeric|nullable|min:0',
+            'output.metadata.partner_usage_events.*.output_tokens' => 'numeric|nullable|min:0',
+            'output.metadata.partner_usage_events.*.total_tokens' => 'numeric|nullable|min:0',
+            'output.metadata.partner_usage_events.*.credits' => 'numeric|nullable|min:0',
+            'output.metadata.partner_usage_events.*.cost_usd_reported' => 'numeric|nullable|min:0',
+            'output.metadata.partner_usage_events.*.usage_json' => 'array|nullable',
+            'output.metadata.partner_usage_events.*.ui_json' => 'array|nullable',
         ]);
 
         if ($validator->fails()) {
@@ -443,6 +467,17 @@ class ComfyUiWorkerController extends BaseController
 
             $ledger->consumeForJob($job, ['source' => 'worker_complete']);
             $this->markDispatchCompleted($dispatch, $request->input('worker_id'));
+
+            $partnerUsageEvents = data_get($request->input('output', []), 'metadata.partner_usage_events', []);
+            if (is_array($partnerUsageEvents) && !empty($partnerUsageEvents)) {
+                $this->persistPartnerUsageEvents(
+                    $dispatch,
+                    $job,
+                    $request->input('worker_id'),
+                    $request->input('provider_job_id'),
+                    $partnerUsageEvents
+                );
+            }
 
             return $job;
         });
@@ -923,6 +958,196 @@ class ComfyUiWorkerController extends BaseController
             }
         }
         $session->save();
+    }
+
+    private function persistPartnerUsageEvents(
+        AiJobDispatch $dispatch,
+        AiJob $job,
+        ?string $workerIdentifier,
+        ?string $comfyPromptId,
+        array $events
+    ): void {
+        if (empty($events)) {
+            return;
+        }
+
+        $now = now();
+        $normalizedWorkerIdentifier = $this->normalizeUsageString($workerIdentifier, 255);
+        $workerSessionId = $this->resolveWorkerSessionId($normalizedWorkerIdentifier);
+        $fallbackPromptId = $this->normalizeUsageString($comfyPromptId, 255);
+
+        $eventRows = [];
+        $priceRowsByKey = [];
+        foreach ($events as $event) {
+            if (!is_array($event)) {
+                continue;
+            }
+
+            $nodeClassType = $this->normalizeUsageString($event['node_class_type'] ?? null, 255) ?: 'unknown';
+            $provider = strtolower($this->normalizeUsageString($event['provider'] ?? null, 100) ?: 'unknown');
+            $model = $this->normalizeUsageString($event['model'] ?? null, 255) ?? '';
+            $nodeId = $this->normalizeUsageString($event['node_id'] ?? null, 128);
+            $nodeDisplayName = $this->normalizeUsageString($event['node_display_name'] ?? null, 255);
+            $promptId = $this->normalizeUsageString($event['comfy_prompt_id'] ?? null, 255) ?: $fallbackPromptId;
+
+            $inputTokens = $this->normalizeUsageInt($event['input_tokens'] ?? null);
+            $outputTokens = $this->normalizeUsageInt($event['output_tokens'] ?? null);
+            $totalTokens = $this->normalizeUsageInt($event['total_tokens'] ?? null);
+            $credits = $this->normalizeUsageFloat($event['credits'] ?? null, 6);
+            $costUsdReported = $this->normalizeUsageFloat($event['cost_usd_reported'] ?? null, 8);
+            $usageJson = is_array($event['usage_json'] ?? null) ? $event['usage_json'] : null;
+            $uiJson = is_array($event['ui_json'] ?? null) ? $event['ui_json'] : null;
+
+            if (
+                $inputTokens === null
+                && $outputTokens === null
+                && $totalTokens === null
+                && $credits === null
+                && $costUsdReported === null
+                && $usageJson === null
+                && $uiJson === null
+            ) {
+                continue;
+            }
+
+            $eventRows[] = [
+                'tenant_id' => $dispatch->tenant_id,
+                'tenant_job_id' => $dispatch->tenant_job_id,
+                'dispatch_id' => $dispatch->id,
+                'workflow_id' => $dispatch->workflow_id,
+                'effect_id' => $job->effect_id,
+                'user_id' => $job->user_id,
+                'worker_id' => $normalizedWorkerIdentifier,
+                'worker_session_id' => $workerSessionId,
+                'comfy_prompt_id' => $promptId,
+                'node_id' => $nodeId,
+                'node_class_type' => $nodeClassType,
+                'node_display_name' => $nodeDisplayName,
+                'provider' => $provider,
+                'model' => $model !== '' ? $model : null,
+                'input_tokens' => $inputTokens,
+                'output_tokens' => $outputTokens,
+                'total_tokens' => $totalTokens,
+                'credits' => $credits,
+                'cost_usd_reported' => $costUsdReported,
+                'usage_json' => $usageJson,
+                'ui_json' => $uiJson,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+
+            $priceRowKey = implode('|', [$provider, $nodeClassType, $model]);
+            if (!isset($priceRowsByKey[$priceRowKey])) {
+                $priceRowsByKey[$priceRowKey] = [
+                    'provider' => $provider,
+                    'node_class_type' => $nodeClassType,
+                    'model' => $model,
+                    'first_seen_at' => $now,
+                    'last_seen_at' => $now,
+                    'sample_ui_json' => $uiJson,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            } else {
+                $priceRowsByKey[$priceRowKey]['last_seen_at'] = $now;
+                $priceRowsByKey[$priceRowKey]['updated_at'] = $now;
+                if (
+                    $priceRowsByKey[$priceRowKey]['sample_ui_json'] === null
+                    && $uiJson !== null
+                ) {
+                    $priceRowsByKey[$priceRowKey]['sample_ui_json'] = $uiJson;
+                }
+            }
+        }
+
+        if (empty($eventRows)) {
+            return;
+        }
+
+        PartnerUsageEvent::query()->insert($eventRows);
+        if (!empty($priceRowsByKey)) {
+            PartnerUsagePrice::query()->upsert(
+                array_values($priceRowsByKey),
+                ['provider', 'node_class_type', 'model'],
+                ['last_seen_at', 'sample_ui_json', 'updated_at']
+            );
+        }
+    }
+
+    private function resolveWorkerSessionId(?string $workerIdentifier): ?int
+    {
+        if (!$workerIdentifier) {
+            return null;
+        }
+
+        $openSession = ComfyUiWorkerSession::query()
+            ->where('worker_identifier', $workerIdentifier)
+            ->where(function ($query) {
+                $query->whereNull('started_at')
+                    ->orWhere('started_at', '<=', now());
+            })
+            ->whereNull('ended_at')
+            ->orderByDesc('started_at')
+            ->first();
+        if ($openSession) {
+            return (int) $openSession->id;
+        }
+
+        $latestSession = ComfyUiWorkerSession::query()
+            ->where('worker_identifier', $workerIdentifier)
+            ->where(function ($query) {
+                $query->whereNull('started_at')
+                    ->orWhere('started_at', '<=', now());
+            })
+            ->orderByDesc('started_at')
+            ->first();
+
+        return $latestSession ? (int) $latestSession->id : null;
+    }
+
+    private function normalizeUsageString(mixed $value, int $maxLength): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $normalized = trim((string) $value);
+        if ($normalized === '') {
+            return null;
+        }
+        if (strlen($normalized) > $maxLength) {
+            $normalized = substr($normalized, 0, $maxLength);
+        }
+        return $normalized;
+    }
+
+    private function normalizeUsageInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_numeric($value)) {
+            return null;
+        }
+        $number = (float) $value;
+        if (!is_finite($number) || $number < 0) {
+            return null;
+        }
+        return (int) round($number);
+    }
+
+    private function normalizeUsageFloat(mixed $value, int $precision): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_numeric($value)) {
+            return null;
+        }
+        $number = (float) $value;
+        if (!is_finite($number) || $number < 0) {
+            return null;
+        }
+        return round($number, $precision);
     }
 
     private function withTenant(string $tenantId, \Closure $callback)

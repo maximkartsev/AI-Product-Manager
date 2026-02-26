@@ -33,6 +33,8 @@ use \App\Http\Controllers\Admin\UiSettingsController as AdminUiSettingsControlle
 use \App\Http\Controllers\Admin\UsersController as AdminUsersController;
 use \App\Http\Controllers\Admin\EconomicsAnalyticsController as AdminEconomicsAnalyticsController;
 use \App\Http\Controllers\Admin\EconomicsSettingsController as AdminEconomicsSettingsController;
+use \App\Http\Controllers\Admin\PartnerUsageAnalyticsController as AdminPartnerUsageAnalyticsController;
+use \App\Http\Controllers\Admin\PartnerUsagePricingController as AdminPartnerUsagePricingController;
 use \App\Http\Controllers\Admin\WorkflowsController as AdminWorkflowsController;
 use \App\Http\Controllers\Admin\WorkersController as AdminWorkersController;
 use \App\Http\Controllers\Admin\AuditLogsController as AdminAuditLogsController;
@@ -151,6 +153,9 @@ Route::middleware([
             Route::get('/economics/settings', [AdminEconomicsSettingsController::class, 'index']);
             Route::put('/economics/settings', [AdminEconomicsSettingsController::class, 'update']);
             Route::get('/economics/unit-economics', [AdminEconomicsAnalyticsController::class, 'unitEconomics']);
+            Route::get('/economics/partner-pricing', [AdminPartnerUsagePricingController::class, 'index']);
+            Route::put('/economics/partner-pricing', [AdminPartnerUsagePricingController::class, 'update']);
+            Route::get('/economics/partner-usage', [AdminPartnerUsageAnalyticsController::class, 'index']);
 
             // Workflows
             Route::get('/workflows', [AdminWorkflowsController::class, 'index']);

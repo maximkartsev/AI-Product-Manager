@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { extractErrorMessage } from "@/lib/apiErrors";
 import { getWorkload, type WorkloadData, type WorkloadWorkflow, type WorkloadWorker } from "@/lib/api";
@@ -15,6 +16,9 @@ const STAGES = [
   { label: "Production", value: "production" },
   { label: "Staging", value: "staging" },
 ] as const;
+
+type WorkloadPeriod = (typeof PERIODS)[number]["value"];
+type WorkloadStage = (typeof STAGES)[number]["value"];
 
 function formatDuration(seconds: number | null): string {
   if (seconds === null || seconds === undefined) return "-";
@@ -61,12 +65,12 @@ function isOnline(lastSeenAt: string | null): boolean {
 }
 
 export default function AdminWorkloadPage() {
-  const [period, setPeriod] = useState<string>("24h");
-  const [stage, setStage] = useState<string>("production");
+  const [period, setPeriod] = useState<WorkloadPeriod>("24h");
+  const [stage, setStage] = useState<WorkloadStage>("production");
   const [data, setData] = useState<WorkloadData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const loadData = useCallback(async (p: string, s: string) => {
+  const loadData = useCallback(async (p: WorkloadPeriod, s: WorkloadStage) => {
     setLoading(true);
     try {
       const result = await getWorkload({ period: p, stage: s });
@@ -95,7 +99,11 @@ export default function AdminWorkloadPage() {
             Workflow execution stats and fleet-routed capacity.
           </p>
           <p className="text-xs text-muted-foreground mt-1">
-            Assignments come from Workflow → ComfyUI Routing (fleets).
+            Routing is managed in{" "}
+            <Link href="/admin/workflows" className="underline underline-offset-2 hover:text-foreground">
+              Workflow -&gt; ComfyUI Routing
+            </Link>
+            .
           </p>
         </div>
 

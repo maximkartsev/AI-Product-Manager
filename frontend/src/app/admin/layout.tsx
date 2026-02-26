@@ -9,7 +9,6 @@ import {
   Users,
   Coins,
   Menu,
-  X,
   GitBranch,
   Server,
   ScrollText,
@@ -28,6 +27,7 @@ const NAV_GROUPS = [
       { label: "Effects", href: "/admin/effects", icon: Sparkles },
       { label: "Categories", href: "/admin/categories", icon: FolderOpen },
       { label: "Workflows", href: "/admin/workflows", icon: GitBranch },
+      { label: "Studio", href: "/admin/studio", icon: Sparkles },
     ],
   },
   {

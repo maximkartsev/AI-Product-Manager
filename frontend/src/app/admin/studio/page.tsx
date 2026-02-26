@@ -2,8 +2,20 @@ import Link from "next/link";
 
 const studioSections = [
   {
-    title: "Workflow Analysis",
-    description: "Analyze workflow JSON using the OpenAI-backed studio analyzer.",
+    title: "Create Effect Wizard",
+    description: "Run the Phase 1 stepper: choose workflow source, analyze, apply suggestions, and create effect.",
+    href: "/admin/studio/effects/new",
+    cta: "Open Create Wizard",
+  },
+  {
+    title: "Clone Effect",
+    description: "Clone an effect only, or clone effect + workflow in one Studio operation.",
+    href: "/admin/studio/effects/clone",
+    cta: "Open Clone Flow",
+  },
+  {
+    title: "Workflow JSON Editor",
+    description: "Open workflows and jump into /admin/studio/workflows/{id}/json-editor for revision-based JSON editing.",
     href: "/admin/workflows",
     cta: "Open Workflows",
   },
@@ -33,7 +45,7 @@ export default function AdminStudioPage() {
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Effects Design Studio</h1>
         <p className="text-sm text-muted-foreground">
-          Jump to the Phase 0 studio surfaces for analysis, hardware setup, load testing, and economics.
+          Phase 1 entry points for create/clone flows and workflow JSON editing, plus Phase 0 studio surfaces.
         </p>
       </div>
 

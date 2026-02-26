@@ -984,6 +984,84 @@ export type AdminEffectRevision = {
   updated_at?: string | null;
 };
 
+export type StudioWorkflowRevision = {
+  id: number;
+  workflow_id: number;
+  comfyui_workflow_path?: string | null;
+  snapshot_json?: Record<string, unknown> | null;
+  created_by_user_id?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioWorkflowJsonData = {
+  workflow_id: number;
+  comfyui_workflow_path?: string | null;
+  workflow_json: Record<string, unknown>;
+  workflow_revision?: StudioWorkflowRevision;
+};
+
+export type StudioWorkflowCloneData = {
+  workflow: AdminWorkflow;
+  workflow_revision: StudioWorkflowRevision;
+};
+
+export type StudioEffectCloneMode = "effect_only" | "effect_and_workflow";
+
+export type StudioEffectCloneData = {
+  effect: AdminEffect;
+  effect_revision: AdminEffectRevision;
+  workflow?: AdminWorkflow;
+};
+
+export type StudioWorkflowAnalyzeResult = {
+  properties: Array<{
+    key: string;
+    name?: string | null;
+    type: "text" | "image" | "audio" | "video";
+    required?: boolean;
+    placeholder?: string | null;
+    user_configurable?: boolean;
+  }>;
+  primary_input?: {
+    node_id?: string | null;
+    key?: string | null;
+    type?: "text" | "image" | "audio" | "video" | null;
+  } | null;
+  output?: {
+    node_id?: string | null;
+    mime_type?: string | null;
+    extension?: string | null;
+  } | null;
+  placeholder_insertions: Array<{
+    json_pointer: string;
+    placeholder: string;
+    reason?: string | null;
+  }>;
+  autoscaling_hints?: {
+    workload_kind?: "image" | "video" | null;
+    work_units_property_key?: string | null;
+    slo_p95_wait_seconds?: number | null;
+    slo_video_seconds_per_processing_second_p95?: number | null;
+  } | null;
+};
+
+export type StudioWorkflowAnalyzeJob = {
+  id: number;
+  workflow_id?: number | null;
+  status: "pending" | "running" | "completed" | "failed";
+  analyzer_prompt_version?: string | null;
+  analyzer_schema_version?: string | null;
+  requested_output_kind?: "image" | "video" | "audio" | null;
+  input_json?: Record<string, unknown> | null;
+  result_json?: StudioWorkflowAnalyzeResult | null;
+  error_message?: string | null;
+  created_by_user_id?: number | null;
+  completed_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type StudioExecutionEnvironment = {
   id: number;
   name: string;
@@ -1201,6 +1279,45 @@ export function createAdminEffectRevision(effectId: number): Promise<AdminEffect
   return apiPost<AdminEffectRevision>(`/admin/effects/${effectId}/revisions`, {});
 }
 
+export function analyzeStudioWorkflow(payload: {
+  workflow_id?: number;
+  workflow_json?: Record<string, unknown>;
+  requested_output_kind?: "image" | "video" | "audio";
+  example_io_description?: string;
+}): Promise<StudioWorkflowAnalyzeJob> {
+  return apiPost<StudioWorkflowAnalyzeJob>("/admin/studio/workflow-analyze", payload);
+}
+
+export function getStudioWorkflowRevisions(workflowId: number): Promise<StudioListResponse<StudioWorkflowRevision>> {
+  return apiGet<StudioListResponse<StudioWorkflowRevision>>(`/admin/studio/workflows/${workflowId}/revisions`);
+}
+
+export function createStudioWorkflowRevision(workflowId: number): Promise<StudioWorkflowRevision> {
+  return apiPost<StudioWorkflowRevision>(`/admin/studio/workflows/${workflowId}/revisions`, {});
+}
+
+export function getStudioWorkflowJson(workflowId: number): Promise<StudioWorkflowJsonData> {
+  return apiGet<StudioWorkflowJsonData>(`/admin/studio/workflows/${workflowId}/json`);
+}
+
+export function updateStudioWorkflowJson(
+  workflowId: number,
+  workflow_json: Record<string, unknown>,
+): Promise<StudioWorkflowJsonData> {
+  return apiRequest<StudioWorkflowJsonData>(`/admin/studio/workflows/${workflowId}/json`, {
+    method: "PUT",
+    body: { workflow_json },
+  });
+}
+
+export function cloneStudioWorkflow(workflowId: number): Promise<StudioWorkflowCloneData> {
+  return apiPost<StudioWorkflowCloneData>(`/admin/studio/workflows/${workflowId}/clone`, {});
+}
+
+export function cloneStudioEffect(effectId: number, mode: StudioEffectCloneMode): Promise<StudioEffectCloneData> {
+  return apiPost<StudioEffectCloneData>(`/admin/studio/effects/${effectId}/clone`, { mode });
+}
+
 export function publishEffect(
   effectId: number,
   revisionId: number,
@@ -1364,12 +1481,12 @@ export function initAdminEffectUpload(payload: EffectUploadInitRequest): Promise
 
 // ---- Admin UI Settings
 
-export function getAdminUiSettings(): Promise<Record<string, any>> {
-  return apiGet<Record<string, any>>("/admin/ui-settings");
+export function getAdminUiSettings(): Promise<Record<string, unknown>> {
+  return apiGet<Record<string, unknown>>("/admin/ui-settings");
 }
 
-export function updateAdminUiSettings(settings: Record<string, any>): Promise<Record<string, any>> {
-  return apiRequest<Record<string, any>>("/admin/ui-settings", {
+export function updateAdminUiSettings(settings: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>("/admin/ui-settings", {
     method: "PUT",
     body: { settings },
   });

@@ -49,6 +49,10 @@ use \App\Http\Controllers\Admin\StudioExecutionEnvironmentsController as AdminSt
 use \App\Http\Controllers\Admin\StudioTestInputSetsController as AdminStudioTestInputSetsController;
 use \App\Http\Controllers\Admin\StudioEffectTestRunsController as AdminStudioEffectTestRunsController;
 use \App\Http\Controllers\Admin\StudioLoadTestRunsController as AdminStudioLoadTestRunsController;
+use \App\Http\Controllers\Admin\StudioWorkflowRevisionsController as AdminStudioWorkflowRevisionsController;
+use \App\Http\Controllers\Admin\StudioWorkflowJsonController as AdminStudioWorkflowJsonController;
+use \App\Http\Controllers\Admin\StudioWorkflowCloneController as AdminStudioWorkflowCloneController;
+use \App\Http\Controllers\Admin\StudioEffectCloneController as AdminStudioEffectCloneController;
 use \App\Http\Controllers\Admin\StudioExperimentVariantsController as AdminStudioExperimentVariantsController;
 use \App\Http\Controllers\Admin\StudioFleetConfigSnapshotsController as AdminStudioFleetConfigSnapshotsController;
 use \App\Http\Controllers\Admin\StudioProductionFleetSnapshotsController as AdminStudioProductionFleetSnapshotsController;
@@ -227,6 +231,12 @@ Route::middleware([
             // Studio
             Route::post('/studio/workflow-analyze', [AdminStudioWorkflowAnalysisController::class, 'store']);
             Route::get('/studio/workflow-analyze/{id}', [AdminStudioWorkflowAnalysisController::class, 'show']);
+            Route::get('/studio/workflows/{id}/revisions', [AdminStudioWorkflowRevisionsController::class, 'index']);
+            Route::post('/studio/workflows/{id}/revisions', [AdminStudioWorkflowRevisionsController::class, 'store']);
+            Route::get('/studio/workflows/{id}/json', [AdminStudioWorkflowJsonController::class, 'show']);
+            Route::put('/studio/workflows/{id}/json', [AdminStudioWorkflowJsonController::class, 'update']);
+            Route::post('/studio/workflows/{id}/clone', [AdminStudioWorkflowCloneController::class, 'store']);
+            Route::post('/studio/effects/{id}/clone', [AdminStudioEffectCloneController::class, 'store']);
             Route::get('/studio/dev-nodes', [AdminDevNodesController::class, 'index']);
             Route::post('/studio/dev-nodes', [AdminDevNodesController::class, 'store']);
             Route::get('/studio/dev-nodes/{id}', [AdminDevNodesController::class, 'show']);

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as z from "zod";
 import { type ColumnDef } from "@tanstack/react-table";
@@ -196,7 +197,7 @@ type WorkflowFormPayload = AdminWorkflowPayload & {
 
 export default function AdminWorkflowsPage() {
   const [showPanel, setShowPanel] = useState(false);
-  const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, any> } | null>(null);
+  const [editingItem, setEditingItem] = useState<{ id: number; data: Record<string, string> } | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<AdminWorkflow | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -214,7 +215,7 @@ export default function AdminWorkflowsPage() {
   deletingIdRef.current = deletingId;
 
   const handleEdit = (item: AdminWorkflow) => {
-    const newFormState: Record<string, any> = { ...initialFormState };
+    const newFormState: Record<string, string> = { ...initialFormState };
     Object.keys(newFormState).forEach((key) => {
       if (item[key as keyof AdminWorkflow] !== undefined && item[key as keyof AdminWorkflow] !== null) {
         const val = item[key as keyof AdminWorkflow];
@@ -251,8 +252,8 @@ export default function AdminWorkflowsPage() {
     enableSorting: false,
     enableHiding: false,
     enableResizing: false,
-    size: 150,
-    minSize: 150,
+    size: 250,
+    minSize: 230,
     cell: ({ row }: { row: { original: AdminWorkflow } }) => {
       const item = row.original;
       return (
@@ -264,6 +265,11 @@ export default function AdminWorkflowsPage() {
             onClick={(e) => { e.stopPropagation(); handleEditRef.current(item); }}
           >
             Edit
+          </Button>
+          <Button asChild variant="outline" size="sm" className="text-sm px-3">
+            <Link href={`/admin/studio/workflows/${item.id}/json-editor`} onClick={(e) => e.stopPropagation()}>
+              JSON Editor
+            </Link>
           </Button>
           <Button
             variant="outline"
@@ -580,7 +586,7 @@ export default function AdminWorkflowsPage() {
     },
   ];
 
-  const getFormData = (formState: Record<string, any>): WorkflowFormPayload => {
+  const getFormData = (formState: Record<string, string>): WorkflowFormPayload => {
     const str = (key: string) => {
       const v = String(formState[key] || "").trim();
       return v || null;
@@ -746,7 +752,11 @@ export default function AdminWorkflowsPage() {
             toast.success("Workflow deleted");
           } catch (error) {
             if (error instanceof ApiError && error.status === 409) {
-              const effects = (error.data as any)?.data?.effects ?? [];
+              const responseData =
+                error.data && typeof error.data === "object" && "data" in error.data
+                  ? (error.data as { data?: { effects?: { id: number; name: string; slug: string }[] } }).data
+                  : undefined;
+              const effects = responseData?.effects ?? [];
               setBlockedEffects(effects);
               setShowDeleteModal(false);
               setItemToDelete(null);

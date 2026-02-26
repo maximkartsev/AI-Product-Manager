@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
-use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
+use App\Models\EffectRevision;
 use App\Models\File;
 use App\Models\User;
 use App\Models\Video;
+use App\Models\Workflow;
+use App\Services\EffectPublicationService;
+use App\Services\EffectRevisionService;
 use App\Services\TokenLedgerService;
 use App\Services\WorkflowPayloadService;
 use Illuminate\Http\JsonResponse;
@@ -63,15 +66,11 @@ class AiJobController extends BaseController
             if (!$existingEffect || !$existingEffect->is_active || $existingEffect->publication_status !== 'published') {
                 return $this->sendError('Effect not found.', [], 404);
             }
-            if (!$existingEffect->workflow_id) {
-                return $this->sendError('Effect has no configured workflow.', [], 422);
-            }
-            $hasProductionFleet = ComfyUiWorkflowFleet::query()
-                ->where('workflow_id', $existingEffect->workflow_id)
-                ->where('stage', 'production')
-                ->exists();
-            if (!$hasProductionFleet) {
-                return $this->sendError('Effect is not available for production processing.', [], 422);
+
+            try {
+                $runtime = $this->buildRuntimeEffectForPublicRun($existingEffect);
+            } catch (\RuntimeException $e) {
+                return $this->sendError($e->getMessage(), [], 422);
             }
 
             $dispatch = null;
@@ -83,7 +82,11 @@ class AiJobController extends BaseController
                 $dispatch = $this->ensureDispatch(
                     $existing,
                     (int) $request->input('priority', 0),
-                    $existingProvider
+                    $existingProvider,
+                    null,
+                    null,
+                    (int) $runtime['workflow_id'],
+                    (string) $runtime['dispatch_stage']
                 );
             }
             return $this->sendResponse($existing, 'Job already submitted', [
@@ -99,15 +102,10 @@ class AiJobController extends BaseController
             return $this->sendError('Effect not found.', [], 404);
         }
 
-        if (!$effect->workflow_id) {
-            return $this->sendError('Effect has no configured workflow.', [], 422);
-        }
-        $hasProductionFleet = ComfyUiWorkflowFleet::query()
-            ->where('workflow_id', $effect->workflow_id)
-            ->where('stage', 'production')
-            ->exists();
-        if (!$hasProductionFleet) {
-            return $this->sendError('Effect is not available for production processing.', [], 422);
+        try {
+            $runtime = $this->buildRuntimeEffectForPublicRun($effect);
+        } catch (\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 422);
         }
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
@@ -149,7 +147,7 @@ class AiJobController extends BaseController
         }
 
         try {
-            [$inputPayload, $workUnits] = $this->preparePayloadAndUnits($effect, $inputPayload, $inputFile, $user);
+            [$inputPayload, $workUnits] = $this->preparePayloadAndUnits($runtime['runtime_effect'], $inputPayload, $inputFile, $user);
         } catch (\RuntimeException $e) {
             return $this->sendError($e->getMessage(), [], 422);
         }
@@ -201,7 +199,9 @@ class AiJobController extends BaseController
             (int) $request->input('priority', 0),
             $provider,
             $workUnits['units'] ?? null,
-            $workUnits['kind'] ?? null
+            $workUnits['kind'] ?? null,
+            (int) $runtime['workflow_id'],
+            (string) $runtime['dispatch_stage']
         );
 
         return $this->sendResponse($job, 'Job queued', [
@@ -386,17 +386,11 @@ class AiJobController extends BaseController
         int $priority = 0,
         ?string $provider = null,
         ?float $workUnits = null,
-        ?string $workUnitKind = null
+        ?string $workUnitKind = null,
+        ?int $workflowId = null,
+        string $dispatchStage = 'production'
     ): ?AiJobDispatch
     {
-        $workflowId = null;
-        $dispatchStage = 'production';
-        $effect = Effect::query()->find($job->effect_id);
-        if ($effect && $effect->workflow_id) {
-            $workflowId = $effect->workflow_id;
-            $dispatchStage = $effect->publication_status === 'development' ? 'staging' : 'production';
-        }
-
         try {
             return AiJobDispatch::query()->firstOrCreate([
                 'tenant_id' => (string) $job->tenant_id,
@@ -425,5 +419,62 @@ class AiJobController extends BaseController
 
             return null;
         }
+    }
+
+    /**
+     * @return array{runtime_effect: Effect, workflow_id: int, dispatch_stage: string}
+     */
+    private function buildRuntimeEffectForPublicRun(Effect $effect): array
+    {
+        $effect->loadMissing('workflow');
+
+        $revision = null;
+        if ($effect->published_revision_id) {
+            $revision = EffectRevision::query()
+                ->where('effect_id', $effect->id)
+                ->find((int) $effect->published_revision_id);
+        }
+
+        if (!$revision) {
+            $revision = app(EffectRevisionService::class)->createSnapshot($effect, null);
+            $effect->published_revision_id = $revision->id;
+            $effect->save();
+        }
+
+        $workflowId = (int) ($revision?->workflow_id ?: $effect->workflow_id);
+        if ($workflowId <= 0) {
+            throw new \RuntimeException('Effect has no configured workflow.');
+        }
+
+        $workflow = Workflow::query()->find($workflowId);
+        if (!$workflow) {
+            throw new \RuntimeException('Effect has no configured workflow.');
+        }
+
+        $environment = app(EffectPublicationService::class)->resolveProductionEnvironmentForEffect(
+            $effect,
+            $workflow->id
+        );
+        if (!$environment || $environment->kind !== 'prod_asg' || $environment->stage !== 'production') {
+            throw new \RuntimeException('Effect is not available for production processing.');
+        }
+        if ((int) ($effect->prod_execution_environment_id ?? 0) !== (int) $environment->id) {
+            $effect->prod_execution_environment_id = $environment->id;
+            $effect->save();
+        }
+
+        $runtimeEffect = $effect->replicate();
+        $runtimeEffect->id = $effect->id;
+        $runtimeEffect->workflow_id = $workflow->id;
+        $runtimeEffect->property_overrides = is_array($revision?->property_overrides)
+            ? $revision->property_overrides
+            : $effect->property_overrides;
+        $runtimeEffect->setRelation('workflow', $workflow);
+
+        return [
+            'runtime_effect' => $runtimeEffect,
+            'workflow_id' => $workflow->id,
+            'dispatch_stage' => $environment->stage,
+        ];
     }
 }

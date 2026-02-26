@@ -8,11 +8,16 @@ use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
+use App\Models\EffectRevision;
 use App\Models\File;
 use App\Models\User;
 use App\Models\Video;
+use App\Services\EffectPublicationService;
+use App\Services\EffectRevisionService;
 use App\Services\PresignedUrlService;
 use App\Services\WorkflowPayloadService;
+use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -76,6 +81,9 @@ class EffectsController extends BaseController
     public function store(Request $request): JsonResponse
     {
         $input = $request->all();
+        if (!array_key_exists('publication_status', $input) || $input['publication_status'] === null || $input['publication_status'] === '') {
+            $input['publication_status'] = 'development';
+        }
 
         $validator = Validator::make($input, Effect::getRules());
 
@@ -84,23 +92,23 @@ class EffectsController extends BaseController
         }
 
         if (($input['publication_status'] ?? null) === 'published') {
-            $workflowId = $input['workflow_id'] ?? null;
-            if (!$workflowId) {
-                return $this->sendError('Effect has no configured workflow.', [], 422);
-            }
-            $hasProductionFleet = ComfyUiWorkflowFleet::query()
-                ->where('workflow_id', $workflowId)
-                ->where('stage', 'production')
-                ->exists();
-            if (!$hasProductionFleet) {
-                return $this->sendError('Effect is not available for production processing.', [], 422);
-            }
+            return $this->inlinePublishError();
         }
 
         try {
-            $item = Effect::create($input);
+            $item = DB::connection('central')->transaction(function () use ($input, $request) {
+                $item = Effect::query()->create($input);
+                $item->loadMissing('workflow', 'category');
+
+                $createdByUserId = $request->user()?->id ? (int) $request->user()->id : null;
+                app(EffectRevisionService::class)->createSnapshot($item, $createdByUserId);
+
+                return $item->fresh();
+            });
+        } catch (\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 422);
         } catch (\Exception $e) {
-                        \Log::error('Effect operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            \Log::error('Effect operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
@@ -131,33 +139,111 @@ class EffectsController extends BaseController
             return $this->sendError(trans('Validation Error'), $validator->errors(), 422);
         }
 
-        $nextPublicationStatus = $input['publication_status'] ?? $item->publication_status;
-        if ($nextPublicationStatus === 'published') {
-            $workflowId = $input['workflow_id'] ?? $item->workflow_id;
-            if (!$workflowId) {
-                return $this->sendError('Effect has no configured workflow.', [], 422);
-            }
-            $hasProductionFleet = ComfyUiWorkflowFleet::query()
-                ->where('workflow_id', $workflowId)
-                ->where('stage', 'production')
-                ->exists();
-            if (!$hasProductionFleet) {
-                return $this->sendError('Effect is not available for production processing.', [], 422);
-            }
+        if (($input['publication_status'] ?? null) === 'published') {
+            return $this->inlinePublishError();
         }
 
-        $item->fill($input);
-
         try {
-            $item->save();
+            DB::connection('central')->transaction(function () use ($item, $input, $request) {
+                $item->fill($input);
+                $item->save();
+                $item->loadMissing('workflow', 'category');
+
+                $createdByUserId = $request->user()?->id ? (int) $request->user()->id : null;
+                app(EffectRevisionService::class)->createSnapshot($item, $createdByUserId);
+            });
+        } catch (\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 422);
         } catch (\Exception $e) {
-                        \Log::error('Effect operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            \Log::error('Effect operation failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return $this->sendError('Operation could not be completed. Please try again or contact support.', [], 500);
         }
 
         $item->fresh();
 
         return $this->sendResponse(new EffectResource($item), trans('Effect updated successfully'));
+    }
+
+    public function revisions(int $id): JsonResponse
+    {
+        $effect = Effect::query()->find($id);
+        if (!$effect) {
+            return $this->sendError(trans('Effect not found'));
+        }
+
+        $items = EffectRevision::query()
+            ->where('effect_id', $effect->id)
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (EffectRevision $revision) => $this->revisionPayload($revision))
+            ->values();
+
+        return $this->sendResponse(['items' => $items], 'Effect revisions retrieved successfully');
+    }
+
+    public function createRevision(Request $request, int $id): JsonResponse
+    {
+        $effect = Effect::query()->with('workflow', 'category')->find($id);
+        if (!$effect) {
+            return $this->sendError(trans('Effect not found'));
+        }
+
+        $revision = app(EffectRevisionService::class)->createSnapshot(
+            $effect,
+            $request->user()?->id ? (int) $request->user()->id : null
+        );
+
+        return $this->sendResponse($this->revisionPayload($revision), 'Effect revision created successfully', [], 201);
+    }
+
+    public function publish(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'revision_id' => 'required|integer',
+            'prod_execution_environment_id' => 'required|integer',
+        ]);
+        if ($validator->fails()) {
+            return $this->sendError('Validation error.', $validator->errors(), 422);
+        }
+
+        $effect = Effect::query()->find($id);
+        if (!$effect) {
+            return $this->sendError(trans('Effect not found'));
+        }
+
+        $validated = $validator->validated();
+
+        try {
+            app(EffectPublicationService::class)->synchronizePublishedBinding(
+                $effect,
+                (int) $validated['revision_id'],
+                (int) $validated['prod_execution_environment_id'],
+                $request->user()?->id ? (int) $request->user()->id : null
+            );
+        } catch (\RuntimeException $e) {
+            return $this->sendError($e->getMessage(), [], 422);
+        }
+
+        return $this->sendResponse(
+            new EffectResource($effect->fresh()),
+            'Effect published successfully'
+        );
+    }
+
+    public function unpublish(int $id): JsonResponse
+    {
+        $effect = Effect::query()->find($id);
+        if (!$effect) {
+            return $this->sendError(trans('Effect not found'));
+        }
+
+        $effect->publication_status = 'development';
+        $effect->save();
+
+        return $this->sendResponse(
+            new EffectResource($effect->fresh()),
+            'Effect unpublished successfully'
+        );
     }
 
     public function stressTest(Request $request, int $id): JsonResponse
@@ -575,5 +661,50 @@ class EffectsController extends BaseController
         return $expectedType === 'image'
             ? str_starts_with($normalized, 'image/')
             : str_starts_with($normalized, 'video/');
+    }
+
+    private function inlinePublishError(): JsonResponse
+    {
+        return $this->sendError(
+            'Publishing during create/update is not allowed. Save as development, then call publish endpoint with revision_id and prod_execution_environment_id.',
+            [],
+            422
+        );
+    }
+
+    private function revisionPayload(EffectRevision $revision): array
+    {
+        return [
+            'id' => $revision->id,
+            'effect_id' => $revision->effect_id,
+            'workflow_id' => $revision->workflow_id,
+            'category_id' => $revision->category_id,
+            'publication_status' => $revision->publication_status,
+            'property_overrides' => $revision->property_overrides,
+            'snapshot_json' => $revision->snapshot_json,
+            'recommended_execution_environment_id' => $revision->recommended_execution_environment_id,
+            'created_by_user_id' => $revision->created_by_user_id,
+            'created_at' => $this->toIso8601($revision->created_at),
+            'updated_at' => $this->toIso8601($revision->updated_at),
+        ];
+    }
+
+    private function toIso8601(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if ($value instanceof CarbonInterface) {
+            return $value->toIso8601String();
+        }
+        if (is_string($value) && trim($value) !== '') {
+            try {
+                return Carbon::parse($value)->toIso8601String();
+            } catch (\Throwable $e) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 }

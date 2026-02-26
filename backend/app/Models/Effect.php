@@ -29,11 +29,15 @@ class Effect extends CentralModel
         'is_premium',
         'is_new',
         'publication_status',
+        'published_revision_id',
+        'prod_execution_environment_id',
     ];
 
     protected $casts = [
         'category_id' => 'integer',
         'workflow_id' => 'integer',
+        'published_revision_id' => 'integer',
+        'prod_execution_environment_id' => 'integer',
         'property_overrides' => 'array',
         'tags' => 'array',
         'credits_cost' => 'float',
@@ -63,7 +67,9 @@ class Effect extends CentralModel
             'is_active' => 'boolean|required',
             'is_premium' => 'boolean|required',
             'is_new' => 'boolean|required',
-            'publication_status' => 'string|in:development,published|nullable',
+            'publication_status' => 'string|in:development,published,disabled|nullable',
+            'published_revision_id' => 'numeric|nullable|exists:effect_revisions,id',
+            'prod_execution_environment_id' => 'numeric|nullable|exists:execution_environments,id',
             'deleted_at' => 'date_format:Y-m-d H:i:s|nullable',
         ];
     }
@@ -76,5 +82,20 @@ class Effect extends CentralModel
     public function workflow()
     {
         return $this->belongsTo(\App\Models\Workflow::class);
+    }
+
+    public function revisions()
+    {
+        return $this->hasMany(EffectRevision::class)->orderByDesc('id');
+    }
+
+    public function publishedRevision()
+    {
+        return $this->belongsTo(EffectRevision::class, 'published_revision_id');
+    }
+
+    public function prodExecutionEnvironment()
+    {
+        return $this->belongsTo(ExecutionEnvironment::class, 'prod_execution_environment_id');
     }
 }

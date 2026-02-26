@@ -2,6 +2,8 @@ ngrok http --url=uitest.ngrok.app 3003
 ngrok http --url=back-123.ngrok.app 80
 ngrok http --url=minio.ngrok.pizza 9000
 
+wsl.exe -d Ubuntu-22.04 bash -lc "docker exec bcfaa89c8b6305a31d1cfdc0f716383c7b81b1055a0c147d615443b22a4d7697 sh -lc 'command -v php || true; ls -1 /usr/bin | grep -i php | head -n 30; ls -1 /usr/local/bin | grep -i php | head -n 30; ls -1 /usr/sbin | grep -i php | head -n 30'"
+
 Local dev storage (MinIO + AWS S3)
 
 1) App media (effects thumbnails/previews, workflow uploads) -> MinIO:
@@ -40,6 +42,7 @@ Fresh!!! “migrate → seed” flow for this repo (pooled tenancy)
 	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan migrate:fresh"
 	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan tenancy:pools-migrate"
 	docker compose -p bp exec workspace bash -c "cd /var/www && php artisan db:seed"
+  docker compose -p bp exec workspace bash -c "cd /var/www && php artisan test" 
 
 
 only want to rerun the failing seeder

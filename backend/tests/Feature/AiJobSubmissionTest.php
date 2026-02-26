@@ -7,6 +7,8 @@ use App\Models\AiJobDispatch;
 use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
+use App\Models\EffectRevision;
+use App\Models\ExecutionEnvironment;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\Workflow;
@@ -59,6 +61,10 @@ class AiJobSubmissionTest extends TestCase
         DB::connection('central')->table('ai_job_dispatches')->truncate();
         DB::connection('central')->table('comfyui_workflow_fleets')->truncate();
         DB::connection('central')->table('comfyui_gpu_fleets')->truncate();
+        DB::connection('central')->table('execution_environments')->truncate();
+        DB::connection('central')->table('effect_revisions')->truncate();
+        DB::connection('central')->table('workflow_revisions')->truncate();
+        DB::connection('central')->table('workflow_analysis_jobs')->truncate();
         DB::connection('central')->table('effects')->truncate();
         DB::connection('central')->table('users')->truncate();
         DB::connection('central')->table('tenants')->truncate();
@@ -196,6 +202,76 @@ class AiJobSubmissionTest extends TestCase
         $inputPayload = is_string($payloadRaw) ? json_decode($payloadRaw, true) : $payloadRaw;
         $this->assertIsArray($inputPayload);
         $this->assertArrayHasKey('workflow', $inputPayload);
+    }
+
+    public function test_ai_job_submission_uses_pinned_published_revision_workflow(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+
+        $workflowB = Workflow::query()->create([
+            'name' => 'Workflow ' . uniqid(),
+            'slug' => 'workflow-' . uniqid(),
+            'comfyui_workflow_path' => 'resources/comfyui/workflows/cloud_video_effect.json',
+            'output_node_id' => '7',
+            'output_extension' => 'mp4',
+            'output_mime_type' => 'video/mp4',
+            'is_active' => true,
+        ]);
+        $this->createProductionFleetAssignment($workflowB);
+
+        $assignment = ComfyUiWorkflowFleet::query()
+            ->where('workflow_id', $workflowB->id)
+            ->where('stage', 'production')
+            ->firstOrFail();
+        $fleet = ComfyUiGpuFleet::query()->findOrFail($assignment->fleet_id);
+
+        $environment = ExecutionEnvironment::query()->create([
+            'name' => 'Production ASG - ' . $fleet->slug,
+            'kind' => 'prod_asg',
+            'stage' => 'production',
+            'fleet_slug' => $fleet->slug,
+            'configuration_json' => ['instance_types' => ['g4dn.xlarge']],
+            'is_active' => true,
+        ]);
+
+        $revision = EffectRevision::query()->create([
+            'effect_id' => $effect->id,
+            'workflow_id' => $workflowB->id,
+            'category_id' => $effect->category_id,
+            'publication_status' => 'published',
+            'property_overrides' => ['style' => 'revision-style'],
+            'snapshot_json' => ['effect' => ['id' => $effect->id]],
+        ]);
+
+        $effect->update([
+            'published_revision_id' => $revision->id,
+            'prod_execution_environment_id' => $environment->id,
+            'publication_status' => 'published',
+        ]);
+
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        Sanctum::actingAs($user);
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $jobId = $response->json('data.id');
+        $dispatch = AiJobDispatch::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('tenant_job_id', $jobId)
+            ->first();
+
+        $this->assertNotNull($dispatch);
+        $this->assertSame($workflowB->id, (int) $dispatch->workflow_id);
+        $this->assertSame('production', $dispatch->stage);
     }
 
     public function test_ai_job_submission_replaces_workflow_prompt_placeholders_from_input_payload(): void

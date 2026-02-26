@@ -15,18 +15,25 @@ import { Progress } from "@/components/ui/progress";
 import EffectConfigFields from "@/components/effects/EffectConfigFields";
 import {
   ApiError,
+  createAdminEffectRevision,
   createAdminEffect,
   deleteAdminEffect,
+  getAdminEffectRevisions,
   getAdminEffects,
+  getStudioExecutionEnvironments,
   getAdminWorkflows,
   initAdminEffectUpload,
   initEffectAssetUpload,
   initVideoUpload,
+  publishEffect,
   stressTestEffect,
+  unpublishEffect,
   updateAdminEffect,
   type AdminEffect,
+  type AdminEffectRevision,
   type AdminEffectPayload,
   type AdminWorkflow,
+  type StudioExecutionEnvironment,
 } from "@/lib/api";
 import { toast } from "sonner";
 import type { FilterValue } from "@/components/ui/SmartFilters";
@@ -130,13 +137,6 @@ function parseBoolean(value: string): boolean {
   return ["true", "1", "yes", "y", "on"].includes(value.trim().toLowerCase());
 }
 
-function parsePublicationStatus(value: string | null): "development" | "published" | null {
-  if (value === "development" || value === "published") {
-    return value;
-  }
-  return null;
-}
-
 // ---- Zod Schema ----
 
 const effectSchema = z.object({
@@ -152,7 +152,6 @@ const effectSchema = z.object({
   is_active: z.boolean(),
   is_premium: z.boolean(),
   is_new: z.boolean(),
-  publication_status: z.enum(["development", "published"]).nullable().optional(),
   thumbnail_url: z.string().nullable().optional(),
   preview_video_url: z.string().nullable().optional(),
 });
@@ -259,7 +258,6 @@ const initialFormState: Record<string, string> = {
   is_active: "true",
   is_premium: "true",
   is_new: "true",
-  publication_status: "development",
   thumbnail_url: "",
   preview_video_url: "",
   technical_note: "",
@@ -290,6 +288,15 @@ export default function AdminEffectsPage() {
   const [stressTestError, setStressTestError] = useState<string | null>(null);
   const [stressTestRunning, setStressTestRunning] = useState(false);
   const stressTestFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [publishItem, setPublishItem] = useState<AdminEffect | null>(null);
+  const [publishRevisions, setPublishRevisions] = useState<AdminEffectRevision[]>([]);
+  const [publishEnvironments, setPublishEnvironments] = useState<StudioExecutionEnvironment[]>([]);
+  const [publishRevisionId, setPublishRevisionId] = useState<string>("");
+  const [publishEnvironmentId, setPublishEnvironmentId] = useState<string>("");
+  const [publishLoadingOptions, setPublishLoadingOptions] = useState(false);
+  const [publishSubmitting, setPublishSubmitting] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   // Load workflows for dropdown
   useEffect(() => {
@@ -343,12 +350,84 @@ export default function AdminEffectsPage() {
     setStressTestOpen(true);
   };
 
+  const handleOpenPublishDialog = async (item: AdminEffect) => {
+    setPublishItem(item);
+    setPublishDialogOpen(true);
+    setPublishError(null);
+    setPublishLoadingOptions(true);
+
+    try {
+      const [revisionsResponse, environmentsResponse] = await Promise.all([
+        getAdminEffectRevisions(item.id),
+        getStudioExecutionEnvironments({ stage: "production", is_active: true }),
+      ]);
+
+      let revisions = revisionsResponse.items ?? [];
+      if (revisions.length === 0) {
+        const created = await createAdminEffectRevision(item.id);
+        revisions = [created];
+      }
+
+      const environments = environmentsResponse.items ?? [];
+      setPublishRevisions(revisions);
+      setPublishEnvironments(environments);
+
+      const defaultRevisionId = item.published_revision_id ?? revisions[0]?.id ?? null;
+      const defaultEnvironmentId = item.prod_execution_environment_id ?? environments[0]?.id ?? null;
+      setPublishRevisionId(defaultRevisionId ? String(defaultRevisionId) : "");
+      setPublishEnvironmentId(defaultEnvironmentId ? String(defaultEnvironmentId) : "");
+    } catch (error) {
+      setPublishError(extractErrorMessage(error, "Failed to load publish options."));
+    } finally {
+      setPublishLoadingOptions(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!publishItem) return;
+
+    const revisionId = Number(publishRevisionId);
+    const environmentId = Number(publishEnvironmentId);
+    if (!Number.isFinite(revisionId) || revisionId <= 0 || !Number.isFinite(environmentId) || environmentId <= 0) {
+      setPublishError("Select both a revision and a production execution environment.");
+      return;
+    }
+
+    setPublishSubmitting(true);
+    setPublishError(null);
+    try {
+      await publishEffect(publishItem.id, revisionId, environmentId);
+      toast.success("Effect published.");
+      setPublishDialogOpen(false);
+      setPublishItem(null);
+      await state.loadItems();
+    } catch (error) {
+      setPublishError(extractErrorMessage(error, "Failed to publish effect."));
+    } finally {
+      setPublishSubmitting(false);
+    }
+  };
+
+  const handleUnpublish = async (item: AdminEffect) => {
+    try {
+      await unpublishEffect(item.id);
+      toast.success("Effect unpublished.");
+      await state.loadItems();
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Failed to unpublish effect."));
+    }
+  };
+
   const handleEditRef = useRef(handleEdit);
   handleEditRef.current = handleEdit;
   const handleDeleteRef = useRef(handleDelete);
   handleDeleteRef.current = handleDelete;
   const handleStressTestRef = useRef(handleStressTest);
   handleStressTestRef.current = handleStressTest;
+  const handleOpenPublishDialogRef = useRef(handleOpenPublishDialog);
+  handleOpenPublishDialogRef.current = handleOpenPublishDialog;
+  const handleUnpublishRef = useRef(handleUnpublish);
+  handleUnpublishRef.current = handleUnpublish;
 
   const actionsColumn = useMemo<ColumnDef<AdminEffect>[]>(() => [{
     id: "_actions",
@@ -378,6 +457,25 @@ export default function AdminEffectsPage() {
           >
             Stress Test
           </Button>
+          {item.publication_status === "published" ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-sm px-3"
+              onClick={(e) => { e.stopPropagation(); handleUnpublishRef.current(item); }}
+            >
+              Unpublish
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-sm px-3"
+              onClick={(e) => { e.stopPropagation(); handleOpenPublishDialogRef.current(item); }}
+            >
+              Publish
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -436,8 +534,8 @@ export default function AdminEffectsPage() {
         return <span className="text-foreground font-medium">{effect.name}</span>;
       }
       if (columnKey === "publication_status") {
-        const value = effect.publication_status || "published";
-        const label = value === "development" ? "development" : "published";
+        const value = effect.publication_status || "development";
+        const label = value === "disabled" ? "disabled" : value;
         return <span className="text-muted-foreground capitalize">{label}</span>;
       }
       if (["is_active", "is_premium", "is_new"].includes(columnKey)) {
@@ -648,18 +746,6 @@ export default function AdminEffectsPage() {
       },
     },
     {
-      key: "publication_status",
-      label: "Publication Status",
-      type: "select",
-      section: "Publishing",
-      fullWidth: true,
-      options: [
-        { value: "development", label: "Development" },
-        { value: "published", label: "Published" },
-      ],
-      helpText: "Published effects require a production fleet assignment for their workflow.",
-    },
-    {
       key: "thumbnail_url",
       label: "Thumbnail URL",
       section: "Media",
@@ -706,7 +792,6 @@ export default function AdminEffectsPage() {
 
     const categoryIdValue = str("category_id");
     const catId = categoryIdValue ? Number(categoryIdValue) : null;
-    const publicationStatus = parsePublicationStatus(str("publication_status"));
 
     const workflowIdValue = str("workflow_id");
     const wfId = workflowIdValue ? Number(workflowIdValue) : null;
@@ -732,39 +817,14 @@ export default function AdminEffectsPage() {
       is_active: parseBoolean(str("is_active") || ""),
       is_premium: parseBoolean(str("is_premium") || ""),
       is_new: parseBoolean(str("is_new") || ""),
-      publication_status: publicationStatus,
       thumbnail_url: stripQuery(str("thumbnail_url")),
       preview_video_url: stripQuery(str("preview_video_url")),
     };
   };
 
-  const handleCreateEffect = async (payload: AdminEffectPayload) => {
-    try {
-      return await createAdminEffect(payload);
-    } catch (error) {
-      if (payload.publication_status === "published" && error instanceof ApiError) {
-        const message = extractErrorMessage(error, "");
-        if (message.toLowerCase().includes("production")) {
-          throw new Error("Assign a production fleet to the workflow before publishing this effect.");
-        }
-      }
-      throw error;
-    }
-  };
+  const handleCreateEffect = async (payload: AdminEffectPayload) => createAdminEffect(payload);
 
-  const handleUpdateEffect = async (id: number, payload: AdminEffectPayload) => {
-    try {
-      return await updateAdminEffect(id, payload);
-    } catch (error) {
-      if (payload.publication_status === "published" && error instanceof ApiError) {
-        const message = extractErrorMessage(error, "");
-        if (message.toLowerCase().includes("production")) {
-          throw new Error("Assign a production fleet to the workflow before publishing this effect.");
-        }
-      }
-      throw error;
-    }
-  };
+  const handleUpdateEffect = async (id: number, payload: AdminEffectPayload) => updateAdminEffect(id, payload);
 
   const handleStressTestRun = async () => {
     if (!stressTestItem) return;
@@ -896,6 +956,25 @@ export default function AdminEffectsPage() {
       >
         Stress Test
       </Button>
+      {item.publication_status === "published" ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs flex-1"
+          onClick={(e) => { e.stopPropagation(); handleUnpublish(item); }}
+        >
+          Unpublish
+        </Button>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs flex-1"
+          onClick={(e) => { e.stopPropagation(); handleOpenPublishDialog(item); }}
+        >
+          Publish
+        </Button>
+      )}
       <Button
         variant="outline"
         size="sm"
@@ -949,6 +1028,109 @@ export default function AdminEffectsPage() {
         onUpdate={handleUpdateEffect}
         onSaved={() => state.loadItems()}
       />
+
+      <Dialog
+        open={publishDialogOpen}
+        onOpenChange={(open) => {
+          setPublishDialogOpen(open);
+          if (!open) {
+            setPublishItem(null);
+            setPublishRevisions([]);
+            setPublishEnvironments([]);
+            setPublishRevisionId("");
+            setPublishEnvironmentId("");
+            setPublishError(null);
+            setPublishLoadingOptions(false);
+            setPublishSubmitting(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Publish Effect</DialogTitle>
+            <DialogDescription>
+              Pin a revision and select the production execution environment for{" "}
+              <span className="font-semibold text-foreground">
+                {publishItem?.name || publishItem?.slug || "this effect"}
+              </span>
+              .
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {publishLoadingOptions ? (
+              <div className="rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                Loading revisions and environments...
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-muted-foreground">Revision</label>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={publishRevisionId}
+                    onChange={(event) => setPublishRevisionId(event.target.value)}
+                    disabled={publishSubmitting || publishRevisions.length === 0}
+                  >
+                    <option value="">Select revision</option>
+                    {publishRevisions.map((revision) => (
+                      <option key={revision.id} value={revision.id}>
+                        #{revision.id} · workflow {revision.workflow_id ?? "n/a"} · {revision.created_at ?? "unspecified"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-muted-foreground">Production Execution Environment</label>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={publishEnvironmentId}
+                    onChange={(event) => setPublishEnvironmentId(event.target.value)}
+                    disabled={publishSubmitting || publishEnvironments.length === 0}
+                  >
+                    <option value="">Select environment</option>
+                    {publishEnvironments.map((environment) => (
+                      <option key={environment.id} value={environment.id}>
+                        {environment.name} ({environment.kind ?? "unknown"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {publishError ? (
+              <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                {publishError}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap justify-end gap-2 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPublishDialogOpen(false)}
+              disabled={publishSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handlePublish}
+              disabled={
+                publishSubmitting
+                || publishLoadingOptions
+                || publishRevisions.length === 0
+                || publishEnvironments.length === 0
+              }
+            >
+              {publishSubmitting ? "Publishing..." : "Publish"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={stressTestOpen}

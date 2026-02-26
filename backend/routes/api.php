@@ -41,6 +41,18 @@ use \App\Http\Controllers\Admin\AuditLogsController as AdminAuditLogsController;
 use \App\Http\Controllers\Admin\WorkloadController as AdminWorkloadController;
 use \App\Http\Controllers\Admin\ComfyUiAssetsController as AdminComfyUiAssetsController;
 use \App\Http\Controllers\Admin\ComfyUiFleetsController as AdminComfyUiFleetsController;
+use \App\Http\Controllers\Admin\StudioWorkflowAnalysisController as AdminStudioWorkflowAnalysisController;
+use \App\Http\Controllers\Admin\LoadTestScenariosController as AdminLoadTestScenariosController;
+use \App\Http\Controllers\Admin\DevNodesController as AdminDevNodesController;
+use \App\Http\Controllers\Admin\StudioEconomicsController as AdminStudioEconomicsController;
+use \App\Http\Controllers\Admin\StudioExecutionEnvironmentsController as AdminStudioExecutionEnvironmentsController;
+use \App\Http\Controllers\Admin\StudioTestInputSetsController as AdminStudioTestInputSetsController;
+use \App\Http\Controllers\Admin\StudioEffectTestRunsController as AdminStudioEffectTestRunsController;
+use \App\Http\Controllers\Admin\StudioLoadTestRunsController as AdminStudioLoadTestRunsController;
+use \App\Http\Controllers\Admin\StudioExperimentVariantsController as AdminStudioExperimentVariantsController;
+use \App\Http\Controllers\Admin\StudioFleetConfigSnapshotsController as AdminStudioFleetConfigSnapshotsController;
+use \App\Http\Controllers\Admin\StudioProductionFleetSnapshotsController as AdminStudioProductionFleetSnapshotsController;
+use \App\Http\Controllers\Admin\StudioRunArtifactsController as AdminStudioRunArtifactsController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -133,6 +145,10 @@ Route::middleware([
             Route::patch('/effects/{id}', [AdminEffectsController::class, 'update']);
             Route::delete('/effects/{id}', [AdminEffectsController::class, 'destroy']);
             Route::post('/effects/{id}/stress-test', [AdminEffectsController::class, 'stressTest']);
+            Route::get('/effects/{id}/revisions', [AdminEffectsController::class, 'revisions']);
+            Route::post('/effects/{id}/revisions', [AdminEffectsController::class, 'createRevision']);
+            Route::post('/effects/{id}/publish', [AdminEffectsController::class, 'publish']);
+            Route::post('/effects/{id}/unpublish', [AdminEffectsController::class, 'unpublish']);
 
             Route::get('/categories', [AdminCategoriesController::class, 'index']);
             Route::get('/categories/create', [AdminCategoriesController::class, 'create']);
@@ -207,6 +223,43 @@ Route::middleware([
 
             // Workload
             Route::get('/workload', [AdminWorkloadController::class, 'index']);
+
+            // Studio
+            Route::post('/studio/workflow-analyze', [AdminStudioWorkflowAnalysisController::class, 'store']);
+            Route::get('/studio/workflow-analyze/{id}', [AdminStudioWorkflowAnalysisController::class, 'show']);
+            Route::get('/studio/dev-nodes', [AdminDevNodesController::class, 'index']);
+            Route::post('/studio/dev-nodes', [AdminDevNodesController::class, 'store']);
+            Route::get('/studio/dev-nodes/{id}', [AdminDevNodesController::class, 'show']);
+            Route::patch('/studio/dev-nodes/{id}', [AdminDevNodesController::class, 'update']);
+            Route::post('/studio/economics/cost-model', [AdminStudioEconomicsController::class, 'costModel']);
+            Route::get('/studio/load-test-scenarios', [AdminLoadTestScenariosController::class, 'index']);
+            Route::post('/studio/load-test-scenarios', [AdminLoadTestScenariosController::class, 'store']);
+            Route::get('/studio/load-test-scenarios/{id}', [AdminLoadTestScenariosController::class, 'show']);
+            Route::patch('/studio/load-test-scenarios/{id}', [AdminLoadTestScenariosController::class, 'update']);
+            Route::get('/studio/execution-environments', [AdminStudioExecutionEnvironmentsController::class, 'index']);
+            Route::get('/studio/execution-environments/{id}', [AdminStudioExecutionEnvironmentsController::class, 'show']);
+            Route::get('/studio/test-input-sets', [AdminStudioTestInputSetsController::class, 'index']);
+            Route::post('/studio/test-input-sets', [AdminStudioTestInputSetsController::class, 'store']);
+            Route::get('/studio/test-input-sets/{id}', [AdminStudioTestInputSetsController::class, 'show']);
+            Route::get('/studio/effect-test-runs', [AdminStudioEffectTestRunsController::class, 'index']);
+            Route::post('/studio/effect-test-runs', [AdminStudioEffectTestRunsController::class, 'store']);
+            Route::get('/studio/effect-test-runs/{id}', [AdminStudioEffectTestRunsController::class, 'show']);
+            Route::get('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'index']);
+            Route::post('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'store']);
+            Route::get('/studio/load-test-runs/{id}', [AdminStudioLoadTestRunsController::class, 'show']);
+            Route::get('/studio/experiment-variants', [AdminStudioExperimentVariantsController::class, 'index']);
+            Route::post('/studio/experiment-variants', [AdminStudioExperimentVariantsController::class, 'store']);
+            Route::get('/studio/experiment-variants/{id}', [AdminStudioExperimentVariantsController::class, 'show']);
+            Route::patch('/studio/experiment-variants/{id}', [AdminStudioExperimentVariantsController::class, 'update']);
+            Route::get('/studio/fleet-config-snapshots', [AdminStudioFleetConfigSnapshotsController::class, 'index']);
+            Route::post('/studio/fleet-config-snapshots', [AdminStudioFleetConfigSnapshotsController::class, 'store']);
+            Route::get('/studio/fleet-config-snapshots/{id}', [AdminStudioFleetConfigSnapshotsController::class, 'show']);
+            Route::get('/studio/production-fleet-snapshots', [AdminStudioProductionFleetSnapshotsController::class, 'index']);
+            Route::post('/studio/production-fleet-snapshots', [AdminStudioProductionFleetSnapshotsController::class, 'store']);
+            Route::get('/studio/production-fleet-snapshots/{id}', [AdminStudioProductionFleetSnapshotsController::class, 'show']);
+            Route::get('/studio/run-artifacts', [AdminStudioRunArtifactsController::class, 'index']);
+            Route::post('/studio/run-artifacts', [AdminStudioRunArtifactsController::class, 'store']);
+            Route::get('/studio/run-artifacts/{id}', [AdminStudioRunArtifactsController::class, 'show']);
 
             // Audit Logs
             Route::get('/audit-logs', [AdminAuditLogsController::class, 'index']);

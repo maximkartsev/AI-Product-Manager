@@ -51,6 +51,8 @@ class Effect extends JsonResource
 
         $data['thumbnail_url'] = $this->presignEffectAsset($data['thumbnail_url'] ?? null);
         $data['preview_video_url'] = $this->presignEffectAsset($data['preview_video_url'] ?? null);
+        $data['published_revision_id'] = $this->published_revision_id;
+        $data['prod_execution_environment_id'] = $this->prod_execution_environment_id;
         $data['category'] = $category ? [
             'id' => $category->id,
             'name' => $category->name,

@@ -950,7 +950,9 @@ export type AdminEffect = {
   category_id?: number | null;
   workflow_id?: number | null;
   property_overrides?: Record<string, string> | null;
-  publication_status?: "development" | "published" | null;
+  publication_status?: "development" | "published" | "disabled" | null;
+  published_revision_id?: number | null;
+  prod_execution_environment_id?: number | null;
   category?: { id: number; name?: string } | null;
   tags?: string[] | null;
   type?: string | null;
@@ -967,6 +969,126 @@ export type AdminEffect = {
 };
 
 export type AdminEffectPayload = Partial<AdminEffect>;
+
+export type AdminEffectRevision = {
+  id: number;
+  effect_id: number;
+  workflow_id?: number | null;
+  category_id?: number | null;
+  publication_status?: "development" | "published" | "disabled" | null;
+  property_overrides?: Record<string, unknown> | null;
+  snapshot_json?: Record<string, unknown> | null;
+  recommended_execution_environment_id?: number | null;
+  created_by_user_id?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioExecutionEnvironment = {
+  id: number;
+  name: string;
+  kind?: string | null;
+  stage?: string | null;
+  fleet_slug?: string | null;
+  dev_node_id?: number | null;
+  configuration_json?: Record<string, unknown> | null;
+  is_active?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioListResponse<T> = {
+  items: T[];
+};
+
+export type StudioTestInputSet = {
+  id: number;
+  name: string;
+  description?: string | null;
+  input_json?: Record<string, unknown> | unknown[] | null;
+  created_by_user_id?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioEffectTestRun = {
+  id: number;
+  effect_id?: number | null;
+  effect_revision_id?: number | null;
+  execution_environment_id?: number | null;
+  run_mode?: string | null;
+  target_count?: number | null;
+  status?: string | null;
+  metrics_json?: Record<string, unknown> | unknown[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioLoadTestRun = {
+  id: number;
+  load_test_scenario_id?: number | null;
+  execution_environment_id?: number | null;
+  effect_revision_id?: number | null;
+  experiment_variant_id?: number | null;
+  status?: string | null;
+  achieved_rpm?: number | null;
+  achieved_rps?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioExperimentVariant = {
+  id: number;
+  name: string;
+  description?: string | null;
+  target_environment_kind?: string | null;
+  fleet_config_intent_json?: Record<string, unknown> | unknown[] | null;
+  constraints_json?: Record<string, unknown> | unknown[] | null;
+  is_active?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioFleetConfigSnapshot = {
+  id: number;
+  execution_environment_id?: number | null;
+  experiment_variant_id?: number | null;
+  snapshot_scope?: string | null;
+  config_json?: Record<string, unknown> | unknown[] | null;
+  composition_json?: Record<string, unknown> | unknown[] | null;
+  captured_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioProductionFleetSnapshot = {
+  id: number;
+  execution_environment_id?: number | null;
+  fleet_slug?: string | null;
+  stage?: string | null;
+  queue_depth?: number | null;
+  queue_units?: number | null;
+  p95_queue_wait_seconds?: number | null;
+  p95_processing_seconds?: number | null;
+  interruptions_count?: number | null;
+  rebalance_recommendations_count?: number | null;
+  spot_discount_estimate?: number | null;
+  captured_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioRunArtifact = {
+  id: number;
+  effect_test_run_id?: number | null;
+  load_test_run_id?: number | null;
+  artifact_type?: string | null;
+  storage_disk?: string | null;
+  storage_path?: string | null;
+  metadata_json?: Record<string, unknown> | unknown[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
 
 export type AdminEffectStressTestPayload = {
   count: number;
@@ -1069,6 +1191,123 @@ export function createAdminEffect(payload: AdminEffectPayload): Promise<AdminEff
 
 export function updateAdminEffect(id: number, payload: AdminEffectPayload): Promise<AdminEffect> {
   return apiRequest<AdminEffect>(`/admin/effects/${id}`, { method: "PATCH", body: payload });
+}
+
+export function getAdminEffectRevisions(effectId: number): Promise<StudioListResponse<AdminEffectRevision>> {
+  return apiGet<StudioListResponse<AdminEffectRevision>>(`/admin/effects/${effectId}/revisions`);
+}
+
+export function createAdminEffectRevision(effectId: number): Promise<AdminEffectRevision> {
+  return apiPost<AdminEffectRevision>(`/admin/effects/${effectId}/revisions`, {});
+}
+
+export function publishEffect(
+  effectId: number,
+  revisionId: number,
+  prodExecutionEnvironmentId: number,
+): Promise<AdminEffect> {
+  return apiPost<AdminEffect>(`/admin/effects/${effectId}/publish`, {
+    revision_id: revisionId,
+    prod_execution_environment_id: prodExecutionEnvironmentId,
+  });
+}
+
+export function unpublishEffect(effectId: number): Promise<AdminEffect> {
+  return apiPost<AdminEffect>(`/admin/effects/${effectId}/unpublish`, {});
+}
+
+export function getStudioExecutionEnvironments(params: {
+  kind?: string;
+  stage?: string;
+  is_active?: boolean;
+} = {}): Promise<StudioListResponse<StudioExecutionEnvironment>> {
+  const query: Query = {
+    kind: params.kind ?? undefined,
+    stage: params.stage ?? undefined,
+    is_active: typeof params.is_active === "boolean" ? Number(params.is_active) : undefined,
+  };
+  return apiGet<StudioListResponse<StudioExecutionEnvironment>>("/admin/studio/execution-environments", query);
+}
+
+export function getStudioTestInputSets(): Promise<StudioListResponse<StudioTestInputSet>> {
+  return apiGet<StudioListResponse<StudioTestInputSet>>("/admin/studio/test-input-sets");
+}
+
+export function createStudioTestInputSet(
+  payload: Pick<StudioTestInputSet, "name" | "description" | "input_json">,
+): Promise<StudioTestInputSet> {
+  return apiPost<StudioTestInputSet>("/admin/studio/test-input-sets", payload);
+}
+
+export function getStudioEffectTestRuns(params: { status?: string; run_mode?: string } = {}): Promise<StudioListResponse<StudioEffectTestRun>> {
+  const query: Query = {
+    status: params.status ?? undefined,
+    run_mode: params.run_mode ?? undefined,
+  };
+  return apiGet<StudioListResponse<StudioEffectTestRun>>("/admin/studio/effect-test-runs", query);
+}
+
+export function createStudioEffectTestRun(payload: Record<string, unknown>): Promise<StudioEffectTestRun> {
+  return apiPost<StudioEffectTestRun>("/admin/studio/effect-test-runs", payload);
+}
+
+export function getStudioLoadTestRuns(params: { status?: string } = {}): Promise<StudioListResponse<StudioLoadTestRun>> {
+  const query: Query = {
+    status: params.status ?? undefined,
+  };
+  return apiGet<StudioListResponse<StudioLoadTestRun>>("/admin/studio/load-test-runs", query);
+}
+
+export function createStudioLoadTestRun(payload: Record<string, unknown>): Promise<StudioLoadTestRun> {
+  return apiPost<StudioLoadTestRun>("/admin/studio/load-test-runs", payload);
+}
+
+export function getStudioExperimentVariants(params: { is_active?: boolean } = {}): Promise<StudioListResponse<StudioExperimentVariant>> {
+  const query: Query = {
+    is_active: typeof params.is_active === "boolean" ? Number(params.is_active) : undefined,
+  };
+  return apiGet<StudioListResponse<StudioExperimentVariant>>("/admin/studio/experiment-variants", query);
+}
+
+export function createStudioExperimentVariant(payload: Record<string, unknown>): Promise<StudioExperimentVariant> {
+  return apiPost<StudioExperimentVariant>("/admin/studio/experiment-variants", payload);
+}
+
+export function updateStudioExperimentVariant(id: number, payload: Record<string, unknown>): Promise<StudioExperimentVariant> {
+  return apiRequest<StudioExperimentVariant>(`/admin/studio/experiment-variants/${id}`, { method: "PATCH", body: payload });
+}
+
+export function getStudioFleetConfigSnapshots(params: { snapshot_scope?: string } = {}): Promise<StudioListResponse<StudioFleetConfigSnapshot>> {
+  const query: Query = {
+    snapshot_scope: params.snapshot_scope ?? undefined,
+  };
+  return apiGet<StudioListResponse<StudioFleetConfigSnapshot>>("/admin/studio/fleet-config-snapshots", query);
+}
+
+export function createStudioFleetConfigSnapshot(payload: Record<string, unknown>): Promise<StudioFleetConfigSnapshot> {
+  return apiPost<StudioFleetConfigSnapshot>("/admin/studio/fleet-config-snapshots", payload);
+}
+
+export function getStudioProductionFleetSnapshots(params: { stage?: string } = {}): Promise<StudioListResponse<StudioProductionFleetSnapshot>> {
+  const query: Query = {
+    stage: params.stage ?? undefined,
+  };
+  return apiGet<StudioListResponse<StudioProductionFleetSnapshot>>("/admin/studio/production-fleet-snapshots", query);
+}
+
+export function createStudioProductionFleetSnapshot(payload: Record<string, unknown>): Promise<StudioProductionFleetSnapshot> {
+  return apiPost<StudioProductionFleetSnapshot>("/admin/studio/production-fleet-snapshots", payload);
+}
+
+export function getStudioRunArtifacts(params: { artifact_type?: string } = {}): Promise<StudioListResponse<StudioRunArtifact>> {
+  const query: Query = {
+    artifact_type: params.artifact_type ?? undefined,
+  };
+  return apiGet<StudioListResponse<StudioRunArtifact>>("/admin/studio/run-artifacts", query);
+}
+
+export function createStudioRunArtifact(payload: Record<string, unknown>): Promise<StudioRunArtifact> {
+  return apiPost<StudioRunArtifact>("/admin/studio/run-artifacts", payload);
 }
 
 export function deleteAdminEffect(id: number): Promise<void> {

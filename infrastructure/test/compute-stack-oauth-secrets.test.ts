@@ -106,3 +106,70 @@ test('compute stack injects oauth secrets and apple key bootstrap into backend p
     HealthCheckGracePeriodSeconds: 300,
   });
 });
+
+test('compute stack with certificate enables HTTPS listener and redirects HTTP to HTTPS', () => {
+  const tlsConfig: BpEnvironmentConfig = {
+    ...baseConfig,
+    domainName: 'dzzzs.com',
+    certificateArn: 'arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000',
+  };
+
+  const app = new cdk.App();
+  const network = new NetworkStack(app, 'bp-test-network-tls', {
+    env: tlsConfig.env,
+    config: tlsConfig,
+    description: 'Test network',
+  });
+
+  const data = new DataStack(app, 'bp-test-data-tls', {
+    env: tlsConfig.env,
+    config: tlsConfig,
+    vpc: network.vpc,
+    sgRds: network.sgRds,
+    sgRedis: network.sgRedis,
+    description: 'Test data',
+  });
+
+  const dataAny = data as unknown as { mediaCdnDomain?: string };
+  const compute = new ComputeStack(app, 'bp-test-compute-tls', {
+    env: tlsConfig.env,
+    config: tlsConfig,
+    vpc: network.vpc,
+    sgAlb: network.sgAlb,
+    sgBackend: network.sgBackend,
+    sgFrontend: network.sgFrontend,
+    dbSecret: data.dbSecret,
+    redisSecret: data.redisSecret,
+    assetOpsSecret: data.assetOpsSecret,
+    redisEndpoint: data.redisEndpoint,
+    mediaBucket: data.mediaBucket,
+    modelsBucket: data.modelsBucket,
+    logsBucket: data.logsBucket,
+    mediaCdnDomain: dataAny.mediaCdnDomain,
+    description: 'Test compute',
+  } as any);
+
+  const template = Template.fromStack(compute);
+
+  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
+    Port: 443,
+    Protocol: 'HTTPS',
+    Certificates: Match.arrayWith([
+      Match.objectLike({ CertificateArn: tlsConfig.certificateArn }),
+    ]),
+  });
+
+  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', Match.objectLike({
+    Port: 80,
+    Protocol: 'HTTP',
+    DefaultActions: Match.arrayWith([
+      Match.objectLike({
+        Type: 'redirect',
+        RedirectConfig: Match.objectLike({
+          Protocol: 'HTTPS',
+          Port: '443',
+        }),
+      }),
+    ]),
+  }));
+});

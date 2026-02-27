@@ -631,6 +631,7 @@ If you have a domain + ACM certificate ARN ready, pass both contexts when deploy
 npx cdk deploy bp-compute \
   --context domainName=app.example.com \
   --context certificateArn=arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  --exclusively \
   --require-approval never
 ```
 
@@ -639,7 +640,7 @@ If you don’t provide a certificate, `bp-compute` will deploy HTTP-only and out
 ### 9.2 Deploy compute the remaining core stacks
 
 ```bash
-npx cdk deploy bp-monitoring bp-gpu-shared --require-approval never
+npx cdk deploy bp-monitoring bp-gpu-shared --exclusively --require-approval never
 ```
 
 ### 9.3 After compute exists: run the sync script (recommended)

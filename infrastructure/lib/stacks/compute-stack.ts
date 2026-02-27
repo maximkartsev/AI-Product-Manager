@@ -107,8 +107,43 @@ export class ComputeStack extends cdk.Stack {
         }),
     });
 
+    // Compute the externally-visible base URL before creating task definitions
+    // (Laravel & Next.js containers read it from env vars).
+    this.apiBaseUrl = hasCert
+      ? `https://${config.domainName}`
+      : `http://${alb.loadBalancerDnsName}`;
+
+    const { backendTg, frontendTg } = this.setupServicesAndTargetGroups(
+      httpListener,
+      cluster,
+      config,
+      vpc,
+      sgBackend,
+      sgFrontend,
+      dbSecret,
+      redisSecret,
+      redisEndpoint,
+      mediaBucket,
+    );
+
+    const attachToListener = (listener: elbv2.IApplicationListener) => {
+      listener.addTargetGroups('BackendRule', {
+        priority: 10,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns(['/api/*', '/sanctum/*', '/up']),
+        ],
+        targetGroups: [backendTg],
+      });
+
+      listener.addTargetGroups('FrontendRule', {
+        priority: 50,
+        conditions: [elbv2.ListenerCondition.pathPatterns(['/*'])],
+        targetGroups: [frontendTg],
+      });
+    };
+
     if (hasCert) {
-      // HTTPS listener
+      // HTTPS listener (rules live here when cert is configured).
       const httpsListener = alb.addListener('Https', {
         port: 443,
         protocol: elbv2.ApplicationProtocol.HTTPS,
@@ -121,11 +156,9 @@ export class ComputeStack extends cdk.Stack {
         }),
       });
 
-      this.apiBaseUrl = `https://${config.domainName}`;
-      this.setupTargetGroups(httpsListener, cluster, config, vpc, sgBackend, sgFrontend, dbSecret, redisSecret, redisEndpoint, mediaBucket);
+      attachToListener(httpsListener);
     } else {
-      this.apiBaseUrl = `http://${alb.loadBalancerDnsName}`;
-      this.setupTargetGroups(httpListener, cluster, config, vpc, sgBackend, sgFrontend, dbSecret, redisSecret, redisEndpoint, mediaBucket);
+      attachToListener(httpListener);
     }
 
     // ========================================
@@ -142,8 +175,8 @@ export class ComputeStack extends cdk.Stack {
     ]);
   }
 
-  private setupTargetGroups(
-    listener: elbv2.IApplicationListener,
+  private setupServicesAndTargetGroups(
+    tgScope: Construct,
     cluster: ecs.ICluster,
     config: BpEnvironmentConfig,
     vpc: ec2.IVpc,
@@ -153,7 +186,7 @@ export class ComputeStack extends cdk.Stack {
     redisSecret: secretsmanager.ISecret,
     redisEndpoint: string,
     mediaBucket: s3.IBucket,
-  ) {
+  ): { backendTg: elbv2.ApplicationTargetGroup; frontendTg: elbv2.ApplicationTargetGroup } {
     // ========================================
     // Backend Task Definition
     // ========================================
@@ -349,12 +382,13 @@ export class ComputeStack extends cdk.Stack {
     backendScaling.scaleOnCpuUtilization('CpuScaling', { targetUtilizationPercent: 70 });
 
     // Backend target group
-    const backendTg = listener.addTargets('BackendTarget', {
-      priority: 10,
-      conditions: [
-        elbv2.ListenerCondition.pathPatterns(['/api/*', '/sanctum/*', '/up']),
-      ],
+    // Keep the construct ID stable across HTTP/HTTPS modes because bp-monitoring imports the
+    // TargetGroupFullName dimension for UnHealthyHostCount alarms.
+    const backendTg = new elbv2.ApplicationTargetGroup(tgScope, 'BackendTargetGroup', {
+      vpc,
+      protocol: elbv2.ApplicationProtocol.HTTP,
       port: 80,
+      targetType: elbv2.TargetType.IP,
       targets: [backendService],
       healthCheck: {
         path: '/up',
@@ -435,11 +469,11 @@ export class ComputeStack extends cdk.Stack {
     frontendScaling.scaleOnCpuUtilization('CpuScaling', { targetUtilizationPercent: 70 });
 
     // Frontend target group (default / catch-all)
-    listener.addTargets('FrontendTarget', {
-      priority: 50,
-      conditions: [elbv2.ListenerCondition.pathPatterns(['/*'])],
-      port: 3000,
+    const frontendTg = new elbv2.ApplicationTargetGroup(tgScope, 'FrontendTargetGroup', {
+      vpc,
       protocol: elbv2.ApplicationProtocol.HTTP,
+      port: 3000,
+      targetType: elbv2.TargetType.IP,
       targets: [frontendService],
       healthCheck: {
         path: '/',
@@ -463,5 +497,7 @@ export class ComputeStack extends cdk.Stack {
     NagSuppressions.addResourceSuppressions([backendService, frontendService], [
       { id: 'AwsSolutions-ECS4', reason: 'Using CloudWatch Container Insights at cluster level' },
     ], true);
+
+    return { backendTg, frontendTg };
   }
 }

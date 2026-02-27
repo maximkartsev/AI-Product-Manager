@@ -218,6 +218,14 @@ export class ComputeStack extends cdk.Stack {
       'set -eu',
       'umask 077',
       'mkdir -p /var/www/html/storage/keys',
+      'mkdir -p /var/www/html/storage/framework',
+      'mkdir -p /var/www/html/storage/framework/cache',
+      'mkdir -p /var/www/html/storage/framework/cache/data',
+      'mkdir -p /var/www/html/storage/framework/sessions',
+      'mkdir -p /var/www/html/storage/framework/views',
+      'mkdir -p /var/www/html/storage/framework/testing',
+      'mkdir -p /var/www/html/storage/logs',
+      'mkdir -p /var/www/html/bootstrap/cache',
       'if [ -n "${APPLE_PRIVATE_KEY_P8_B64:-}" ]; then',
       `  printf '%s' "$APPLE_PRIVATE_KEY_P8_B64" | base64 -d > ${applePrivateKeyPath}`,
       'fi',
@@ -323,6 +331,8 @@ export class ComputeStack extends cdk.Stack {
       cluster,
       taskDefinition: backendTaskDef,
       desiredCount: 1,
+      // Allow app dependencies/migrations to settle before ALB marks task unhealthy.
+      healthCheckGracePeriod: cdk.Duration.seconds(300),
       securityGroups: [sgBackend],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       capacityProviderStrategies: [

@@ -569,7 +569,7 @@ Apple requires a private key file (`.p8`). Store its **raw file bytes** as base6
 Build the base64 string from the `.p8` file:
 
 ```bash
-APPLE_P8_PATH="/path/to/AuthKey_XXXXXX.p8"
+APPLE_P8_PATH="/home/maksym/projects/AI-Product-Manager/backend/storage/keys/path/to/AuthKey_XXXXXX.p8"
 
 # GNU coreutils (recommended)
 APPLE_P8_B64="$(base64 -w 0 "$APPLE_P8_PATH")"
@@ -610,6 +610,13 @@ aws secretsmanager put-secret-value --region "$AWS_REGION" \
   }"
 ```
 
+Validate that the JSON is well-formed and contains all required keys (prints only missing keys and the Apple `.p8` base64 length):
+
+```bash
+aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "/bp/oauth/secrets" --output json \
+| python3 -c 'import json,sys; outer=json.load(sys.stdin); s=outer.get("SecretString"); import sys as _; (d:=json.loads(s)) if s else (_ for _ in ()).throw(SystemExit("SecretString empty/None")); req=["google_client_id","google_client_secret","tiktok_client_id","tiktok_client_secret","apple_client_id","apple_client_secret","apple_key_id","apple_team_id","apple_private_key_p8_b64"]; print("missing_keys=", [k for k in req if k not in d]); print("apple_p8_b64_len=", len((d.get("apple_private_key_p8_b64") or "")))'
+```
+
 ### 8.4 Optional: keep `.env` as the source-of-truth (PowerShell sync script)
 
 `infrastructure/scripts/sync-env-to-aws.ps1` is best used **after `bp-compute` exists** because it forces an ECS backend redeploy (`bp-backend`).
@@ -629,10 +636,10 @@ npx cdk deploy bp-compute \
 
 If you don’t provide a certificate, `bp-compute` will deploy HTTP-only and output the ALB DNS name.
 
-### 9.2 Deploy compute (HTTP-only) and the remaining core stacks
+### 9.2 Deploy compute the remaining core stacks
 
 ```bash
-npx cdk deploy bp-compute bp-monitoring bp-gpu-shared --require-approval never
+npx cdk deploy bp-monitoring bp-gpu-shared --require-approval never
 ```
 
 ### 9.3 After compute exists: run the sync script (recommended)
@@ -678,7 +685,7 @@ aws ecs run-task \
   --task-definition bp-backend \
   --launch-type FARGATE \
   --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-...","subnet-..."],"securityGroups":["sg-..."]}}' \
-  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","tenancy:pools-migrate","--force"]}]}' 
+  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","tenancy:pools-migrate"]}]}' 
 ```
 
 ## 11) Recreate GPU fleets
@@ -720,7 +727,7 @@ aws ecs describe-services --region "$AWS_REGION" --cluster bp --services bp-back
 
 Then confirm:
 
-- `/api/up` returns `200`
+- `/up` returns `200`
 - backend/frontend logs are clean (`/ecs/bp-backend`, `/ecs/bp-frontend`)
 - worker registration works for both fleet stages (`staging` and `production`)
 - one test job runs end-to-end

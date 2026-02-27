@@ -62,7 +62,9 @@ test('compute stack injects oauth secrets and apple key bootstrap into backend p
       Match.objectLike({
         Name: 'php-fpm',
         EntryPoint: ['/bin/sh', '-lc'],
-        Command: Match.arrayWith([Match.stringLikeRegexp('Apple_AuthKey\\.p8')]),
+        Command: Match.arrayWith([
+          Match.stringLikeRegexp('storage/framework/views[\\s\\S]*Apple_AuthKey\\.p8'),
+        ]),
         Environment: Match.arrayWith([
           Match.objectLike({ Name: 'FRONTEND_URL' }),
           Match.objectLike({ Name: 'APPLE_PRIVATE_KEY', Value: '/var/www/html/storage/keys/Apple_AuthKey.p8' }),
@@ -97,5 +99,10 @@ test('compute stack injects oauth secrets and apple key bootstrap into backend p
         Command: Match.arrayWith([Match.stringLikeRegexp('queue:work')]),
       }),
     ]),
+  });
+
+  template.hasResourceProperties('AWS::ECS::Service', {
+    ServiceName: 'bp-backend',
+    HealthCheckGracePeriodSeconds: 300,
   });
 });

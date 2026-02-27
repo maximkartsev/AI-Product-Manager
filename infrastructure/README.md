@@ -548,11 +548,13 @@ Custom CloudWatch metrics (namespace: `ComfyUI/Workers`, dimensions: `FleetSlug`
 - `QueueDepth` — pending jobs for this fleet
 - `BacklogPerInstance` — jobs per active worker
 - `ActiveWorkers` — running instances
+- `AvailableCapacity` — sum of available worker slots
 - `JobProcessingP50` — median job duration
 - `ErrorRate` — % of failed jobs
+- `LeaseExpiredCount` — count of expired leases
 - `SpotInterruptionCount` — Spot reclamations
 
-Optional: enable per-workflow metrics via `emit_workflow_metrics` (see `backend/config/services.php`).
+The ADR-0005 contract is fleet-only: workflow-dimension CloudWatch metrics are not emitted.
 
 ### Scale-to-Zero Behavior
 
@@ -560,7 +562,7 @@ Optional: enable per-workflow metrics via `emit_workflow_metrics` (see `backend/
 2. CloudWatch alarm triggers → SNS → Lambda
 3. Lambda sets ASG `DesiredCapacity = 0`
 4. New job arrives → `QueueDepth > 0` alarm → step scaling policy sets capacity to 1
-5. More jobs → backlog tracking scales 1→N based on `BacklogPerInstance`
+5. More jobs → target tracking scales 1→N based on `BacklogPerInstance` and `fleet.backlogTarget`
 
 ## Docker Images
 

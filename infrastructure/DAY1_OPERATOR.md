@@ -66,12 +66,19 @@ From `infrastructure/lib/config/fleets.ts`:
 
 ### Where the scaling metrics come from
 
-The backend publishes metrics every minute (scheduler), aggregated per fleet:
+The backend publishes ADR-0005 metrics every minute (scheduler), aggregated per fleet:
 
 - `QueueDepth` = queued + leased jobs for workflows assigned to a fleet
 - `BacklogPerInstance` = QueueDepth / ActiveWorkers
+- `ActiveWorkers`, `AvailableCapacity`, `JobProcessingP50`
+- `ErrorRate`, `LeaseExpiredCount`, `SpotInterruptionCount`
 
 These metrics are pushed to CloudWatch and drive ASG scaling.
+
+Scaling behavior:
+- 0→1 via step scaling on `QueueDepth > 0`
+- 1→N via target tracking on `BacklogPerInstance`
+- N→0 via `queue-empty` alarm after `scaleToZeroMinutes`
 
 ### What “job” means here (not an AWS job)
 

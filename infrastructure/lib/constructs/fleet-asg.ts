@@ -2,7 +2,9 @@ import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cwActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as sns from 'aws-cdk-lib/aws-sns';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
@@ -21,7 +23,6 @@ export interface FleetAsgProps {
 
 export class FleetAsg extends Construct {
   public readonly asg: autoscaling.AutoScalingGroup;
-  public readonly onDemandAsg: autoscaling.AutoScalingGroup;
   public readonly queueDepthAlarm: cloudwatch.Alarm;
   public readonly queueEmptyAlarm?: cloudwatch.Alarm;
 
@@ -94,7 +95,6 @@ export class FleetAsg extends Construct {
     }));
 
     const spotAsgName = `asg-${stage}-${fleetSlug}`;
-    const onDemandAsgName = `asg-${stage}-${fleetSlug}-od`;
 
     const buildUserData = (asgName: string): ec2.UserData => {
       const userData = ec2.UserData.forLinux();
@@ -190,25 +190,6 @@ export class FleetAsg extends Construct {
       ],
     });
 
-    const onDemandLaunchTemplate = new ec2.LaunchTemplate(this, 'LtOnDemand', {
-      launchTemplateName: `lt-${stage}-${fleetSlug}-od`,
-      machineImage,
-      role: workerRole,
-      userData: buildUserData(onDemandAsgName),
-      securityGroup,
-      requireImdsv2: true,
-      httpPutResponseHopLimit: 1,
-      blockDevices: [
-        {
-          deviceName: '/dev/sda1',
-          volume: ec2.BlockDeviceVolume.ebs(100, {
-            volumeType: ec2.EbsDeviceVolumeType.GP3,
-            encrypted: true,
-          }),
-        },
-      ],
-    });
-
     // Spot ASG with mixed instances policy
     this.asg = new autoscaling.AutoScalingGroup(this, 'AsgSpot', {
       autoScalingGroupName: spotAsgName,
@@ -225,42 +206,16 @@ export class FleetAsg extends Construct {
           instanceType: new ec2.InstanceType(t),
         })),
       },
-      minCapacity: 1,
+      minCapacity: 0,
       maxCapacity: fleet.maxSize,
-      desiredCapacity: 1,
+      desiredCapacity: 0,
       defaultInstanceWarmup: cdk.Duration.seconds(fleet.warmupSeconds ?? 300),
       capacityRebalance: true,
       newInstancesProtectedFromScaleIn: false,
     });
 
-    // On-demand ASG (fallback)
-    this.onDemandAsg = new autoscaling.AutoScalingGroup(this, 'AsgOnDemand', {
-      autoScalingGroupName: onDemandAsgName,
-      vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      mixedInstancesPolicy: {
-        instancesDistribution: {
-          onDemandBaseCapacity: 0,
-          onDemandPercentageAboveBaseCapacity: 100,
-          spotAllocationStrategy: autoscaling.SpotAllocationStrategy.CAPACITY_OPTIMIZED_PRIORITIZED,
-        },
-        launchTemplate: onDemandLaunchTemplate,
-        launchTemplateOverrides: fleet.instanceTypes.map(t => ({
-          instanceType: new ec2.InstanceType(t),
-        })),
-      },
-      minCapacity: 0,
-      maxCapacity: fleet.maxSize,
-      desiredCapacity: 0,
-      defaultInstanceWarmup: cdk.Duration.seconds(fleet.warmupSeconds ?? 300),
-      capacityRebalance: false,
-      newInstancesProtectedFromScaleIn: false,
-    });
-
     cdk.Tags.of(this.asg).add('FleetSlug', fleetSlug);
     cdk.Tags.of(this.asg).add('CapacityType', 'spot');
-    cdk.Tags.of(this.onDemandAsg).add('FleetSlug', fleetSlug);
-    cdk.Tags.of(this.onDemandAsg).add('CapacityType', 'on-demand');
 
     // ========================================
     // Scaling Policies
@@ -288,25 +243,43 @@ export class FleetAsg extends Construct {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    // Scale 1 -> N using FleetSloPressureMax (SLO pressure)
-    const sloPressureMetric = new cloudwatch.Metric({
+    this.asg.scaleOnMetric('QueueDepthStepScaleOut', {
+      metric: queueDepthMetric,
+      adjustmentType: autoscaling.AdjustmentType.EXACT_CAPACITY,
+      scalingSteps: [
+        { upper: 0, change: 0 },
+        { lower: 1, change: 1 },
+      ],
+    });
+
+    const backlogPerInstanceMetric = new cloudwatch.Metric({
       namespace,
-      metricName: 'FleetSloPressureMax',
+      metricName: 'BacklogPerInstance',
       dimensionsMap: dimensions,
-      statistic: 'Maximum',
+      statistic: 'Average',
       period: cdk.Duration.minutes(1),
     });
 
-    this.asg.scaleOnMetric('SloPressureScaling', {
-      metric: sloPressureMetric,
-      adjustmentType: autoscaling.AdjustmentType.CHANGE_IN_CAPACITY,
-      scalingSteps: [
-        { upper: 0.7, change: -1 },
-        { lower: 1, change: 1 },
-        { lower: 1.5, change: 2 },
-      ],
-      cooldown: cdk.Duration.minutes(3),
+    this.asg.scaleToTrackMetric('BacklogTargetTracking', {
+      metric: backlogPerInstanceMetric,
+      targetValue: fleet.backlogTarget ?? 2,
+      disableScaleIn: false,
     });
+
+    this.queueEmptyAlarm = new cloudwatch.Alarm(this, 'QueueEmptyAlarm', {
+      alarmName: `${stage}-${fleetSlug}-queue-empty`,
+      metric: queueDepthMetric,
+      threshold: 0,
+      evaluationPeriods: fleet.scaleToZeroMinutes ?? 15,
+      datapointsToAlarm: fleet.scaleToZeroMinutes ?? 15,
+      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+    });
+
+    if (props.scaleToZeroTopicArn) {
+      const scaleToZeroTopic = sns.Topic.fromTopicArn(this, 'ScaleToZeroTopic', props.scaleToZeroTopicArn);
+      this.queueEmptyAlarm.addAlarmAction(new cwActions.SnsAction(scaleToZeroTopic));
+    }
 
     NagSuppressions.addResourceSuppressions(workerRole, [
       { id: 'AwsSolutions-IAM4', reason: 'Uses AWS managed policies for SSM' },
@@ -314,6 +287,10 @@ export class FleetAsg extends Construct {
     ], true);
     NagSuppressions.addResourceSuppressions(this.asg, [
       { id: 'AwsSolutions-AS3', reason: 'ASG notifications handled via MonitoringStack SNS' },
+      {
+        id: 'CdkNagValidationFailure',
+        reason: 'Mixed instances policy launch template references cannot be fully evaluated by AwsSolutions-EC26.',
+      },
     ]);
   }
 }

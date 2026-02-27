@@ -38,6 +38,7 @@ export class ComputeStack extends cdk.Stack {
   private readonly backendRepo: ecr.IRepository;
   private readonly frontendRepo: ecr.IRepository;
   private readonly appKeySecret: secretsmanager.ISecret;
+  private readonly oauthSecrets: secretsmanager.ISecret;
   private readonly fleetSecretParam: ssm.IStringParameter;
   private readonly assetOpsSecret: secretsmanager.ISecret;
   private readonly mediaCdnDomain: string;
@@ -54,6 +55,7 @@ export class ComputeStack extends cdk.Stack {
     this.frontendRepo = ecr.Repository.fromRepositoryName(this, 'FrontendRepo', `bp-frontend-${stage}`);
     this.logRetention = stage === 'production' ? logs.RetentionDays.ONE_MONTH : logs.RetentionDays.ONE_WEEK;
     this.appKeySecret = secretsmanager.Secret.fromSecretNameV2(this, 'LaravelAppKey', `/bp/${stage}/laravel/app-key`);
+    this.oauthSecrets = secretsmanager.Secret.fromSecretNameV2(this, 'OauthSecrets', `/bp/${stage}/oauth/secrets`);
     this.fleetSecretParam = ssm.StringParameter.fromStringParameterName(this, 'FleetSecret', `/bp/${stage}/fleet-secret`);
     this.assetOpsSecret = assetOpsSecret;
     this.mediaCdnDomain = mediaCdnDomain;
@@ -211,11 +213,24 @@ export class ComputeStack extends cdk.Stack {
       },
     });
 
+    const applePrivateKeyPath = '/var/www/html/storage/keys/Apple_AuthKey.p8';
+    const buildPhpBootstrapCommand = (processCommand: string): string => [
+      'set -euo pipefail',
+      'umask 077',
+      'mkdir -p /var/www/html/storage/keys',
+      'if [ -n "${APPLE_PRIVATE_KEY_P8_B64:-}" ]; then',
+      `  printf '%s' "$APPLE_PRIVATE_KEY_P8_B64" | base64 -d > ${applePrivateKeyPath}`,
+      'fi',
+      `exec ${processCommand}`,
+    ].join('\n');
+
     // Shared environment variables for all PHP containers
     const phpEnvironment: Record<string, string> = {
       APP_ENV: stage,
       APP_DEBUG: stage === 'production' ? 'false' : 'true',
       APP_URL: this.apiBaseUrl || `https://app.example.com`,
+      FRONTEND_URL: this.apiBaseUrl || `https://app.example.com`,
+      APPLE_PRIVATE_KEY: applePrivateKeyPath,
       LOG_CHANNEL: 'stderr',
       DB_CONNECTION: 'central',
       CENTRAL_DB_DRIVER: 'mariadb',
@@ -253,6 +268,15 @@ export class ComputeStack extends cdk.Stack {
       TENANT_POOL_2_DB_USERNAME: ecs.Secret.fromSecretsManager(dbSecret, 'username'),
       TENANT_POOL_2_DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
       COMFYUI_ASSET_OPS_SECRET: ecs.Secret.fromSecretsManager(this.assetOpsSecret),
+      GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'google_client_id'),
+      GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'google_client_secret'),
+      TIKTOK_CLIENT_ID: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'tiktok_client_id'),
+      TIKTOK_CLIENT_SECRET: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'tiktok_client_secret'),
+      APPLE_CLIENT_ID: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_client_id'),
+      APPLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_client_secret'),
+      APPLE_KEY_ID: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_key_id'),
+      APPLE_TEAM_ID: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_team_id'),
+      APPLE_PRIVATE_KEY_P8_B64: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_private_key_p8_b64'),
     };
     const fleetSecretEnvKey = stage === 'production'
       ? 'COMFYUI_FLEET_SECRET_PRODUCTION'
@@ -263,6 +287,8 @@ export class ComputeStack extends cdk.Stack {
     backendTaskDef.addContainer('php-fpm', {
       image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'php-latest'),
       essential: true,
+      entryPoint: ['/bin/sh', '-lc'],
+      command: [buildPhpBootstrapCommand('/usr/local/sbin/php-fpm')],
       environment: phpEnvironment,
       secrets: phpSecrets,
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'php', logGroup: backendLogGroup }),
@@ -272,7 +298,8 @@ export class ComputeStack extends cdk.Stack {
     backendTaskDef.addContainer('scheduler', {
       image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'php-latest'),
       essential: false,
-      command: ['php', 'artisan', 'schedule:work'],
+      entryPoint: ['/bin/sh', '-lc'],
+      command: [buildPhpBootstrapCommand('/usr/local/bin/php artisan schedule:work')],
       environment: phpEnvironment,
       secrets: phpSecrets,
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'scheduler', logGroup: backendLogGroup }),
@@ -282,7 +309,8 @@ export class ComputeStack extends cdk.Stack {
     backendTaskDef.addContainer('queue-worker', {
       image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'php-latest'),
       essential: false,
-      command: ['php', 'artisan', 'queue:work', '--sleep=3', '--tries=3', '--max-time=3600'],
+      entryPoint: ['/bin/sh', '-lc'],
+      command: [buildPhpBootstrapCommand('/usr/local/bin/php artisan queue:work --sleep=3 --tries=3 --max-time=3600')],
       environment: phpEnvironment,
       secrets: phpSecrets,
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'queue', logGroup: backendLogGroup }),

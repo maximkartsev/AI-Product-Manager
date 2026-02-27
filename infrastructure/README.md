@@ -148,8 +148,42 @@ aws ssm put-parameter \
 # 3. OAuth secrets (if using social login)
 aws secretsmanager put-secret-value \
   --secret-id "/bp/${STAGE}/oauth/secrets" \
-  --secret-string '{"google_client_secret":"...","apple_client_secret":"...","tiktok_client_secret":"..."}'
+  --secret-string '{
+    "google_client_id":"...",
+    "google_client_secret":"...",
+    "tiktok_client_id":"...",
+    "tiktok_client_secret":"...",
+    "apple_client_id":"...",
+    "apple_client_secret":"",
+    "apple_key_id":"...",
+    "apple_team_id":"...",
+    "apple_private_key_p8_b64":"<base64_of_apple_p8_file_bytes>"
+  }'
 ```
+
+#### End-to-end secret sync from `.env` (staging + production)
+
+Use the script below to push required values from stage env files into AWS, including:
+- Fleet secret (`/bp/<stage>/fleet-secret`, used by ECS backend and GPU workers)
+- Laravel `APP_KEY` (`/bp/<stage>/laravel/app-key`)
+- OAuth payload (`/bp/<stage>/oauth/secrets`)
+- ECS backend forced redeploy (`bp-<stage>-backend`)
+
+```powershell
+powershell -NoProfile -File .\scripts\sync-env-to-aws.ps1 `
+  -Region us-east-1 `
+  -StagingEnvPath ..\backend\.env.staging `
+  -ProductionEnvPath ..\backend\.env.production `
+  -AppleP8PathStaging C:\secure\keys\apple-staging.p8 `
+  -AppleP8PathProduction C:\secure\keys\apple-production.p8
+```
+
+Required env keys in each stage env file:
+- `APP_KEY`
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+- `TIKTOK_CLIENT_ID`, `TIKTOK_CLIENT_SECRET`
+- `APPLE_CLIENT_ID`, `APPLE_KEY_ID`, `APPLE_TEAM_ID`
+- `COMFYUI_FLEET_SECRET_STAGING` (staging file) or `COMFYUI_FLEET_SECRET_PRODUCTION` (production file). If missing, the script generates a new value and prints it.
 
 ## Configuration
 
@@ -655,7 +689,7 @@ Defaults and constraints (from backend config):
 | Asset ops secret | Secrets Manager | `/bp/<stage>/asset-ops/secret` | Yes (CDK) | Use the secret value as `ASSET_OPS_SECRET` in GitHub Actions |
 | Models bucket | SSM Parameter Store | `/bp/<stage>/models/bucket` | Yes (CDK) | — |
 | Packer instance profile | SSM Parameter Store | `/bp/<stage>/packer/instance_profile` | Yes (CDK) | Used by AMI bake workflow |
-| OAuth secrets | Secrets Manager | `/bp/<stage>/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/oauth/secrets --secret-string '{"google_client_secret":"..."}'` |
+| OAuth secrets | Secrets Manager | `/bp/<stage>/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/oauth/secrets --secret-string '{"google_client_id":"...","google_client_secret":"...","tiktok_client_id":"...","tiktok_client_secret":"...","apple_client_id":"...","apple_client_secret":"","apple_key_id":"...","apple_team_id":"...","apple_private_key_p8_b64":"..."}'` |
 | GPU AMI IDs | SSM Parameter Store | `/bp/ami/fleets/<stage>/<fleet_slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/fleets/<stage>/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
 | Active asset bundle | SSM Parameter Store | `/bp/<stage>/fleets/<fleet_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/fleets/<slug>/active_bundle --value "bundles/<bundle_id>" --type String --overwrite` |
 | Redis endpoint | SSM Parameter Store | `/bp/<stage>/redis/endpoint` | Yes (CDK) | — |

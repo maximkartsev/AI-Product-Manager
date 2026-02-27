@@ -2,6 +2,42 @@ export type BlackboxInputParseResult =
   | { ok: true; value: Record<string, unknown> }
   | { ok: false; error: string };
 
+export type BlackboxRunInputNumbers = {
+  effectId: number;
+  revisionId: number;
+  executionEnvironmentId: number;
+  inputFileId: number;
+  count: number;
+};
+
+export function validateBlackboxRunInputNumbers(input: BlackboxRunInputNumbers): string | null {
+  if (!Number.isInteger(input.effectId) || input.effectId <= 0) {
+    return "Select an effect.";
+  }
+
+  if (!Number.isInteger(input.revisionId) || input.revisionId <= 0) {
+    return "Select an effect revision.";
+  }
+
+  if (!Number.isInteger(input.executionEnvironmentId) || input.executionEnvironmentId <= 0) {
+    return "Select a test ASG execution environment.";
+  }
+
+  if (!Number.isInteger(input.inputFileId) || input.inputFileId <= 0) {
+    return "Input file ID is required.";
+  }
+
+  if (!Number.isInteger(input.count) || input.count <= 0) {
+    return "Count must be a positive number.";
+  }
+
+  if (input.count > 200) {
+    return "Count must be 200 or less.";
+  }
+
+  return null;
+}
+
 export function parseBlackboxInputPayload(raw: string): BlackboxInputParseResult {
   const trimmed = raw.trim();
   if (!trimmed) {

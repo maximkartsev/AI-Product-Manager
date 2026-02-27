@@ -22,6 +22,7 @@ import {
   extractBlackboxInputFromTestInputSet,
   parseBlackboxInputPayload,
   parseBlackboxRunCounts,
+  validateBlackboxRunInputNumbers,
 } from "@/lib/studio/blackboxRun";
 
 const DEFAULT_INPUT_PAYLOAD = JSON.stringify(
@@ -165,38 +166,25 @@ export default function StudioBlackboxRunsPage() {
 
   async function handleRunBlackbox(): Promise<void> {
     const effectId = Number(selectedEffectId);
-    if (!Number.isFinite(effectId) || effectId <= 0) {
-      setErrorMessage("Select an effect.");
-      return;
-    }
-
     const revisionId = Number(selectedRevisionId);
-    if (!Number.isFinite(revisionId) || revisionId <= 0) {
-      setErrorMessage("Select an effect revision.");
-      return;
-    }
-
     const environmentId = Number(selectedEnvironmentId);
-    if (!Number.isFinite(environmentId) || environmentId <= 0) {
-      setErrorMessage("Select a test ASG execution environment.");
-      return;
-    }
-
     const fileId = Number(inputFileId);
-    if (!Number.isFinite(fileId) || fileId <= 0) {
-      setErrorMessage("Input file ID is required.");
+    const parsedCount = Number(count);
+    const validationMessage = validateBlackboxRunInputNumbers({
+      effectId,
+      revisionId,
+      executionEnvironmentId: environmentId,
+      inputFileId: fileId,
+      count: Math.floor(parsedCount),
+    });
+    if (validationMessage) {
+      setErrorMessage(validationMessage);
       return;
     }
 
     const parsedPayload = parseBlackboxInputPayload(inputPayloadJson);
     if (!parsedPayload.ok) {
       setErrorMessage(parsedPayload.error);
-      return;
-    }
-
-    const parsedCount = Number(count);
-    if (!Number.isFinite(parsedCount) || parsedCount <= 0) {
-      setErrorMessage("Count must be a positive number.");
       return;
     }
 

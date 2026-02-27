@@ -2,8 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\AiJob;
-use App\Models\AiJobDispatch;
 use App\Models\ComfyUiWorkflowFleet;
 use App\Models\Effect;
 use App\Models\EffectRevision;
@@ -11,16 +9,13 @@ use App\Models\EffectTestRun;
 use App\Models\ExecutionEnvironment;
 use App\Models\File;
 use App\Models\User;
-use App\Models\Video;
 use App\Models\Workflow;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class StudioBlackboxRunnerService
 {
     public function __construct(
-        private readonly WorkflowPayloadService $workflowPayloadService,
-        private readonly TokenLedgerService $tokenLedgerService,
+        private readonly EffectRunSubmissionService $submissionService,
         private readonly RunCostModelService $runCostModelService,
     ) {
     }
@@ -48,7 +43,8 @@ class StudioBlackboxRunnerService
         array $costModelInput = []
     ): array {
         $workflow = $this->resolveWorkflow($effect, $revision);
-        $this->assertStagingFleetAssignment($workflow->id);
+        $this->assertEnvironment($environment);
+        $this->assertStagingFleetAssignment($workflow->id, (string) $environment->fleet_slug);
 
         $inputFile = File::query()->find($inputFileId);
         if (!$inputFile) {
@@ -59,12 +55,16 @@ class StudioBlackboxRunnerService
         }
 
         $runtimeEffect = $this->buildRuntimeEffect($effect, $workflow, $revision);
-        [$jobPayload, $workUnits] = $this->preparePayloadAndUnits($runtimeEffect, $inputPayload, $inputFile, $user);
+        [$jobPayload, $workUnits] = $this->submissionService->preparePayloadAndUnits(
+            $runtimeEffect,
+            $inputPayload,
+            $inputFile,
+            $user
+        );
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
         $provider = (string) config('services.comfyui.default_provider', 'self_hosted');
         $dispatchStage = 'staging';
-        $tenantId = (string) tenant()->getKey();
 
         $run->status = 'running';
         $run->started_at = now();
@@ -74,63 +74,32 @@ class StudioBlackboxRunnerService
         $dispatchIds = [];
 
         for ($i = 0; $i < $count; $i++) {
-            $job = DB::connection('tenant')->transaction(function () use (
-                $tenantId,
-                $user,
-                $effect,
-                $inputFile,
-                $inputPayload,
-                $provider,
-                $tokenCost,
-                $jobPayload,
-                $run
-            ) {
-                $video = Video::query()->create([
-                    'tenant_id' => $tenantId,
-                    'user_id' => (int) $user->id,
-                    'effect_id' => $effect->id,
-                    'original_file_id' => $inputFile->id,
-                    'status' => 'queued',
-                    'is_public' => false,
-                    'input_payload' => $inputPayload,
-                ]);
-
-                $job = AiJob::query()->create([
-                    'tenant_id' => $tenantId,
-                    'user_id' => (int) $user->id,
-                    'effect_id' => $effect->id,
-                    'provider' => $provider,
-                    'video_id' => $video->id,
-                    'input_file_id' => $inputFile->id,
-                    'status' => 'queued',
-                    'idempotency_key' => 'studio_blackbox_' . (string) Str::uuid(),
-                    'requested_tokens' => $tokenCost,
-                    'reserved_tokens' => 0,
-                    'consumed_tokens' => 0,
-                    'input_payload' => $jobPayload,
-                ]);
-
-                $this->tokenLedgerService->reserveForJob($job, $tokenCost, [
+            $submission = $this->submissionService->submitPrepared(
+                user: $user,
+                effect: $effect,
+                idempotencyKey: 'studio_blackbox_' . $run->id . '_' . $i . '_' . (string) Str::uuid(),
+                tokenCost: $tokenCost,
+                videoId: null,
+                inputFileId: (int) $inputFile->id,
+                provider: $provider,
+                preparedPayload: $jobPayload,
+                workUnits: $workUnits['units'] ?? null,
+                workUnitKind: $workUnits['kind'] ?? null,
+                workflowId: $workflow->id,
+                dispatchStage: $dispatchStage,
+                priority: 0,
+                ledgerMetadata: [
                     'source' => 'studio_blackbox',
                     'effect_id' => $effect->id,
                     'effect_test_run_id' => $run->id,
-                ]);
+                ]
+            );
 
-                return $job->fresh();
-            });
-
-            $dispatch = AiJobDispatch::query()->create([
-                'tenant_id' => $tenantId,
-                'tenant_job_id' => $job->id,
-                'provider' => $provider,
-                'workflow_id' => $workflow->id,
-                'stage' => $dispatchStage,
-                'status' => 'queued',
-                'priority' => 0,
-                'attempts' => 0,
-                'work_units' => $workUnits['units'] ?? null,
-                'work_unit_kind' => $workUnits['kind'] ?? null,
-            ]);
+            $job = $submission['job'];
+            $dispatch = $submission['dispatch'] ?? null;
+            if (!$dispatch) {
+                throw new \RuntimeException('Failed to enqueue blackbox job dispatch.');
+            }
 
             $jobIds[] = (int) $job->id;
             $dispatchIds[] = (int) $dispatch->id;
@@ -191,15 +160,30 @@ class StudioBlackboxRunnerService
         return $workflow;
     }
 
-    private function assertStagingFleetAssignment(int $workflowId): void
+    private function assertEnvironment(ExecutionEnvironment $environment): void
     {
-        $hasStagingAssignment = ComfyUiWorkflowFleet::query()
+        if ($environment->kind !== 'test_asg' || !$environment->is_active) {
+            throw new \RuntimeException('Execution environment must be an active test_asg environment.');
+        }
+    }
+
+    private function assertStagingFleetAssignment(int $workflowId, string $fleetSlug): void
+    {
+        if (trim($fleetSlug) === '') {
+            throw new \RuntimeException('Execution environment must define staging fleet slug.');
+        }
+
+        $hasAssignmentForSelectedFleet = ComfyUiWorkflowFleet::query()
             ->where('workflow_id', $workflowId)
             ->where('stage', 'staging')
+            ->whereHas('fleet', function ($query) use ($fleetSlug) {
+                $query->where('slug', $fleetSlug)
+                    ->where('stage', 'staging');
+            })
             ->exists();
 
-        if (!$hasStagingAssignment) {
-            throw new \RuntimeException('Workflow is not available for staging processing.');
+        if (!$hasAssignmentForSelectedFleet) {
+            throw new \RuntimeException('Workflow is not assigned to selected staging fleet.');
         }
     }
 
@@ -214,159 +198,6 @@ class StudioBlackboxRunnerService
         $runtime->setRelation('workflow', $workflow);
 
         return $runtime;
-    }
-
-    /**
-     * @param array<string, mixed> $inputPayload
-     * @return array{0: array<string, mixed>, 1: array{units: float, kind: string}}
-     */
-    private function preparePayloadAndUnits(Effect $effect, array $inputPayload, File $inputFile, User $user): array
-    {
-        if (!$effect->workflow_id || !$effect->workflow) {
-            throw new \RuntimeException('Effect is not configured for processing.');
-        }
-
-        $properties = $effect->workflow->properties ?? [];
-        $allowed = $this->buildAllowedPropertyMap($properties);
-        $userInput = $this->extractUserInput($inputPayload, $allowed, $user);
-        $resolvedProps = $this->workflowPayloadService->resolveProperties($effect->workflow, $effect, $userInput);
-        $this->assertRequiredProperties($properties, $resolvedProps);
-
-        $payload = $this->workflowPayloadService->buildJobPayload($effect, $resolvedProps, $inputFile);
-        $workUnits = $this->workflowPayloadService->computeWorkUnitsFromResolvedProps($effect->workflow, $resolvedProps);
-
-        return [$payload, $workUnits];
-    }
-
-    /**
-     * @param array<int, mixed> $properties
-     * @return array<string, array<string, mixed>>
-     */
-    private function buildAllowedPropertyMap(array $properties): array
-    {
-        $allowed = [];
-        foreach ($properties as $prop) {
-            if (!is_array($prop)) {
-                continue;
-            }
-            if (empty($prop['user_configurable']) || !empty($prop['is_primary_input'])) {
-                continue;
-            }
-
-            $key = $prop['key'] ?? null;
-            if (!is_string($key) || trim($key) === '') {
-                continue;
-            }
-
-            $allowed[$key] = $prop;
-        }
-
-        return $allowed;
-    }
-
-    /**
-     * @param array<string, mixed> $inputPayload
-     * @param array<string, array<string, mixed>> $allowed
-     * @return array<string, mixed>
-     */
-    private function extractUserInput(array $inputPayload, array $allowed, User $user): array
-    {
-        $userInput = [];
-        foreach ($inputPayload as $key => $value) {
-            if (!array_key_exists($key, $allowed)) {
-                throw new \RuntimeException("Unsupported property: {$key}");
-            }
-
-            $prop = $allowed[$key];
-            $type = (string) ($prop['type'] ?? 'text');
-
-            if ($type === 'text') {
-                $normalized = $this->normalizeTextInput($value);
-                if ($normalized !== null) {
-                    $userInput[$key] = $normalized;
-                }
-                continue;
-            }
-
-            if (in_array($type, ['image', 'video'], true)) {
-                $fileId = $this->normalizeFileId($value);
-                if (!$fileId) {
-                    throw new \RuntimeException("Invalid file id for {$key}.");
-                }
-                $file = File::query()->find($fileId);
-                if (!$file) {
-                    throw new \RuntimeException("File not found for {$key}.");
-                }
-                if ((int) $file->user_id !== (int) $user->id) {
-                    throw new \RuntimeException("File ownership mismatch for {$key}.");
-                }
-                if (!$this->matchesFileType($file->mime_type, $type)) {
-                    throw new \RuntimeException("File type mismatch for {$key}.");
-                }
-
-                $userInput[$key] = [
-                    'disk' => $file->disk,
-                    'path' => $file->path,
-                ];
-                continue;
-            }
-
-            $normalized = $this->normalizeTextInput($value);
-            if ($normalized !== null) {
-                $userInput[$key] = $normalized;
-            }
-        }
-
-        return $userInput;
-    }
-
-    /**
-     * @param array<int, mixed> $properties
-     * @param array<string, mixed> $resolvedProps
-     */
-    private function assertRequiredProperties(array $properties, array $resolvedProps): void
-    {
-        foreach ($properties as $prop) {
-            if (!is_array($prop)) {
-                continue;
-            }
-            if (empty($prop['required']) || !empty($prop['is_primary_input'])) {
-                continue;
-            }
-
-            $key = $prop['key'] ?? null;
-            if (!is_string($key) || trim($key) === '') {
-                continue;
-            }
-
-            $type = (string) ($prop['type'] ?? 'text');
-            $value = $resolvedProps[$key] ?? null;
-
-            if ($type === 'text') {
-                $text = is_string($value) ? trim($value) : '';
-                if ($text === '') {
-                    throw new \RuntimeException("Missing required property: {$key}");
-                }
-                continue;
-            }
-
-            if (in_array($type, ['image', 'video'], true)) {
-                if (is_array($value)) {
-                    $path = $value['path'] ?? null;
-                    if (is_string($path) && trim($path) !== '') {
-                        continue;
-                    }
-                } elseif (is_string($value) && trim($value) !== '') {
-                    continue;
-                }
-
-                throw new \RuntimeException("Missing required property: {$key}");
-            }
-
-            if ($value === null || $value === '') {
-                throw new \RuntimeException("Missing required property: {$key}");
-            }
-        }
     }
 
     /**
@@ -396,43 +227,5 @@ class StudioBlackboxRunnerService
         ];
     }
 
-    private function normalizeTextInput(mixed $value): ?string
-    {
-        if (!is_string($value)) {
-            return null;
-        }
-
-        $trimmed = trim($value);
-        return $trimmed !== '' ? $trimmed : null;
-    }
-
-    private function normalizeFileId(mixed $value): ?int
-    {
-        if (is_int($value)) {
-            return $value > 0 ? $value : null;
-        }
-        if (is_string($value) && ctype_digit($value)) {
-            $parsed = (int) $value;
-            return $parsed > 0 ? $parsed : null;
-        }
-        if (is_numeric($value)) {
-            $parsed = (int) $value;
-            return $parsed > 0 ? $parsed : null;
-        }
-
-        return null;
-    }
-
-    private function matchesFileType(?string $mimeType, string $expectedType): bool
-    {
-        if (!$mimeType) {
-            return false;
-        }
-
-        $normalized = strtolower($mimeType);
-        return $expectedType === 'image'
-            ? str_starts_with($normalized, 'image/')
-            : str_starts_with($normalized, 'video/');
-    }
 }
 

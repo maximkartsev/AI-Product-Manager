@@ -12,6 +12,7 @@ use App\Models\ExecutionEnvironment;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\Workflow;
+use App\Services\EffectRunSubmissionService;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -104,6 +105,50 @@ class AiJobSubmissionTest extends TestCase
 
         $this->assertSame(15, $this->getWalletBalance($tenant->id));
         $this->assertSame(1, $this->getJobTransactionCount($tenant->id, $jobId, 'JOB_RESERVE'));
+    }
+
+    public function test_ai_job_submission_delegates_to_effect_run_submission_service(): void
+    {
+        [$user, $tenant, $domain] = $this->createUserTenantDomain();
+        $effect = $this->createEffect(5.0);
+        $this->seedWallet($tenant->id, $user->id, 25);
+        $fileId = $this->createTenantFile($tenant->id, $user->id);
+
+        $stubJob = new AiJob([
+            'id' => 999999,
+            'effect_id' => $effect->id,
+            'status' => 'queued',
+            'idempotency_key' => 'stubbed',
+        ]);
+        $stubJob->id = 999999;
+
+        $stubDispatch = new AiJobDispatch([
+            'id' => 888888,
+            'workflow_id' => $effect->workflow_id,
+            'stage' => 'production',
+            'status' => 'queued',
+        ]);
+        $stubDispatch->id = 888888;
+
+        $mock = $this->mock(EffectRunSubmissionService::class);
+        $mock->shouldReceive('submitPrepared')
+            ->once()
+            ->andReturn([
+                'job' => $stubJob,
+                'dispatch' => $stubDispatch,
+            ]);
+
+        Sanctum::actingAs($user);
+
+        $response = $this->postJsonWithHost($domain, '/api/ai-jobs', [
+            'effect_id' => $effect->id,
+            'idempotency_key' => 'job_' . uniqid(),
+            'input_file_id' => $fileId,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('data.id', 999999)
+            ->assertJsonPath('dispatch_id', 888888);
     }
 
     public function test_ai_job_submission_rejects_development_effect(): void

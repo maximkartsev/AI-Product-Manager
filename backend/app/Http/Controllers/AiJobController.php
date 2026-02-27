@@ -10,6 +10,7 @@ use App\Models\File;
 use App\Models\User;
 use App\Models\Video;
 use App\Models\Workflow;
+use App\Services\EffectRunSubmissionService;
 use App\Services\EffectPublicationService;
 use App\Services\EffectRevisionService;
 use App\Services\TokenLedgerService;
@@ -18,12 +19,11 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Database\QueryException;
 
 class AiJobController extends BaseController
 {
 
-    public function store(Request $request, TokenLedgerService $ledger): JsonResponse
+    public function store(Request $request, EffectRunSubmissionService $submissionService): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'effect_id' => 'numeric|required|exists:effects,id',
@@ -79,7 +79,7 @@ class AiJobController extends BaseController
                     'provider',
                     config('services.comfyui.default_provider', 'self_hosted')
                 );
-                $dispatch = $this->ensureDispatch(
+                $dispatch = $submissionService->ensureDispatchForJob(
                     $existing,
                     (int) $request->input('priority', 0),
                     $existingProvider,
@@ -153,37 +153,21 @@ class AiJobController extends BaseController
         }
 
         try {
-            $job = DB::connection('tenant')->transaction(function () use ($request, $user, $tokenCost, $ledger, $idempotencyKey, $inputFileId, $resolvedVideoId, $provider, $inputPayload) {
-                $aiJob = AiJob::query()->create([
-                    'user_id' => $user->id,
-                    'effect_id' => (int) $request->input('effect_id'),
-                    'provider' => $provider,
-                    'video_id' => $resolvedVideoId,
-                    'input_file_id' => $inputFileId,
-                    'status' => 'queued',
-                    'idempotency_key' => $idempotencyKey,
-                    'requested_tokens' => $tokenCost,
-                    'reserved_tokens' => 0,
-                    'consumed_tokens' => 0,
-                    'input_payload' => $inputPayload,
-                ]);
-
-                $ledger->reserveForJob($aiJob, $tokenCost, [
-                    'source' => 'ai_job_submission',
-                    'effect_id' => (int) $request->input('effect_id'),
-                ]);
-
-                return $aiJob->fresh();
-            });
-        } catch (QueryException $e) {
-            if (str_contains($e->getMessage(), 'ai_jobs_tenant_idempotency_unique')) {
-                $job = AiJob::query()->where('idempotency_key', $idempotencyKey)->first();
-                if ($job) {
-                    return $this->sendResponse($job, 'Job already submitted');
-                }
-            }
-
-            throw $e;
+            $submission = $submissionService->submitPrepared(
+                user: $user,
+                effect: $effect,
+                idempotencyKey: $idempotencyKey,
+                tokenCost: $tokenCost,
+                videoId: $resolvedVideoId,
+                inputFileId: $inputFileId ? (int) $inputFileId : null,
+                provider: $provider,
+                preparedPayload: $inputPayload,
+                workUnits: $workUnits['units'] ?? null,
+                workUnitKind: $workUnits['kind'] ?? null,
+                workflowId: (int) $runtime['workflow_id'],
+                dispatchStage: (string) $runtime['dispatch_stage'],
+                priority: (int) $request->input('priority', 0)
+            );
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'Insufficient token balance.') {
                 return $this->sendError('Insufficient tokens.', [
@@ -194,17 +178,12 @@ class AiJobController extends BaseController
             throw $e;
         }
 
-        $dispatch = $this->ensureDispatch(
-            $job,
-            (int) $request->input('priority', 0),
-            $provider,
-            $workUnits['units'] ?? null,
-            $workUnits['kind'] ?? null,
-            (int) $runtime['workflow_id'],
-            (string) $runtime['dispatch_stage']
-        );
+        /** @var AiJob $job */
+        $job = $submission['job'];
+        /** @var AiJobDispatch|null $dispatch */
+        $dispatch = $submission['dispatch'] ?? null;
 
-        return $this->sendResponse($job, 'Job queued', [
+        return $this->sendResponse($job, ($submission['already_submitted'] ?? false) ? 'Job already submitted' : 'Job queued', [
             'dispatch_id' => $dispatch?->id,
         ]);
     }

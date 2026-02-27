@@ -3,6 +3,7 @@ import {
   extractBlackboxInputFromTestInputSet,
   parseBlackboxInputPayload,
   parseBlackboxRunCounts,
+  validateBlackboxRunInputNumbers,
 } from "../blackboxRun";
 
 describe("parseBlackboxInputPayload", () => {
@@ -48,6 +49,81 @@ describe("extractBlackboxInputFromTestInputSet", () => {
       },
     });
     expect(value?.input_file_id).toBe(77);
+  });
+});
+
+describe("validateBlackboxRunInputNumbers", () => {
+  it("accepts valid required numeric inputs", () => {
+    const message = validateBlackboxRunInputNumbers({
+      effectId: 1,
+      revisionId: 2,
+      executionEnvironmentId: 3,
+      inputFileId: 4,
+      count: 5,
+    });
+    expect(message).toBeNull();
+  });
+
+  it("returns the first relevant validation error", () => {
+    expect(
+      validateBlackboxRunInputNumbers({
+        effectId: 0,
+        revisionId: 2,
+        executionEnvironmentId: 3,
+        inputFileId: 4,
+        count: 5,
+      }),
+    ).toBe("Select an effect.");
+
+    expect(
+      validateBlackboxRunInputNumbers({
+        effectId: 1,
+        revisionId: 0,
+        executionEnvironmentId: 3,
+        inputFileId: 4,
+        count: 5,
+      }),
+    ).toBe("Select an effect revision.");
+
+    expect(
+      validateBlackboxRunInputNumbers({
+        effectId: 1,
+        revisionId: 2,
+        executionEnvironmentId: 0,
+        inputFileId: 4,
+        count: 5,
+      }),
+    ).toBe("Select a test ASG execution environment.");
+
+    expect(
+      validateBlackboxRunInputNumbers({
+        effectId: 1,
+        revisionId: 2,
+        executionEnvironmentId: 3,
+        inputFileId: 0,
+        count: 5,
+      }),
+    ).toBe("Input file ID is required.");
+
+    expect(
+      validateBlackboxRunInputNumbers({
+        effectId: 1,
+        revisionId: 2,
+        executionEnvironmentId: 3,
+        inputFileId: 4,
+        count: 0,
+      }),
+    ).toBe("Count must be a positive number.");
+
+    expect(
+      validateBlackboxRunInputNumbers({
+        effectId: 1,
+        revisionId: 2,
+        executionEnvironmentId: 3,
+        inputFileId: 4,
+        count: 201,
+      }),
+    ).toBe("Count must be 200 or less.");
   });
 });
 

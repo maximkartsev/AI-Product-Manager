@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorkflowFleet;
@@ -12,6 +13,7 @@ use App\Models\ExecutionEnvironment;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\Workflow;
+use App\Services\EffectRunSubmissionService;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -139,6 +141,61 @@ class AdminStudioBlackboxRunnerTest extends TestCase
         $this->assertSame(3, AiJobDispatch::query()->where('stage', 'staging')->count());
     }
 
+    public function test_blackbox_runner_delegates_job_submission_to_shared_effect_run_submission_service(): void
+    {
+        [$workflow, $effect, $revision, $environment] = $this->seedBlackboxPrerequisites(withStagingFleetAssignment: true);
+        $fileId = $this->createTenantFile($this->tenant->id, $this->adminUser->id);
+        $this->seedWallet($this->tenant->id, $this->adminUser->id, 100);
+
+        $mock = $this->mock(EffectRunSubmissionService::class);
+        $mock->shouldReceive('preparePayloadAndUnits')
+            ->once()
+            ->andReturn([
+                ['workflow' => ['mocked' => true]],
+                ['units' => 1.5, 'kind' => 'video_seconds'],
+            ]);
+
+        $callIndex = 0;
+        $mock->shouldReceive('submitPrepared')
+            ->times(2)
+            ->andReturnUsing(function () use (&$callIndex, $effect) {
+                $callIndex++;
+                $job = new AiJob([
+                    'id' => 700000 + $callIndex,
+                    'effect_id' => $effect->id,
+                    'status' => 'queued',
+                    'idempotency_key' => 'mock-blackbox-' . $callIndex,
+                ]);
+                $job->id = 700000 + $callIndex;
+
+                $dispatch = new AiJobDispatch([
+                    'id' => 710000 + $callIndex,
+                    'stage' => 'staging',
+                    'status' => 'queued',
+                ]);
+                $dispatch->id = 710000 + $callIndex;
+
+                return [
+                    'job' => $job,
+                    'dispatch' => $dispatch,
+                    'already_submitted' => false,
+                ];
+            });
+
+        $response = $this->postJson('/api/admin/studio/blackbox-runs', [
+            'effect_id' => $effect->id,
+            'effect_revision_id' => $revision->id,
+            'execution_environment_id' => $environment->id,
+            'input_file_id' => $fileId,
+            'count' => 2,
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('data.dispatch_count', 2)
+            ->assertJsonPath('data.job_ids.0', 700001)
+            ->assertJsonPath('data.job_ids.1', 700002);
+    }
+
     public function test_blackbox_runner_validation_requires_core_fields_and_input_reference(): void
     {
         $response = $this->postJson('/api/admin/studio/blackbox-runs', [
@@ -204,6 +261,26 @@ class AdminStudioBlackboxRunnerTest extends TestCase
         $response->assertStatus(422);
     }
 
+    public function test_blackbox_runner_rejects_when_workflow_not_assigned_to_selected_staging_fleet_slug(): void
+    {
+        [$workflow, $effect, $revision, $environment] = $this->seedBlackboxPrerequisites(
+            withStagingFleetAssignment: true,
+            environmentFleetSlug: 'staging-fleet-unassigned'
+        );
+        $fileId = $this->createTenantFile($this->tenant->id, $this->adminUser->id);
+        $this->seedWallet($this->tenant->id, $this->adminUser->id, 20);
+
+        $response = $this->postJson('/api/admin/studio/blackbox-runs', [
+            'effect_id' => $effect->id,
+            'effect_revision_id' => $revision->id,
+            'execution_environment_id' => $environment->id,
+            'input_file_id' => $fileId,
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false);
+    }
+
     public function test_blackbox_runner_returns_422_when_wallet_tokens_insufficient_and_no_dispatch_created(): void
     {
         [$workflow, $effect, $revision, $environment] = $this->seedBlackboxPrerequisites(withStagingFleetAssignment: true);
@@ -229,7 +306,8 @@ class AdminStudioBlackboxRunnerTest extends TestCase
      */
     private function seedBlackboxPrerequisites(
         bool $withEnvironment = true,
-        bool $withStagingFleetAssignment = true
+        bool $withStagingFleetAssignment = true,
+        ?string $environmentFleetSlug = null
     ): array {
         $workflow = Workflow::query()->create([
             'name' => 'Workflow ' . uniqid(),
@@ -293,10 +371,12 @@ class AdminStudioBlackboxRunnerTest extends TestCase
             'created_by_user_id' => $this->adminUser->id,
         ]);
 
+        $stagingFleetSlug = null;
         if ($withStagingFleetAssignment) {
+            $stagingFleetSlug = 'staging-fleet-' . uniqid();
             $fleet = ComfyUiGpuFleet::query()->create([
                 'stage' => 'staging',
-                'slug' => 'staging-fleet-' . uniqid(),
+                'slug' => $stagingFleetSlug,
                 'name' => 'Staging Fleet',
                 'instance_types' => ['g4dn.xlarge'],
                 'max_size' => 1,
@@ -320,7 +400,7 @@ class AdminStudioBlackboxRunnerTest extends TestCase
             'name' => 'Test ASG Environment',
             'kind' => 'test_asg',
             'stage' => 'test',
-            'fleet_slug' => 'test-fleet-a',
+            'fleet_slug' => $environmentFleetSlug ?? $stagingFleetSlug ?? 'test-fleet-a',
             'is_active' => true,
         ]);
 

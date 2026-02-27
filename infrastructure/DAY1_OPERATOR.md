@@ -1,177 +1,178 @@
 # Day-1 Operator Guide (AWS CDK)
 
-Beginner-friendly runbook for deploying and operating the AI Product Manager infrastructure.
+Beginner-friendly runbook for deploying and operating the current AWS setup.
+
+## Architecture model (important)
+
+This repo now uses a **single core system**:
+
+- `bp-cicd`
+- `bp-network`
+- `bp-data`
+- `bp-compute`
+- `bp-monitoring`
+- `bp-gpu-shared`
+
+Fleet stage exists only for GPU fleets and worker routing:
+
+- `fleet_stage=staging`
+- `fleet_stage=production`
+
+Per-fleet stacks are named:
+
+- `bp-gpu-fleet-<fleet_stage>-<fleet_slug>`
 
 ## Glossary (AWS basics used here)
 
-- **VPC**: A private network in AWS. Everything runs inside it.
-- **Subnet**: A smaller network inside a VPC. We use:
-  - **Public** (internet‑facing ALB, NAT)
-  - **Private** (ECS services, GPU workers)
-  - **Isolated** (RDS/Redis, no internet)
-- **Security Group (SG)**: Virtual firewall. Controls inbound/outbound network access.
-- **ALB**: Application Load Balancer. Routes `/api/*` to backend, everything else to frontend.
-- **ECS / Fargate**: Runs containers without managing servers.
-- **ECR**: Docker image registry for ECS containers.
-- **RDS**: Managed relational database (MariaDB here).
-- **Redis**: In‑memory cache (ElastiCache).
-- **S3**: Object storage for uploads and outputs.
-- **CloudFront**: CDN for faster delivery of S3 media.
-- **ASG**: Auto Scaling Group that launches EC2 GPU instances.
-- **Launch Template**: The “recipe” for EC2 instances (AMI, instance type, user‑data, disk).
-- **Spot**: Discounted EC2 pricing with interruptions.
-- **CloudWatch**: Logs, metrics, alarms, and dashboards.
-- **SNS**: Simple Notification Service (email alerts).
+- **VPC**: Private AWS network.
+- **Subnet**: Network segment. We use public/private/isolated.
+- **Security Group (SG)**: Virtual firewall.
+- **ALB**: Routes `/api/*` to backend and `/*` to frontend.
+- **ECS/Fargate**: Runs app containers.
+- **ECR**: Stores backend/frontend container images.
+- **RDS**: MariaDB database.
+- **ElastiCache**: Redis.
+- **S3**: Media/models/log object storage.
+- **CloudFront**: CDN for media bucket.
+- **ASG**: Auto Scaling Group for GPU workers.
+- **CloudWatch/SNS/Lambda**: Metrics, alerts, and scale-to-zero automation.
 
 ## Architecture at a glance
 
 ```mermaid
 flowchart TD
   user[User] --> alb[ALB]
-  alb --> backend[ECS_Backend]
-  alb --> frontend[ECS_Frontend]
+  alb --> backend[ECS_Backend_bp]
+  alb --> frontend[ECS_Frontend_bp]
 
   backend --> rds[(RDS_MariaDB)]
   backend --> redis[(Redis)]
-  backend --> s3[(S3_Media)]
+  backend --> s3media[(S3_Media)]
 
-  backend --> dispatch[DB_DispatchQueue]
-  dispatch --> metrics[CloudWatch_Metrics]
-  metrics --> asg[GPU_ASG_PerFleet]
+  backend --> dispatch[DispatchQueue_DB]
+  dispatch --> metrics[CloudWatch_ComfyUI_Workers]
+  metrics --> asg[ASG_asg_fleetStage_fleetSlug]
   asg --> worker[GPU_Worker_EC2]
-  worker --> s3
+  worker --> s3models[(S3_Models)]
 ```
 
-## How `fleets.ts` launches GPU instances
+## How fleet stacks launch GPU instances
 
-### The key idea
+Each fleet stack corresponds to one ASG:
 
-Each entry in `FLEETS[]` becomes **one Auto Scaling Group (ASG)**:
+- Stack: `bp-gpu-fleet-<fleet_stage>-<fleet_slug>`
+- ASG: `asg-<fleet_stage>-<fleet_slug>`
+- Launch template: `lt-<fleet_stage>-<fleet_slug>`
 
-- `slug: gpu-default` → ASG name `asg-<stage>-gpu-default`
-- Each ASG launches GPU EC2 instances using the **AMI** resolved from `/bp/ami/fleets/<stage>/<fleet_slug>`
+Runtime pointers:
 
-### Mapping fields to AWS behavior
+- AMI: `/bp/ami/fleets/<fleet_stage>/<fleet_slug>`
+- Desired config: `/bp/fleets/<fleet_stage>/<fleet_slug>/desired_config`
+- Active bundle: `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`
+- Fleet secret: `/bp/fleets/<fleet_stage>/fleet-secret`
 
-From `infrastructure/lib/config/fleets.ts`:
+## Day-1 checklist (first deploy)
 
-- **`slug`**: Used in ASG name, tags, and CloudWatch metric dimension `FleetSlug=<slug>`.
-- **`displayName`**: Only affects dashboard labels (no behavior change).
-- **`amiSsmParameter` / `amiId`**: The GPU AMI the instances boot from.
-- **`instanceTypes`**: Which GPU instance types the ASG may launch (Spot).
-- **`maxSize`**: Hard cap on how many GPU instances can run.
-- **`warmupSeconds`**: How long a new instance has to boot before it counts as “ready.”
-- **`scaleToZeroMinutes`**: Time with empty queue before the ASG is set to 0.
-- **`backlogTarget`**: Target backlog per instance used in `fleet-asg.ts` for scaling thresholds.
+1. **Bootstrap CDK** (once per account/region):
+   - `npx cdk bootstrap`
+2. **Deploy core stacks** (order matters):
+   - `bp-cicd` → `bp-network` → `bp-data` → `bp-compute` → `bp-monitoring` → `bp-gpu-shared`
+3. **Build/push app images**:
+   - Run GitHub Actions `Deploy` (`.github/workflows/deploy.yml`) or push manually to `bp-backend`/`bp-frontend`.
+4. **Set required secrets**:
+   - `/bp/laravel/app-key`
+   - `/bp/oauth/secrets` (if social auth is used)
+   - `/bp/fleets/staging/fleet-secret`
+   - `/bp/fleets/production/fleet-secret`
+5. **Run migrations**:
+   - `DB Migrate` workflow (`.github/workflows/db-migrate.yml`)
+6. **Verify app health**:
+   - ECS services healthy in cluster `bp`
+   - `/api/up` returns 200
+   - logs in `/ecs/bp-backend` and `/ecs/bp-frontend`
 
-### Where the scaling metrics come from
+## Day-1 checklist (GPU bring-up)
 
-The backend publishes ADR-0005 metrics every minute (scheduler), aggregated per fleet:
+For each fleet you need:
 
-- `QueueDepth` = queued + leased jobs for workflows assigned to a fleet
-- `BacklogPerInstance` = QueueDepth / ActiveWorkers
-- `ActiveWorkers`, `AvailableCapacity`, `JobProcessingP50`
-- `ErrorRate`, `LeaseExpiredCount`, `SpotInterruptionCount`
+1. Create fleet in Admin UI with `fleet_stage`, `fleet_slug`, template, and instance type.
+2. Run `provision-gpu-fleet.yml` with explicit `fleet_stage`.
+3. Build/bake AMI:
+   - `build-ami.yml`
+   - `bake-ami.yml`
+4. Refresh ASG and verify workers register.
 
-These metrics are pushed to CloudWatch and drive ASG scaling.
-
-Scaling behavior:
-- 0→1 via step scaling on `QueueDepth > 0`
-- 1→N via target tracking on `BacklogPerInstance`
-- N→0 via `queue-empty` alarm after `scaleToZeroMinutes`
-
-### What “job” means here (not an AWS job)
-
-In this project, a “job” is an **application AI task** stored in the database, not an AWS Batch/SQS job.
-Jobs are created when a user submits an effect and they appear in the central `ai_job_dispatches` table.
-
-### Quick example
-
-If `QueueDepth = 5` and `ActiveWorkers = 1`, then:
-
-```
-BacklogPerInstance = 5 / 1 = 5
-```
-
-That is “above target”, so the ASG scales out.
-
-## Day-1 operator checklist (first deploy)
-
-1. **Bootstrap CDK (first time per account/region)**  
-   `npx cdk bootstrap`
-2. **Deploy stacks (order matters)**  
-   `bp-<stage>-cicd` → `network` → `data` → `compute` → `gpu` → `monitoring`
-3. **Build/push container images** (or rely on CI)
-4. **Set required secrets**
-   - `/bp/<stage>/laravel/app-key` (Secrets Manager)
-   - `/bp/<stage>/fleet-secret` (SSM)
-   - `/bp/<stage>/oauth/secrets` (optional)
-5. **Run migrations**
-   - Central: `php artisan migrate --force`
-   - Pools: `php artisan tenancy:pools-migrate --force`
-6. **Verify**
-   - ALB targets healthy
-   - ECS services stable
-   - RDS reachable
-   - CloudWatch dashboard exists
-   - GPU ASGs exist
-
-## Day-1 operator checklist (daily ops)
+## Daily operations
 
 - **Deploy app code**
-  - CI builds/pushes images
-  - `aws ecs update-service --force-new-deployment`
-- **Build new GPU AMI**
-  - Run `build-ami.yml` (writes `/bp/ami/fleets/<stage>/<fleet_slug>`)
-  - Roll out by restarting ASG instances (instance refresh or scale-in/out)
-- **Add a new workflow**
-  - Create workflow in Admin UI and assign it to a fleet
-  - Ensure the fleet’s active bundle includes required assets
-  - Create the fleet in Admin UI (template + instance type), then run `provision-gpu-fleet.yml`
-
-## How the infrastructure is wired (simple walkthrough)
-
-1. **NetworkStack** creates the private network (VPC), subnets, NAT, and security groups.
-2. **DataStack** creates RDS, Redis, S3 buckets, CloudFront, and secrets.
-3. **ComputeStack** creates ECS Fargate services and the ALB that routes traffic.
-4. **GpuSharedStack** creates the shared scale-to-zero SNS + Lambda.
-5. **GpuFleetStack** creates one ASG per fleet (provisioned via GitHub Actions).
-6. **MonitoringStack** creates dashboards, alarms, and alerts.
-7. **CiCdStack** creates ECR repositories for container images.
-
-These stacks are deployed in order so that later stacks can reference outputs from earlier ones.
+  - Run `Deploy` workflow; it builds/pushes images and redeploys ECS services.
+- **Run DB changes**
+  - Run `DB Migrate`; use `DB Seed` only when needed.
+- **Manage fleet capacity**
+  - Update fleet config in Admin UI and apply/provision via workflows.
+- **Rotate secrets**
+  - Use `infrastructure/scripts/sync-env-to-aws.ps1` and redeploy backend.
 
 ## Monitoring and troubleshooting
 
-### What to check first
+### First checks during incidents
 
 - ALB 5xx alarms + target health
-- RDS CPU + FreeStorageSpace
-- QueueDepth vs ActiveWorkers (per fleet)
-- NAT port allocation errors (if uploads/downloads fail)
+- RDS CPU and storage
+- Fleet `QueueDepth` vs `ActiveWorkers`
+- ECS service events in cluster `bp`
 
 ### Key log groups
 
-- `/ecs/bp-backend-<stage>`
-- `/ecs/bp-frontend-<stage>`
+- `/ecs/bp-backend`
+- `/ecs/bp-frontend`
 - `/gpu-workers/<fleet-slug>`
 
 ### Common failure modes
 
-- **Workers not registering**: fleet secret missing or wrong; backend API not reachable.
-- **Metrics not publishing**: `workers:publish-metrics` not running or failing.
-- **AMI missing**: `/bp/ami/fleets/<stage>/<fleet_slug>` not found or wrong region.
-- **Spot capacity**: no Spot capacity for chosen instance types.
+- **Workers not registering**:
+  - Wrong/missing `/bp/fleets/<fleet_stage>/fleet-secret`
+  - Backend unreachable from worker
+- **AMI not found**:
+  - Missing `/bp/ami/fleets/<fleet_stage>/<fleet_slug>`
+- **No scale-out**:
+  - Fleet metrics not publishing
+  - Wrong stage/slug dimensions in alarms
+- **ECS deploy failures**:
+  - Missing ECR tags in `bp-backend`/`bp-frontend`
+
+## Useful commands
+
+```bash
+# ECS service state
+aws ecs describe-services \
+  --cluster bp \
+  --services bp-backend bp-frontend \
+  --query "services[].{name:serviceName,running:runningCount,desired:desiredCount}" \
+  --output table
+
+# Tail logs
+aws logs tail /ecs/bp-backend --follow
+aws logs tail /ecs/bp-frontend --follow
+
+# Fleet stack list
+aws cloudformation list-stacks \
+  --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE \
+  --query "StackSummaries[?starts_with(StackName, 'bp-gpu-fleet-')].StackName" \
+  --output table
+```
 
 ## Shutdown
 
 ### Graceful scale-down
 
-1. Set ECS desired count to 0
-2. Set GPU ASG min/max/desired to 0
-3. Verify no running tasks/instances
+1. Set ECS desired count to 0 for `bp-backend` and `bp-frontend`.
+2. Set each fleet ASG (`asg-<fleet_stage>-<fleet_slug>`) min/max/desired to 0.
+3. Confirm no running ECS tasks and no running fleet instances.
 
 ### Full teardown
 
-- `npx cdk destroy` (reverse order)
-- Production: RDS deletion protection and S3 retention require manual steps
+Use:
+
+- `docs/recreate-infrastructure.md` for standard rebuild
+- `docs/aws-full-reset-single-system.md` for full destructive reset (including retained data and bootstrap)

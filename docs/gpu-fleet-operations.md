@@ -8,8 +8,8 @@ This system uses:
 - **Content-addressed assets** in S3: `assets/<kind>/<sha256>`
 - **Manifest-only bundles** in S3: `bundles/<bundle_id>/manifest.json`
 - **Shared GPU fleet** (e.g., `gpu-default`) that can run many workflows
-- **Active bundle pointers** in SSM: `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
-- **Desired fleet config** in SSM: `/bp/<stage>/fleets/<fleet_slug>/desired_config`
+- **Active bundle pointers** in SSM: `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`
+- **Desired fleet config** in SSM: `/bp/fleets/<fleet_stage>/<fleet_slug>/desired_config`
 
 Workers boot from a fleet AMI, apply the active bundle, then self-register to the backend and pull jobs.
 
@@ -17,29 +17,31 @@ Workers boot from a fleet AMI, apply the active bundle, then self-register to th
 
 ### AWS infrastructure
 
-Ensure the following are deployed for the target stage:
-- `bp-<stage>-data` (models/logs buckets + SSM pointers)
-- `bp-<stage>-compute` (backend/frontend services)
-- `bp-<stage>-gpu-shared` (scale-to-zero SNS + Lambda)
-- `bp-<stage>-gpu-fleet-<fleet_slug>` (per-fleet ASG + user-data)
+Ensure the following are deployed:
+- `bp-data` (models/logs buckets + SSM pointers)
+- `bp-compute` (backend/frontend services)
+- `bp-gpu-shared` (scale-to-zero SNS + Lambda)
+- `bp-gpu-fleet-<fleet_stage>-<fleet_slug>` (per-fleet ASG + user-data)
 
 #### Check that the stacks exist
 
-These are **CloudFormation stacks** created by CDK. Replace `<stage>` with `staging` or `production`.
+These are **CloudFormation stacks** created by CDK.
 
-CLI (example for staging):
+CLI example:
 
 ```bash
-STAGE=staging
+FLEET_STAGE=staging
+FLEET_SLUG=gpu-default
 
 # Sanity check: correct AWS account/region
 aws sts get-caller-identity --query Account --output text
 aws configure get region
 
 # Check each required stack directly (prints StackStatus; errors if missing)
-aws cloudformation describe-stacks --stack-name "bp-${STAGE}-data" --query "Stacks[0].StackStatus" --output text
-aws cloudformation describe-stacks --stack-name "bp-${STAGE}-compute" --query "Stacks[0].StackStatus" --output text
-aws cloudformation describe-stacks --stack-name "bp-${STAGE}-gpu-shared" --query "Stacks[0].StackStatus" --output text
+aws cloudformation describe-stacks --stack-name "bp-data" --query "Stacks[0].StackStatus" --output text
+aws cloudformation describe-stacks --stack-name "bp-compute" --query "Stacks[0].StackStatus" --output text
+aws cloudformation describe-stacks --stack-name "bp-gpu-shared" --query "Stacks[0].StackStatus" --output text
+aws cloudformation describe-stacks --stack-name "bp-gpu-fleet-${FLEET_STAGE}-${FLEET_SLUG}" --query "Stacks[0].StackStatus" --output text
 ```
 
 Optional (requires `cloudformation:ListStacks` permission):
@@ -47,7 +49,7 @@ Optional (requires `cloudformation:ListStacks` permission):
 ```bash
 aws cloudformation list-stacks \
   --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE \
-  --query "StackSummaries[?starts_with(StackName, 'bp-${STAGE}-')].StackName" \
+  --query "StackSummaries[?starts_with(StackName, 'bp-')].StackName" \
   --output table
 ```
 
@@ -55,11 +57,11 @@ If you get `AccessDenied` for CloudFormation APIs, you need additional IAM permi
 
 AWS Console:
 - Go to **CloudFormation → Stacks**
-- Search for: `bp-<stage>-data`, `bp-<stage>-compute`, `bp-<stage>-gpu-shared`
+- Search for: `bp-data`, `bp-compute`, `bp-gpu-shared`, and `bp-gpu-fleet-<fleet_stage>-<fleet_slug>`
 
 #### If a stack is missing: deploy it (or redeploy)
 
-Stacks have dependencies: `bp-<stage>-network` → `bp-<stage>-data` → `bp-<stage>-compute` → `bp-<stage>-gpu-shared` (monitoring is recommended).
+Stacks have dependencies: `bp-network` → `bp-data` → `bp-compute` → `bp-gpu-shared` (monitoring is recommended).
 
 Deploy the chain (from repo root):
 
@@ -71,20 +73,20 @@ npm install
 npx cdk bootstrap
 
 # Deploy required stacks (recommended order)
-npx cdk deploy --context stage=${STAGE} \
-  bp-${STAGE}-network \
-  bp-${STAGE}-data \
-  bp-${STAGE}-compute \
-  bp-${STAGE}-gpu-shared
+npx cdk deploy \
+  bp-network \
+  bp-data \
+  bp-compute \
+  bp-gpu-shared
 
-Per-fleet stacks (`bp-<stage>-gpu-fleet-<fleet_slug>`) are provisioned via GitHub Actions (see Step 9 below).
+Per-fleet stacks (`bp-gpu-fleet-<fleet_stage>-<fleet_slug>`) are provisioned via GitHub Actions (see Step 9 below).
 ```
 
 If you want *all* stacks (including monitoring/cicd), you can deploy everything:
 
 ```bash
 cd infrastructure
-npx cdk deploy --context stage=${STAGE} --all
+npx cdk deploy --all
 ```
 
 #### Common blocker: CDK bootstrap/deploy permissions
@@ -98,14 +100,14 @@ npx cdk deploy --context stage=${STAGE} --all
 
 If `cdk bootstrap` fails and leaves a `CDKToolkit` stack in `ROLLBACK_FAILED`, an admin must delete it in **CloudFormation** (and may need to manually delete leftover `cdk-hnb659fds-*` IAM roles/repositories before retrying).
 
-#### Container images (ECR) must exist before deploying `bp-<stage>-compute`
+#### Container images (ECR) must exist before deploying `bp-compute`
 
-The `bp-<stage>-compute` stack creates ECS services that reference **ECR images** by tag:
+The `bp-compute` stack creates ECS services that reference **ECR images** by tag:
 
-- Backend repo `bp-backend-<stage>`:
+- Backend repo `bp-backend`:
   - `nginx-latest`
   - `php-latest`
-- Frontend repo `bp-frontend-<stage>`:
+- Frontend repo `bp-frontend`:
   - `latest`
 
 If those tags are missing, ECS cannot pull containers and you’ll see `ECS Deployment Circuit Breaker was triggered` while creating the services.
@@ -129,15 +131,13 @@ This repo’s production frontend Docker build sets `NEXT_PUBLIC_API_BASE_URL=/a
 Check whether the required tags exist:
 
 ```bash
-STAGE=staging
-
 aws ecr describe-images \
-  --repository-name "bp-backend-${STAGE}" \
+  --repository-name "bp-backend" \
   --query "imageDetails[].imageTags" \
   --output json
 
 aws ecr describe-images \
-  --repository-name "bp-frontend-${STAGE}" \
+  --repository-name "bp-frontend" \
   --query "imageDetails[].imageTags" \
   --output json
 ```
@@ -145,9 +145,8 @@ aws ecr describe-images \
 If the repositories don’t exist at all, deploy the ECR stack first:
 
 ```bash
-STAGE=staging
 cd infrastructure
-npx cdk deploy --context stage=${STAGE} "bp-${STAGE}-cicd"
+npx cdk deploy bp-cicd
 ```
 
 ##### Populate ECR via GitHub Actions (recommended)
@@ -169,7 +168,7 @@ How to run it:
 2. Click **Run workflow**
 3. Wait for **build-and-push** to complete
 4. Verify ECR tags exist (commands above)
-5. Deploy `bp-<stage>-compute` (CDK) or let the workflow deploy services
+5. Deploy `bp-compute` (CDK) or let the workflow deploy services
 
 ##### `AWS_DEPLOY_ROLE_ARN_STAGING` / `AWS_DEPLOY_ROLE_ARN_PRODUCTION` (GitHub Actions → AWS)
 
@@ -227,16 +226,14 @@ For staging, the simplest starting point is attaching **`AdministratorAccess`** 
 
 #### Post-deploy readiness checks (backend + frontend)
 
-After `bp-<stage>-compute` is deployed and images exist, use this checklist to confirm the app is actually usable.
+After `bp-compute` is deployed and images exist, use this checklist to confirm the app is actually usable.
 
 ##### 1) Confirm ECS services are stable
 
 ```bash
-STAGE=staging
-
 aws ecs wait services-stable \
-  --cluster "bp-${STAGE}" \
-  --services "bp-${STAGE}-backend" "bp-${STAGE}-frontend"
+  --cluster "bp" \
+  --services "bp-backend" "bp-frontend"
 ```
 
 ##### 2) Confirm the ALB routes are healthy (`/up` and `/`)
@@ -244,9 +241,8 @@ aws ecs wait services-stable \
 Get the base URL from the stack output:
 
 ```bash
-STAGE=staging
 API_BASE_URL=$(aws cloudformation describe-stacks \
-  --stack-name "bp-${STAGE}-compute" \
+  --stack-name "bp-compute" \
   --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" \
   --output text)
 echo "$API_BASE_URL"
@@ -312,15 +308,22 @@ Recommended: run the GitHub Actions **DB Seed** workflow (`.github/workflows/db-
 Check required SSM parameters:
 
 ```bash
-aws ssm get-parameter --name /bp/<stage>/models/bucket --query Parameter.Value --output text
-aws ssm get-parameter --name /bp/<stage>/fleet-secret --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/models/bucket --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/fleets/staging/fleet-secret --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/fleets/production/fleet-secret --query Parameter.Value --output text
 ```
 
-If the fleet secret is still the placeholder:
+If a fleet secret is still the placeholder:
 
 ```bash
 aws ssm put-parameter \
-  --name "/bp/<stage>/fleet-secret" \
+  --name "/bp/fleets/staging/fleet-secret" \
+  --value "$(openssl rand -hex 32)" \
+  --type String \
+  --overwrite
+
+aws ssm put-parameter \
+  --name "/bp/fleets/production/fleet-secret" \
   --value "$(openssl rand -hex 32)" \
   --type String \
   --overwrite
@@ -331,7 +334,8 @@ aws ssm put-parameter \
 In AWS ECS, these are injected automatically (see `infrastructure/lib/stacks/compute-stack.ts`):
 - `COMFYUI_MODELS_BUCKET`, `COMFYUI_MODELS_DISK=comfyui_models`
 - `COMFYUI_LOGS_BUCKET`, `COMFYUI_LOGS_DISK=comfyui_logs`
-- `COMFYUI_FLEET_SECRET_STAGING` (staging) or `COMFYUI_FLEET_SECRET_PRODUCTION` (production) from `/bp/<stage>/fleet-secret`
+- `COMFYUI_FLEET_SECRET_STAGING` from `/bp/fleets/staging/fleet-secret`
+- `COMFYUI_FLEET_SECRET_PRODUCTION` from `/bp/fleets/production/fleet-secret`
 
 For local admin use, follow `quickstart.md`:
 - Media uploads may use MinIO via `AWS_*`
@@ -347,12 +351,13 @@ Run GitHub Action: **Create Dev GPU Instance** (`.github/workflows/create-dev-gp
 
 Inputs:
 - `fleet_slug`
+- `fleet_stage`
 - `allowed_cidr` (your IP/CIDR for port 8188)
 - `aws_region` (optional)
 - `auto_shutdown_hours` (optional)
 
 Notes:
-- The action resolves **stage** from `fleet_slug`, pulls the AMI from `/bp/ami/fleets/<stage>/<fleet_slug>`, and uses the fleet’s `desired_config` instance type.
+- The action uses explicit `fleet_stage`, pulls the AMI from `/bp/ami/fleets/<fleet_stage>/<fleet_slug>`, and uses the fleet’s `desired_config` instance type.
 - If that AMI parameter doesn’t exist yet, run **Build Base GPU AMI** first.
 
 Outcome: the workflow summary prints the ComfyUI URL `http://<public-ip>:8188`.
@@ -396,11 +401,12 @@ Recommended: GitHub Action `.github/workflows/apply-comfyui-bundle.yml`
 Inputs:
 - `instance_id`: dev GPU EC2 instance ID
 - `fleet_slug`: e.g. `gpu-default`
-- `logs_bucket` (optional): `bp-logs-<account>-<stage>`
+- `fleet_stage`: `staging` or `production`
+- `logs_bucket` (optional): `bp-logs-<account>`
 - `notes` (optional)
 - `aws_region` (optional)
 
-This action resolves **stage** from `fleet_slug`, reads the models bucket from `/bp/<stage>/models/bucket`, and uses the active bundle pointer in `/bp/<stage>/fleets/<fleet_slug>/active_bundle`.
+This action reads the models bucket from `/bp/models/bucket` and uses the active bundle pointer in `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`.
 Make sure the fleet’s active bundle is set in the Admin UI before running it.
 
 It runs SSM to execute:
@@ -435,10 +441,10 @@ Path: **Admin → ComfyUI → Fleets** (`/admin/comfyui/fleets`)
 
 - Select a **Template** and **Instance Type** (single choice from the template allowlist).
 - Scaling settings are derived from the template and **cannot** be edited in the UI.
-- Fleet slugs must be **globally unique** across stages (Actions resolve stage from slug).
+- Same `fleet_slug` is allowed in both fleet stages; uniqueness is per `(fleet_stage, fleet_slug)`.
 
 This writes the desired config to SSM:
-`/bp/<stage>/fleets/<fleet_slug>/desired_config`
+`/bp/fleets/<fleet_stage>/<fleet_slug>/desired_config`
 
 ### Step 9: Provision the fleet ASG (GitHub Actions)
 
@@ -446,11 +452,11 @@ Run GitHub Action: **Provision GPU Fleet** (`.github/workflows/provision-gpu-fle
 
 Inputs:
 - `fleet_slug`
+- `fleet_stage`
 - `aws_region`
 
-This resolves **stage** from `fleet_slug`, reads `/bp/<stage>/fleets/<fleet_slug>/desired_config`, and deploys:
-- `bp-<stage>-gpu-shared`
-- `bp-<stage>-gpu-fleet-<fleet_slug>`
+This reads `/bp/fleets/<fleet_stage>/<fleet_slug>/desired_config`, and deploys:
+- `bp-gpu-fleet-<fleet_stage>-<fleet_slug>`
 
 If you later change the template or instance type, run **Apply GPU Fleet Config**
 (`.github/workflows/apply-gpu-fleet-config.yml`) to update the existing fleet stack.
@@ -460,7 +466,7 @@ If you later change the template or instance type, run **Apply GPU Fleet Config*
 Because the fleet is shared, the active bundle must contain assets for all assigned workflows.
 
 Use either:
-- **Admin → Workflows** → set **Staging Fleet**
+- **Admin → Workflows** → set the fleet assignment for the target fleet stage
 - **Admin → ComfyUI → Fleets** → assign workflows
 
 ### Step 11: Activate the bundle for the fleet
@@ -469,7 +475,7 @@ Path: **Admin → ComfyUI → Fleets** → **Manage** → select bundle → **Ac
 
 Writes to:
 - DB: `comfyui_gpu_fleets.active_bundle_id` / `active_bundle_s3_prefix`
-- SSM: `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
+- SSM: `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`
 
 ### Step 12: Bake and deploy the fleet AMI
 
@@ -477,28 +483,30 @@ Run GitHub Action: **Build Base GPU AMI** (`.github/workflows/build-ami.yml`)
 
 Inputs:
 - `fleet_slug`
+- `fleet_stage`
 - `aws_region` (optional)
 - `start_instance_refresh` (optional)
 
-This resolves **stage** from `fleet_slug`, builds a **base AMI** (no assets baked), and writes:
-`/bp/ami/fleets/<stage>/<fleet_slug> = ami-...`
+This builds a **base AMI** (no assets baked), and writes:
+`/bp/ami/fleets/<fleet_stage>/<fleet_slug> = ami-...`
 
 Then run GitHub Action: **Bake GPU AMI (Active Bundle)** (`.github/workflows/bake-ami.yml`)
 
 Inputs:
 - `fleet_slug`
+- `fleet_stage`
 - `aws_region` (optional)
 - `start_instance_refresh` (optional)
 
 The bake workflow auto-resolves:
-- `models_s3_bucket` from `/bp/<stage>/models/bucket`
-- `models_s3_prefix` from `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
+- `models_s3_bucket` from `/bp/models/bucket`
+- `models_s3_prefix` from `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`
 - `bundle_id` from the prefix basename
-- `packer_instance_profile` from `/bp/<stage>/packer/instance_profile`
+- `packer_instance_profile` from `/bp/packer/instance_profile`
 
 Optional: start an instance refresh to roll the ASG after updating the AMI.
 
-### Step 11: Create the Effect
+### Step 13: Create the Effect
 
 Path: **Admin → Effects** (`/admin/effects`)
 
@@ -521,18 +529,18 @@ The public effect exposes `configurable_properties` based on workflow properties
 ### SSM pointers
 
 ```bash
-aws ssm get-parameter --name /bp/<stage>/fleets/<fleet_slug>/active_bundle --query Parameter.Value --output text
-aws ssm get-parameter --name /bp/<stage>/fleets/<fleet_slug>/desired_config --query Parameter.Value --output text
-aws ssm get-parameter --name /bp/ami/fleets/<stage>/<fleet_slug> --query Parameter.Value --output text
-aws ssm get-parameter --name /bp/<stage>/models/bucket --query Parameter.Value --output text
-aws ssm get-parameter --name /bp/<stage>/packer/instance_profile --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/fleets/<fleet_stage>/<fleet_slug>/desired_config --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/ami/fleets/<fleet_stage>/<fleet_slug> --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/models/bucket --query Parameter.Value --output text
+aws ssm get-parameter --name /bp/packer/instance_profile --query Parameter.Value --output text
 ```
 
 ### ASG + instance health
 
 ```bash
 aws ec2 describe-launch-template-versions \
-  --launch-template-name lt-<stage>-<fleet_slug> \
+  --launch-template-name lt-<fleet_stage>-<fleet_slug> \
   --versions '$Latest'
 ```
 
@@ -564,7 +572,7 @@ Expected:
 ### Output S3 verification
 
 ```bash
-aws s3 ls s3://bp-media-<account>-<stage>/tenants/<tenant_id>/ai-jobs/<job_id>/
+aws s3 ls s3://bp-media-<account>/tenants/<tenant_id>/ai-jobs/<job_id>/
 ```
 
 ### Placeholder verification
@@ -580,46 +588,25 @@ Practical verification:
 CloudWatch namespace: `ComfyUI/Workers`
 
 Check metrics with dimensions:
-`FleetSlug=<fleet_slug>, Stage=<stage>`
+`FleetSlug=<fleet_slug>, Stage=<fleet_stage>`
 
 Ensure alarms exist:
-- `<stage>-<fleet_slug>-queue-has-jobs`
-- `<stage>-<fleet_slug>-queue-empty`
+- `<fleet_stage>-<fleet_slug>-queue-has-jobs`
+- `<fleet_stage>-<fleet_slug>-queue-empty`
 
-## Production deploy (separate AWS account)
+## Fleet-stage rollout on single system
 
-### 1) Deploy production infrastructure
+Core infrastructure is deployed once (`bp-*` stacks). Promotion happens by fleet stage:
 
-```bash
-cd infrastructure
-npx cdk deploy --context stage=production --all
-```
-
-Set required secrets in production:
-- `/bp/production/laravel/app-key`
-- `/bp/production/fleet-secret`
-
-### 2) Copy bundles/assets to production models bucket
-
-Copy required `bundles/<bundle_id>/manifest.json` and referenced `assets/<kind>/<sha256>` to the production models bucket.
-
-### 3) Activate bundle and build AMI in production
-
-Repeat Steps 9–10 using:
-- `stage=production`
-- production models bucket
-
-### 4) Recreate workflows and effects in production
-
-Repeat Steps 7 and 11 in the production admin UI.
-
-### 5) Verify and enable traffic
-
-Run a “golden path” job on a test tenant. Monitor CloudWatch alarms and logs. Then switch DNS to production.
+1. Keep test workflows and bundles on `fleet_stage=staging`.
+2. Create/activate equivalent production fleet entries (`fleet_stage=production`).
+3. Provision production fleet stack `bp-gpu-fleet-production-<fleet_slug>`.
+4. Build/bake production AMI and refresh the production ASG.
+5. Verify end-to-end jobs via the production fleet stage.
 
 ## Troubleshooting
 
-- **Workers not registering**: check `/bp/<stage>/fleet-secret`, backend logs, and worker env.
+- **Workers not registering**: check `/bp/fleets/<fleet_stage>/fleet-secret`, backend logs, and worker env.
 - **Bundles not applying**: verify SSM active bundle path and `/var/log/comfyui-asset-sync.log`.
 - **Missing outputs**: check worker logs and `/api/worker/fail` error messages.
 - **Scale-to-zero stuck**: verify CloudWatch alarms and scale-to-zero Lambda logs.

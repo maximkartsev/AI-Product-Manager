@@ -183,23 +183,42 @@ export function useDataTable<T extends Record<string, any>>(
       try {
         const { getAdminUiSettings } = await import("@/lib/api");
         const allSettings = await getAdminUiSettings();
-        const tableSettings = allSettings?.[settingsKey];
-        if (tableSettings) {
-          if (tableSettings.visibleColumns) {
-            setVisibleColumns(new Set(tableSettings.visibleColumns));
+        const rawTableSettings = allSettings?.[settingsKey];
+        if (!rawTableSettings || typeof rawTableSettings !== "object" || Array.isArray(rawTableSettings)) {
+          return;
+        }
+
+        const tableSettings = rawTableSettings as Record<string, unknown>;
+
+        const visible = tableSettings["visibleColumns"];
+        if (Array.isArray(visible)) {
+          setVisibleColumns(new Set(visible.filter((value): value is string => typeof value === "string")));
+        }
+
+        const order = tableSettings["columnOrder"];
+        if (Array.isArray(order)) {
+          setColumnOrder(order.filter((value): value is string => typeof value === "string"));
+        }
+
+        const widths = tableSettings["columnWidths"];
+        if (widths && typeof widths === "object" && !Array.isArray(widths)) {
+          const next: Record<string, number> = {};
+          for (const [key, value] of Object.entries(widths as Record<string, unknown>)) {
+            if (typeof value === "number" && Number.isFinite(value)) {
+              next[key] = value;
+            }
           }
-          if (tableSettings.columnOrder) {
-            setColumnOrder(tableSettings.columnOrder);
-          }
-          if (tableSettings.columnWidths) {
-            setColumnWidths(tableSettings.columnWidths);
-          }
-          if (tableSettings.perPage) {
-            setPagination((prev) => ({ ...prev, perPage: tableSettings.perPage }));
-          }
-          if (tableSettings.previewSize) {
-            setPreviewSize(tableSettings.previewSize);
-          }
+          setColumnWidths(next);
+        }
+
+        const perPage = tableSettings["perPage"];
+        if (typeof perPage === "number" && Number.isFinite(perPage) && perPage > 0) {
+          setPagination((prev) => ({ ...prev, perPage }));
+        }
+
+        const preview = tableSettings["previewSize"];
+        if (preview === "sm" || preview === "md" || preview === "lg") {
+          setPreviewSize(preview);
         }
       } catch {
         // Fallback to localStorage silently

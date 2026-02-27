@@ -1,13 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { cloneStudioEffect, getAdminEffects, type AdminEffect, type StudioEffectCloneMode } from "@/lib/api";
 import { extractErrorMessage } from "@/lib/apiErrors";
 
 export default function StudioEffectClonePage() {
+  return (
+    <Suspense
+      fallback={<div className="text-sm text-muted-foreground">Loading clone page...</div>}
+    >
+      <StudioEffectCloneInner />
+    </Suspense>
+  );
+}
+
+function StudioEffectCloneInner() {
   const searchParams = useSearchParams();
   const [effects, setEffects] = useState<AdminEffect[]>([]);
   const [loadingEffects, setLoadingEffects] = useState(false);

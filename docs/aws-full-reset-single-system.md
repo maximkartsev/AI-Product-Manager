@@ -155,20 +155,90 @@ done
 
 ### 4.3 Delete legacy stage-prefixed stacks if present
 
+Older deployments used stage-prefixed stacks (for example `bp-staging-compute`). **Delete these in dependency order**. Do not delete them all at once.
+
+First, discover which legacy stacks exist:
+
 ```bash
-LEGACY_STACKS=$(aws cloudformation list-stacks \
+aws cloudformation list-stacks \
   --region "$AWS_REGION" \
   --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE \
   --query "StackSummaries[?starts_with(StackName, 'bp-staging-') || starts_with(StackName, 'bp-production-')].StackName" \
-  --output text)
+  --output table
+```
 
-for STACK in $LEGACY_STACKS; do
+Then delete **per stage**, in this order (runs for both `staging` and `production`):
+
+```bash
+for STAGE in staging production; do
+
+# 1) Per-fleet GPU stacks (legacy) if present
+FLEET_STACKS=$(aws cloudformation list-stacks \
+  --region "$AWS_REGION" \
+  --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE \
+  --query "StackSummaries[?starts_with(StackName, 'bp-${STAGE}-gpu-fleet-')].StackName" \
+  --output text)
+for STACK in $FLEET_STACKS; do
   aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "$STACK"
 done
-
-for STACK in $LEGACY_STACKS; do
+for STACK in $FLEET_STACKS; do
   aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "$STACK"
 done
+
+# 2) Shared GPU stack (legacy)
+aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "bp-${STAGE}-gpu-shared" || true
+aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "bp-${STAGE}-gpu-shared" || true
+
+# 3) Monitoring (legacy)
+aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "bp-${STAGE}-monitoring" || true
+aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "bp-${STAGE}-monitoring" || true
+
+# 4) Compute (legacy) — MUST be deleted before data/network
+aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "bp-${STAGE}-compute" || true
+aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "bp-${STAGE}-compute" || true
+
+# 5) Data (legacy)
+aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "bp-${STAGE}-data" || true
+aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "bp-${STAGE}-data" || true
+
+# 6) Network (legacy)
+aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "bp-${STAGE}-network" || true
+aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "bp-${STAGE}-network" || true
+
+# 7) CI/CD (legacy)
+aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "bp-${STAGE}-cicd" || true
+aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "bp-${STAGE}-cicd" || true
+
+done
+```
+
+#### Legacy compute can fail to delete (ECS capacity providers “in use”)
+
+If `bp-<stage>-compute` fails with `DELETE_FAILED` due to `AWS::ECS::ClusterCapacityProviderAssociations` (capacity provider is in use), clean up the legacy ECS cluster and retry:
+
+```bash
+STAGE=staging
+CLUSTER="bp-${STAGE}"
+
+# Delete any remaining services in the cluster (if any)
+SERVICES=$(aws ecs list-services --region "$AWS_REGION" --cluster "$CLUSTER" --query "serviceArns[]" --output text)
+for SVC in $SERVICES; do
+  aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$SVC" --desired-count 0 || true
+  aws ecs delete-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$SVC" --force || true
+done
+
+# Stop any remaining tasks (if any) — often one-off migration tasks
+TASKS=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$CLUSTER" --desired-status RUNNING --query "taskArns[]" --output text)
+for TASK in $TASKS; do
+  aws ecs stop-task --region "$AWS_REGION" --cluster "$CLUSTER" --task "$TASK" || true
+done
+
+# Finally, delete the cluster (it should become INACTIVE)
+aws ecs delete-cluster --region "$AWS_REGION" --cluster "$CLUSTER" || true
+
+# Retry stack deletion after cluster cleanup
+aws cloudformation delete-stack --region "$AWS_REGION" --stack-name "bp-${STAGE}-compute"
+aws cloudformation wait stack-delete-complete --region "$AWS_REGION" --stack-name "bp-${STAGE}-compute"
 ```
 
 ## 5) Delete retained/orphaned resources (required for true blank slate)
@@ -215,12 +285,25 @@ done
 
 ### 5.2 S3 cleanup (retained buckets)
 
+Some older deployments used stage-suffixed buckets (for example `bp-media-<account>-staging`). Delete whatever exists for this account.
+
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-for B in "bp-media-${ACCOUNT_ID}" "bp-models-${ACCOUNT_ID}" "bp-access-logs-${ACCOUNT_ID}" "bp-logs-${ACCOUNT_ID}"; do
-  aws s3 rb "s3://${B}" --force --region "$AWS_REGION" || true
+for B in $(aws s3api list-buckets --query 'Buckets[].Name' --output text); do
+  case "$B" in
+    bp-media-${ACCOUNT_ID}*|bp-models-${ACCOUNT_ID}*|bp-logs-${ACCOUNT_ID}*|bp-access-logs-${ACCOUNT_ID}*)
+      aws s3 rb "s3://${B}" --force --region "$AWS_REGION" || true
+      ;;
+  esac
 done
+```
+
+If you also have non-`bp-*` legacy buckets you want removed (example: `dzzzs-comfyui-assets` / `dzzzs-comfyui-logs`), delete them explicitly:
+
+```bash
+aws s3 rb "s3://dzzzs-comfyui-assets" --force --region "$AWS_REGION" || true
+aws s3 rb "s3://dzzzs-comfyui-logs" --force --region "$AWS_REGION" || true
 ```
 
 ### 5.3 Secrets Manager cleanup (`/bp/*`)
@@ -306,7 +389,48 @@ done
 for B in $(aws s3api list-buckets \
   --query "Buckets[?starts_with(Name, 'cdk-hnb659fds-assets-')].Name" \
   --output text); do
+  # CDK bootstrap assets bucket is usually versioned; plain `rb --force` may fail with BucketNotEmpty.
   aws s3 rb "s3://${B}" --force --region "$AWS_REGION" || true
+
+  # If the bucket is still not empty, delete *all versions and delete markers* then delete the bucket.
+  BUCKET="$B" python3 - <<'PY'
+import json, os, subprocess
+
+bucket = os.environ.get("BUCKET")
+if not bucket:
+    raise SystemExit("BUCKET env var is required")
+
+def aws(*args):
+    return subprocess.check_output(["aws", *args], text=True)
+
+key_marker = None
+ver_marker = None
+
+while True:
+    cmd = ["s3api", "list-object-versions", "--bucket", bucket, "--output", "json"]
+    if key_marker is not None and ver_marker is not None:
+        cmd += ["--key-marker", key_marker, "--version-id-marker", ver_marker]
+
+    data = json.loads(aws(*cmd))
+
+    objs = []
+    for v in data.get("Versions", []):
+        objs.append({"Key": v["Key"], "VersionId": v["VersionId"]})
+    for m in data.get("DeleteMarkers", []):
+        objs.append({"Key": m["Key"], "VersionId": m["VersionId"]})
+
+    if objs:
+        payload = json.dumps({"Objects": objs, "Quiet": True})
+        subprocess.check_call(["aws", "s3api", "delete-objects", "--bucket", bucket, "--delete", payload])
+
+    if not data.get("IsTruncated"):
+        break
+
+    key_marker = data["NextKeyMarker"]
+    ver_marker = data["NextVersionIdMarker"]
+PY
+
+  aws s3 rb "s3://${B}" --region "$AWS_REGION" || true
 done
 
 for R in $(aws ecr describe-repositories \
@@ -332,7 +456,15 @@ aws ssm delete-parameter \
   --name /cdk-bootstrap/hnb659fds/version || true
 ```
 
-## 7) Fresh install from scratch
+## 7) Fresh install from scratch (CLI, correct order)
+
+This section is written to avoid common first-deploy failures:
+
+- `bp-compute` needs **ECR repos + image tags** to exist.
+- The backend needs valid **`APP_KEY`** and OAuth payloads to boot cleanly (otherwise ECS health checks fail and the compute stack can roll back).
+- If you want HTTPS on first deploy, you must have an **ACM certificate ARN** ready before deploying `bp-compute`.
+
+### 7.1 Bootstrap CDK (once per account/region)
 
 From repository root:
 
@@ -342,15 +474,122 @@ npm ci
 npx cdk bootstrap
 ```
 
-Deploy stacks in order:
+### 7.2 Deploy CI/CD first (creates ECR repos)
 
 ```bash
-npx cdk deploy bp-cicd bp-network bp-data bp-compute bp-monitoring bp-gpu-shared --require-approval never
+npx cdk deploy bp-cicd --require-approval never
 ```
 
-## 8) Re-seed required app secrets and env values
+### 7.3 Build and push container images (must exist before `bp-compute`)
 
-Use the script from `infrastructure/scripts/sync-env-to-aws.ps1`:
+You must push these tags:
+
+- `bp-backend:nginx-latest`
+- `bp-backend:php-latest`
+- `bp-frontend:latest`
+
+Example (from repo root; requires Docker buildx set up):
+
+```bash
+AWS_REGION="${AWS_REGION:-us-east-1}"
+AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+
+aws ecr get-login-password --region "$AWS_REGION" | \
+  docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+# Build ARM64 images
+docker buildx build --platform linux/arm64 -f infrastructure/docker/backend/Dockerfile.nginx -t bp-backend:nginx-latest .
+docker buildx build --platform linux/arm64 -f infrastructure/docker/backend/Dockerfile.php-fpm -t bp-backend:php-latest .
+docker buildx build --platform linux/arm64 -f frontend/Dockerfile -t bp-frontend:latest ./frontend
+
+# Tag for ECR
+docker tag bp-backend:nginx-latest "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/bp-backend:nginx-latest"
+docker tag bp-backend:php-latest "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/bp-backend:php-latest"
+docker tag bp-frontend:latest "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/bp-frontend:latest"
+
+# Push
+docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/bp-backend:nginx-latest"
+docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/bp-backend:php-latest"
+docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/bp-frontend:latest"
+```
+
+### 7.4 Deploy network + data
+
+```bash
+npx cdk deploy bp-network bp-data --require-approval never
+```
+
+## 8) Seed required secrets (before deploying `bp-compute`)
+
+After `bp-data` is deployed, the secret containers exist:
+
+- `/bp/laravel/app-key`
+- `/bp/oauth/secrets`
+- `/bp/fleets/staging/fleet-secret`
+- `/bp/fleets/production/fleet-secret`
+
+### 8.1 Laravel APP_KEY (Secrets Manager)
+
+Generate a Laravel key locally and store it:
+
+```bash
+APP_KEY_VALUE="base64:PASTE_LARAVEL_KEY_HERE"
+aws secretsmanager put-secret-value --region "$AWS_REGION" --secret-id "/bp/laravel/app-key" --secret-string "$APP_KEY_VALUE"
+```
+
+### 8.2 Fleet secrets (SSM)
+
+```bash
+aws ssm put-parameter --region "$AWS_REGION" --name "/bp/fleets/staging/fleet-secret" --type String --value "$(openssl rand -hex 48)" --overwrite
+aws ssm put-parameter --region "$AWS_REGION" --name "/bp/fleets/production/fleet-secret" --type String --value "$(openssl rand -hex 48)" --overwrite
+```
+
+### 8.3 OAuth secrets (Secrets Manager, optional but recommended for remote login)
+
+Set `/bp/oauth/secrets` as JSON. Apple `.p8` must be base64 of raw file bytes.
+
+```bash
+aws secretsmanager put-secret-value --region "$AWS_REGION" --secret-id "/bp/oauth/secrets" --secret-string '{
+  "google_client_id":"...",
+  "google_client_secret":"...",
+  "tiktok_client_id":"...",
+  "tiktok_client_secret":"...",
+  "apple_client_id":"...",
+  "apple_client_secret":"",
+  "apple_key_id":"...",
+  "apple_team_id":"...",
+  "apple_private_key_p8_b64":"..."
+}'
+```
+
+### 8.4 Optional: keep `.env` as the source-of-truth (PowerShell sync script)
+
+`infrastructure/scripts/sync-env-to-aws.ps1` is best used **after `bp-compute` exists** because it forces an ECS backend redeploy (`bp-backend`).
+
+## 9) Deploy compute + monitoring + gpu-shared
+
+### 9.1 Optional: enable HTTPS on first deploy (domain + cert)
+
+If you have a domain + ACM certificate ARN ready, pass both contexts when deploying `bp-compute`:
+
+```bash
+npx cdk deploy bp-compute \
+  --context domainName=app.example.com \
+  --context certificateArn=arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  --require-approval never
+```
+
+If you don’t provide a certificate, `bp-compute` will deploy HTTP-only and output the ALB DNS name.
+
+### 9.2 Deploy compute (HTTP-only) and the remaining core stacks
+
+```bash
+npx cdk deploy bp-compute bp-monitoring bp-gpu-shared --require-approval never
+```
+
+### 9.3 After compute exists: run the sync script (recommended)
+
+From `infrastructure/` on Windows:
 
 ```powershell
 powershell -NoProfile -File .\scripts\sync-env-to-aws.ps1 `
@@ -359,20 +598,42 @@ powershell -NoProfile -File .\scripts\sync-env-to-aws.ps1 `
   -AppleP8Path C:\secure\keys\Apple_AuthKey_XXXXXX.p8
 ```
 
-This writes:
+## 10) Run database migrations (CLI)
 
-- `/bp/laravel/app-key`
-- `/bp/oauth/secrets`
-- `/bp/fleets/staging/fleet-secret`
-- `/bp/fleets/production/fleet-secret`
+This uses a one-off Fargate task based on `bp-backend` and requires subnet + SG values.
 
-## 9) Rebuild app runtime and database
+Resolve them from the running backend ECS service:
 
-1. Run GitHub Actions **Deploy** (`.github/workflows/deploy.yml`) to build/push images and restart ECS services.
-2. Run **DB Migrate** (`.github/workflows/db-migrate.yml`).
-3. Optional for non-production: run **DB Seed** (`.github/workflows/db-seed.yml`).
+```bash
+aws ecs describe-services \
+  --region "$AWS_REGION" \
+  --cluster bp \
+  --services bp-backend \
+  --query "services[0].networkConfiguration.awsvpcConfiguration" \
+  --output json
+```
 
-## 10) Recreate GPU fleets
+Then run:
+
+```bash
+aws ecs run-task \
+  --region "$AWS_REGION" \
+  --cluster bp \
+  --task-definition bp-backend \
+  --launch-type FARGATE \
+  --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-...","subnet-..."],"securityGroups":["sg-..."]}}' \
+  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","migrate","--force"]}]}' 
+
+aws ecs run-task \
+  --region "$AWS_REGION" \
+  --cluster bp \
+  --task-definition bp-backend \
+  --launch-type FARGATE \
+  --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-...","subnet-..."],"securityGroups":["sg-..."]}}' \
+  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","tenancy:pools-migrate","--force"]}]}' 
+```
+
+## 11) Recreate GPU fleets
 
 For each fleet needed:
 

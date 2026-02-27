@@ -949,7 +949,7 @@ export type AdminEffect = {
   description?: string | null;
   category_id?: number | null;
   workflow_id?: number | null;
-  property_overrides?: Record<string, string> | null;
+  property_overrides?: Record<string, unknown> | null;
   publication_status?: "development" | "published" | "disabled" | null;
   published_revision_id?: number | null;
   prod_execution_environment_id?: number | null;

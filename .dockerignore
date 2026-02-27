@@ -1,0 +1,39 @@
+# Repo-root Docker build context ignores (used by builds like:
+# docker buildx build ... -f infrastructure/docker/backend/Dockerfile.php-fpm .)
+
+# --- Git / editor ---
+.git
+.gitignore
+.cursor
+.vscode
+**/*.swp
+**/*.swo
+
+# --- Node ---
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+**/.pnpm-store
+
+# --- PHP / Laravel ---
+backend/vendor
+backend/.env
+backend/.env.*
+backend/storage/logs
+backend/storage/framework
+backend/storage/framework/**
+backend/storage/framework/cache/**
+backend/storage/framework/sessions/**
+backend/storage/framework/testing/**
+backend/storage/framework/views/**
+
+# Generated tenant storage directories (can be root-owned and unreadable)
+backend/storage/tenant*
+
+# Test disk artifacts (often root-owned after CI/docker runs)
+backend/storage/framework/testing/disks
+backend/storage/framework/testing/disks/**
+
+# --- Docker build outputs ---
+**/.DS_Store

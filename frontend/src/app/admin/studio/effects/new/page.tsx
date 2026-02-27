@@ -20,7 +20,6 @@ import {
 import { extractErrorMessage } from "@/lib/apiErrors";
 import {
   buildWorkflowUpdateFromAnalysis,
-  formatWorkflowJson,
   parseWorkflowJsonInput,
 } from "@/lib/studio/workflowJson";
 
@@ -234,7 +233,7 @@ export default function StudioCreateEffectWizardPage() {
       setAnalyzeJob(job);
 
       const workflowPayload = buildWorkflowUpdateFromAnalysis(job.result_json);
-      setWorkflowPropertiesJson(formatWorkflowJson((workflowPayload.properties as Record<string, unknown>[]) || []));
+      setWorkflowPropertiesJson(JSON.stringify(workflowPayload.properties ?? [], null, 2));
       setOutputNodeId(workflowPayload.output_node_id || "");
       setOutputExtension(workflowPayload.output_extension || "");
       setOutputMimeType(workflowPayload.output_mime_type || "");

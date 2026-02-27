@@ -214,7 +214,8 @@ export class ComputeStack extends cdk.Stack {
 
     const applePrivateKeyPath = '/var/www/html/storage/keys/Apple_AuthKey.p8';
     const buildPhpBootstrapCommand = (processCommand: string): string => [
-      'set -euo pipefail',
+      // Note: entrypoint is /bin/sh, so avoid bash-only options like pipefail.
+      'set -eu',
       'umask 077',
       'mkdir -p /var/www/html/storage/keys',
       'if [ -n "${APPLE_PRIVATE_KEY_P8_B64:-}" ]; then',

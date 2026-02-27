@@ -530,7 +530,23 @@ After `bp-data` is deployed, the secret containers exist:
 
 ### 8.1 Laravel APP_KEY (Secrets Manager)
 
-Generate a Laravel key locally and store it:
+Generate a Laravel key locally and store it.
+
+Generate the key (prints a `base64:...` value):
+
+```bash
+echo "base64:$(openssl rand -base64 32)"
+```
+
+OR
+
+```bash
+cd backend
+composer install
+php artisan key:generate --show
+```
+
+Then store it in Secrets Manager:
 
 ```bash
 APP_KEY_VALUE="base64:PASTE_LARAVEL_KEY_HERE"
@@ -546,20 +562,52 @@ aws ssm put-parameter --region "$AWS_REGION" --name "/bp/fleets/production/fleet
 
 ### 8.3 OAuth secrets (Secrets Manager, optional but recommended for remote login)
 
-Set `/bp/oauth/secrets` as JSON. Apple `.p8` must be base64 of raw file bytes.
+Set `/bp/oauth/secrets` as **one JSON payload**.
+
+Apple requires a private key file (`.p8`). Store its **raw file bytes** as base64 in the JSON field `apple_private_key_p8_b64`. At runtime, ECS decodes it into a file inside the container.
+
+Build the base64 string from the `.p8` file:
 
 ```bash
-aws secretsmanager put-secret-value --region "$AWS_REGION" --secret-id "/bp/oauth/secrets" --secret-string '{
-  "google_client_id":"...",
-  "google_client_secret":"...",
-  "tiktok_client_id":"...",
-  "tiktok_client_secret":"...",
-  "apple_client_id":"...",
-  "apple_client_secret":"",
-  "apple_key_id":"...",
-  "apple_team_id":"...",
-  "apple_private_key_p8_b64":"..."
-}'
+APPLE_P8_PATH="/path/to/AuthKey_XXXXXX.p8"
+
+# GNU coreutils (recommended)
+APPLE_P8_B64="$(base64 -w 0 "$APPLE_P8_PATH")"
+
+# If your base64 doesn't support -w:
+# APPLE_P8_B64="$(base64 "$APPLE_P8_PATH" | tr -d '\n')"
+```
+
+Sanity-check that the variable is not empty and decodes back to the same file bytes:
+
+```bash
+echo "len=$(echo -n "$APPLE_P8_B64" | wc -c)"
+
+echo "$APPLE_P8_B64" | base64 -d > /tmp/apple.p8
+sha256sum "$APPLE_P8_PATH" /tmp/apple.p8
+head -n 2 /tmp/apple.p8
+```
+
+Notes:
+- If `/tmp/apple.p8` is empty, `APPLE_P8_B64` was not set in your current shell session.
+- The decoded file should start with `-----BEGIN PRIVATE KEY-----`.
+
+Then write the full JSON secret:
+
+```bash
+aws secretsmanager put-secret-value --region "$AWS_REGION" \
+  --secret-id "/bp/oauth/secrets" \
+  --secret-string "{
+    \"google_client_id\":\"...\",
+    \"google_client_secret\":\"...\",
+    \"tiktok_client_id\":\"...\",
+    \"tiktok_client_secret\":\"...\",
+    \"apple_client_id\":\"...\",
+    \"apple_client_secret\":\"\",
+    \"apple_key_id\":\"...\",
+    \"apple_team_id\":\"...\",
+    \"apple_private_key_p8_b64\":\"${APPLE_P8_B64}\"
+  }"
 ```
 
 ### 8.4 Optional: keep `.env` as the source-of-truth (PowerShell sync script)

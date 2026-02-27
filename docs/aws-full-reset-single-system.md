@@ -592,29 +592,58 @@ Notes:
 - If `/tmp/apple.p8` is empty, `APPLE_P8_B64` was not set in your current shell session.
 - The decoded file should start with `-----BEGIN PRIVATE KEY-----`.
 
-Then write the full JSON secret:
+Recommended automatic path (Windows / PowerShell): use the sync script, which now writes `/bp/oauth/secrets` via `file://` to avoid JSON quote corruption:
 
-```bash
-aws secretsmanager put-secret-value --region "$AWS_REGION" \
-  --secret-id "/bp/oauth/secrets" \
-  --secret-string "{
-    \"google_client_id\":\"...\",
-    \"google_client_secret\":\"...\",
-    \"tiktok_client_id\":\"...\",
-    \"tiktok_client_secret\":\"...\",
-    \"apple_client_id\":\"...\",
-    \"apple_client_secret\":\"\",
-    \"apple_key_id\":\"...\",
-    \"apple_team_id\":\"...\",
-    \"apple_private_key_p8_b64\":\"${APPLE_P8_B64}\"
-  }"
+```powershell
+powershell -NoProfile -File .\scripts\sync-env-to-aws.ps1 `
+  -Region us-east-1 `
+  -EnvPath ..\backend\.env `
+  -AppleP8Path C:\secure\keys\Apple_AuthKey_XXXXXX.p8
 ```
 
-Validate that the JSON is well-formed and contains all required keys (prints only missing keys and the Apple `.p8` base64 length):
+Manual fallback (bash), if you need to set `/bp/oauth/secrets` directly:
 
 ```bash
-aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "/bp/oauth/secrets" --output json \
-| python3 -c 'import json,sys; outer=json.load(sys.stdin); s=outer.get("SecretString"); import sys as _; (d:=json.loads(s)) if s else (_ for _ in ()).throw(SystemExit("SecretString empty/None")); req=["google_client_id","google_client_secret","tiktok_client_id","tiktok_client_secret","apple_client_id","apple_client_secret","apple_key_id","apple_team_id","apple_private_key_p8_b64"]; print("missing_keys=", [k for k in req if k not in d]); print("apple_p8_b64_len=", len((d.get("apple_private_key_p8_b64") or "")))'
+export AWS_REGION=us-east-1
+
+# verify the p8 decodes correctly first
+echo "$APPLE_P8_B64" | base64 -d | head -n 1
+
+OAUTH_JSON="$(python3 -c 'import json,os; print(json.dumps({
+  "google_client_id": os.environ.get("GOOGLE_CLIENT_ID",""),
+  "google_client_secret": os.environ.get("GOOGLE_CLIENT_SECRET",""),
+  "tiktok_client_id": os.environ.get("TIKTOK_CLIENT_ID",""),
+  "tiktok_client_secret": os.environ.get("TIKTOK_CLIENT_SECRET",""),
+  "apple_client_id": os.environ.get("APPLE_CLIENT_ID",""),
+  "apple_client_secret": os.environ.get("APPLE_CLIENT_SECRET",""),
+  "apple_key_id": os.environ.get("APPLE_KEY_ID",""),
+  "apple_team_id": os.environ.get("APPLE_TEAM_ID",""),
+  "apple_private_key_p8_b64": os.environ.get("APPLE_P8_B64",""),
+}))')"
+
+aws secretsmanager put-secret-value \
+  --region "$AWS_REGION" \
+  --secret-id "/bp/oauth/secrets" \
+  --secret-string "$OAUTH_JSON"
+```
+
+Validate that OAuth JSON is well-formed and has required keys (PowerShell):
+
+```powershell
+$outer = aws secretsmanager get-secret-value --region us-east-1 --secret-id "/bp/oauth/secrets" --output json | ConvertFrom-Json
+$inner = $outer.SecretString | ConvertFrom-Json
+
+$required = @(
+  "google_client_id","google_client_secret",
+  "tiktok_client_id","tiktok_client_secret",
+  "apple_client_id","apple_client_secret",
+  "apple_key_id","apple_team_id","apple_private_key_p8_b64"
+)
+$missing = $required | Where-Object { -not $inner.PSObject.Properties.Name.Contains($_) }
+"missing_keys=$($missing -join ',')"
+"google_client_id_len=$($inner.google_client_id.Length)"
+"google_client_secret_len=$($inner.google_client_secret.Length)"
+"apple_p8_b64_len=$($inner.apple_private_key_p8_b64.Length)"
 ```
 
 ### 8.4 Optional: keep `.env` as the source-of-truth (PowerShell sync script)
@@ -672,21 +701,67 @@ aws ecs describe-services \
 Then run:
 
 ```bash
-aws ecs run-task \
+# DB migration
+TASK_ARN="$(aws ecs run-task \
   --region "$AWS_REGION" \
   --cluster bp \
   --task-definition bp-backend \
   --launch-type FARGATE \
   --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-...","subnet-..."],"securityGroups":["sg-..."]}}' \
-  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","migrate","--force"]}]}' 
+  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php artisan migrate --force"]}]}' \
+  --query "tasks[0].taskArn" --output text)"
+echo "$TASK_ARN"
 
-aws ecs run-task \
+# Wait until it stop
+aws ecs wait tasks-stopped --region "$AWS_REGION" --cluster bp --tasks "$TASK_ARN"
+
+# Tenants migration
+TASK_ARN="$(aws ecs run-task \
   --region "$AWS_REGION" \
   --cluster bp \
   --task-definition bp-backend \
   --launch-type FARGATE \
-  --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-...","subnet-..."],"securityGroups":["sg-..."]}}' \
-  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","tenancy:pools-migrate"]}]}' 
+  --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-0253653a6a621afe6","subnet-0f868f719bcb2c10b"],"securityGroups":["sg-06f66534f1e4bed15"]}}' \
+  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php artisan tenancy:pools-migrate -vvv"]}]}' \
+  --query "tasks[0].taskArn" --output text)"
+echo "$TASK_ARN"
+
+# Wait until it stop
+aws ecs wait tasks-stopped --region "$AWS_REGION" --cluster bp --tasks "$TASK_ARN"
+
+```
+
+OPTIONAL! 
+Seed central DB
+
+```bash
+
+ # Runs DatabaseSeeder → all seeders listed there
+TASK_ARN="$(aws ecs run-task \
+  --region "$AWS_REGION" \
+  --cluster bp \
+  --task-definition bp-backend \
+  --launch-type FARGATE \
+  --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-0253653a6a621afe6","subnet-0f868f719bcb2c10b"],"securityGroups":["sg-06f66534f1e4bed15"]}}' \
+  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php artisan db:seed --force -vvv"]}]}' \
+  --query "tasks[0].taskArn" --output text)"
+echo "$TASK_ARN"
+
+# OR
+# Run a single seeder class (example)
+TASK_ARN="$(aws ecs run-task \
+  --region "$AWS_REGION" \
+  --cluster bp \
+  --task-definition bp-backend \
+  --launch-type FARGATE \
+  --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-0253653a6a621afe6","subnet-0f868f719bcb2c10b"],"securityGroups":["sg-06f66534f1e4bed15"]}}' \
+  --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php artisan db:seed --class=Database\\\\Seeders\\\\EffectsSeeder --force -vvv"]}]}' \
+  --query "tasks[0].taskArn" --output text)"
+echo "$TASK_ARN"
+
+# Wait until it stop
+aws ecs wait tasks-stopped --region "$AWS_REGION" --cluster bp --tasks "$TASK_ARN"
+
 ```
 
 ## 11) Recreate GPU fleets

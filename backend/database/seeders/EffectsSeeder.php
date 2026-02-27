@@ -136,6 +136,8 @@ class EffectsSeeder extends Seeder
                     'is_active' => $isActive,
                     'is_premium' => $isPremium,
                     'is_new' => $isNew,
+                    // Public catalog endpoints only return published effects.
+                    'publication_status' => 'published',
                 ],
             );
             if ($effect->trashed()) {

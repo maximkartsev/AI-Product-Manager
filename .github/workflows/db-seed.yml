@@ -135,14 +135,14 @@ jobs:
               print("seed_class must be a PHP class name (letters/numbers/_/\\\\ only).", file=sys.stderr)
               sys.exit(1)
 
-          cmd = ["php", "artisan", "db:seed", "--force", "-vvv"]
+          cmd = "php artisan db:seed --force -vvv"
           if seed_class:
-              cmd.append(f"--class={seed_class}")
+              cmd += f" --class={seed_class}"
 
           print(json.dumps({
               "containerOverrides": [{
                   "name": "php-fpm",
-                  "command": cmd,
+                  "command": [cmd],
               }],
           }))
           PY

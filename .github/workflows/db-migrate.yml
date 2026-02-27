@@ -135,14 +135,14 @@ jobs:
               print("pools must be a comma-separated list of connection names (letters/numbers/_/-/comma only).", file=sys.stderr)
               sys.exit(1)
 
-          cmd = ["php", "artisan", "tenancy:pools-migrate", "-vvv"]
+          cmd = "php artisan tenancy:pools-migrate -vvv"
           if pools:
-              cmd.append(f"--pools={pools}")
+              cmd += f" --pools={pools}"
 
           print(json.dumps({
               "containerOverrides": [{
                   "name": "php-fpm",
-                  "command": cmd,
+                  "command": [cmd],
               }],
           }))
           PY

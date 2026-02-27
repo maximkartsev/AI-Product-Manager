@@ -107,7 +107,7 @@ export const FLEET_TEMPLATES: FleetTemplate[] = loadFleetTemplates();
  *
  * AMI IDs should be stored in SSM Parameter Store and updated by the
  * Packer build pipeline. If amiSsmParameter is not provided, the
- * Fleet ASG construct will default to: /bp/ami/fleets/<stage>/<fleet-slug>
+ * Fleet ASG construct will default to: /bp/ami/fleets/<fleet_stage>/<fleet-slug>
  */
 export const FLEETS: FleetConfig[] = FLEET_TEMPLATES.map((template) => ({
   slug: template.templateSlug,

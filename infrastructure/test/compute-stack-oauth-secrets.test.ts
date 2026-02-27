@@ -7,7 +7,6 @@ import type { BpEnvironmentConfig } from '../lib/config/environment';
 
 const baseConfig: BpEnvironmentConfig = {
   env: { account: '111111111111', region: 'us-east-1' },
-  stage: 'staging',
   centralDbName: 'bp',
   tenantPoolDbNames: ['tenant_pool_1', 'tenant_pool_2'],
   rdsInstanceClass: 't4g.small',
@@ -78,6 +77,7 @@ test('compute stack injects oauth secrets and apple key bootstrap into backend p
           Match.objectLike({ Name: 'APPLE_TEAM_ID' }),
           Match.objectLike({ Name: 'APPLE_PRIVATE_KEY_P8_B64' }),
           Match.objectLike({ Name: 'COMFYUI_FLEET_SECRET_STAGING' }),
+          Match.objectLike({ Name: 'COMFYUI_FLEET_SECRET_PRODUCTION' }),
         ]),
       }),
       Match.objectLike({

@@ -39,7 +39,8 @@ export class ComputeStack extends cdk.Stack {
   private readonly frontendRepo: ecr.IRepository;
   private readonly appKeySecret: secretsmanager.ISecret;
   private readonly oauthSecrets: secretsmanager.ISecret;
-  private readonly fleetSecretParam: ssm.IStringParameter;
+  private readonly fleetSecretStagingParam: ssm.IStringParameter;
+  private readonly fleetSecretProductionParam: ssm.IStringParameter;
   private readonly assetOpsSecret: secretsmanager.ISecret;
   private readonly mediaCdnDomain: string;
   private readonly modelsBucket: s3.IBucket;
@@ -50,13 +51,13 @@ export class ComputeStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, vpc, sgAlb, sgBackend, sgFrontend, dbSecret, redisSecret, assetOpsSecret, redisEndpoint, mediaBucket, mediaCdnDomain, modelsBucket, logsBucket } = props;
-    const stage = config.stage;
-    this.backendRepo = ecr.Repository.fromRepositoryName(this, 'BackendRepo', `bp-backend-${stage}`);
-    this.frontendRepo = ecr.Repository.fromRepositoryName(this, 'FrontendRepo', `bp-frontend-${stage}`);
-    this.logRetention = stage === 'production' ? logs.RetentionDays.ONE_MONTH : logs.RetentionDays.ONE_WEEK;
-    this.appKeySecret = secretsmanager.Secret.fromSecretNameV2(this, 'LaravelAppKey', `/bp/${stage}/laravel/app-key`);
-    this.oauthSecrets = secretsmanager.Secret.fromSecretNameV2(this, 'OauthSecrets', `/bp/${stage}/oauth/secrets`);
-    this.fleetSecretParam = ssm.StringParameter.fromStringParameterName(this, 'FleetSecret', `/bp/${stage}/fleet-secret`);
+    this.backendRepo = ecr.Repository.fromRepositoryName(this, 'BackendRepo', 'bp-backend');
+    this.frontendRepo = ecr.Repository.fromRepositoryName(this, 'FrontendRepo', 'bp-frontend');
+    this.logRetention = logs.RetentionDays.ONE_MONTH;
+    this.appKeySecret = secretsmanager.Secret.fromSecretNameV2(this, 'LaravelAppKey', '/bp/laravel/app-key');
+    this.oauthSecrets = secretsmanager.Secret.fromSecretNameV2(this, 'OauthSecrets', '/bp/oauth/secrets');
+    this.fleetSecretStagingParam = ssm.StringParameter.fromStringParameterName(this, 'FleetSecretStaging', '/bp/fleets/staging/fleet-secret');
+    this.fleetSecretProductionParam = ssm.StringParameter.fromStringParameterName(this, 'FleetSecretProduction', '/bp/fleets/production/fleet-secret');
     this.assetOpsSecret = assetOpsSecret;
     this.mediaCdnDomain = mediaCdnDomain;
     this.modelsBucket = modelsBucket;
@@ -68,7 +69,7 @@ export class ComputeStack extends cdk.Stack {
 
     const cluster = new ecs.Cluster(this, 'Cluster', {
       vpc,
-      clusterName: `bp-${stage}`,
+      clusterName: 'bp',
       containerInsights: true,
       enableFargateCapacityProviders: true,
     });
@@ -153,14 +154,12 @@ export class ComputeStack extends cdk.Stack {
     redisEndpoint: string,
     mediaBucket: s3.IBucket,
   ) {
-    const stage = config.stage;
-
     // ========================================
     // Backend Task Definition
     // ========================================
 
     const backendTaskDef = new ecs.FargateTaskDefinition(this, 'BackendTask', {
-      family: `bp-${stage}-backend`,
+      family: 'bp-backend',
       cpu: config.backendCpu ?? 512,
       memoryLimitMiB: config.backendMemory ?? 1024,
       runtimePlatform: {
@@ -187,13 +186,13 @@ export class ComputeStack extends cdk.Stack {
     backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
       actions: ['ssm:PutParameter', 'ssm:GetParameter'],
       resources: [
-        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleets/*/active_bundle`,
-        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleets/*/desired_config`,
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/fleets/*/*/active_bundle`,
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/fleets/*/*/desired_config`,
       ],
     }));
 
     const backendLogGroup = new logs.LogGroup(this, 'BackendLogs', {
-      logGroupName: `/ecs/bp-backend-${stage}`,
+      logGroupName: '/ecs/bp-backend',
       retention: this.logRetention,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -226,8 +225,8 @@ export class ComputeStack extends cdk.Stack {
 
     // Shared environment variables for all PHP containers
     const phpEnvironment: Record<string, string> = {
-      APP_ENV: stage,
-      APP_DEBUG: stage === 'production' ? 'false' : 'true',
+      APP_ENV: 'production',
+      APP_DEBUG: 'false',
       APP_URL: this.apiBaseUrl || `https://app.example.com`,
       FRONTEND_URL: this.apiBaseUrl || `https://app.example.com`,
       APPLE_PRIVATE_KEY: applePrivateKeyPath,
@@ -277,11 +276,9 @@ export class ComputeStack extends cdk.Stack {
       APPLE_KEY_ID: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_key_id'),
       APPLE_TEAM_ID: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_team_id'),
       APPLE_PRIVATE_KEY_P8_B64: ecs.Secret.fromSecretsManager(this.oauthSecrets, 'apple_private_key_p8_b64'),
+      COMFYUI_FLEET_SECRET_STAGING: ecs.Secret.fromSsmParameter(this.fleetSecretStagingParam),
+      COMFYUI_FLEET_SECRET_PRODUCTION: ecs.Secret.fromSsmParameter(this.fleetSecretProductionParam),
     };
-    const fleetSecretEnvKey = stage === 'production'
-      ? 'COMFYUI_FLEET_SECRET_PRODUCTION'
-      : 'COMFYUI_FLEET_SECRET_STAGING';
-    phpSecrets[fleetSecretEnvKey] = ecs.Secret.fromSsmParameter(this.fleetSecretParam);
 
     // Container 2: PHP-FPM (Laravel app)
     backendTaskDef.addContainer('php-fpm', {
@@ -321,7 +318,7 @@ export class ComputeStack extends cdk.Stack {
     // ========================================
 
     const backendService = new ecs.FargateService(this, 'BackendService', {
-      serviceName: `bp-${stage}-backend`,
+      serviceName: 'bp-backend',
       cluster,
       taskDefinition: backendTaskDef,
       desiredCount: 1,
@@ -362,7 +359,7 @@ export class ComputeStack extends cdk.Stack {
     // ========================================
 
     const frontendTaskDef = new ecs.FargateTaskDefinition(this, 'FrontendTask', {
-      family: `bp-${stage}-frontend`,
+      family: 'bp-frontend',
       cpu: config.frontendCpu ?? 256,
       memoryLimitMiB: config.frontendMemory ?? 512,
       runtimePlatform: {
@@ -372,7 +369,7 @@ export class ComputeStack extends cdk.Stack {
     });
 
     const frontendLogGroup = new logs.LogGroup(this, 'FrontendLogs', {
-      logGroupName: `/ecs/bp-frontend-${stage}`,
+      logGroupName: '/ecs/bp-frontend',
       retention: this.logRetention,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -407,7 +404,7 @@ export class ComputeStack extends cdk.Stack {
     // ========================================
 
     const frontendService = new ecs.FargateService(this, 'FrontendService', {
-      serviceName: `bp-${stage}-frontend`,
+      serviceName: 'bp-frontend',
       cluster,
       taskDefinition: frontendTaskDef,
       desiredCount: 1,

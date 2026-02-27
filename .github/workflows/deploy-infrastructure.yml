@@ -1,12 +1,12 @@
 name: 00 - Deploy Infrastructure
 
-run-name: Deploy Infrastructure (${{ inputs.stage }}) by @${{ github.actor }}
+run-name: Deploy Infrastructure (${{ inputs.stage }} credentials) by @${{ github.actor }}
 
 on:
   workflow_dispatch:
     inputs:
       stage:
-        description: 'Stage to deploy'
+        description: 'Credentials/profile to use for deploy'
         required: true
         type: choice
         default: staging
@@ -106,7 +106,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          prefix="bp-${STAGE}"
+          prefix="bp"
           stacks=()
 
           [[ "${DEPLOY_NETWORK}" == "true" ]] && stacks+=("${prefix}-network")
@@ -127,7 +127,7 @@ jobs:
           {
             echo "## Infrastructure deploy selection"
             echo ""
-            echo "- **Stage:** ${STAGE}"
+            echo "- **Stage/account:** ${STAGE}"
             echo "- **Region:** ${AWS_REGION}"
             echo "- **Stacks:** ${stacks[*]}"
             if [[ "${DEPLOY_GPU}" == "true" ]]; then
@@ -143,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          context_args="--context stage=${STAGE}"
+          context_args=""
           if [[ -n "${DOMAIN_NAME}" || -n "${CERTIFICATE_ARN}" ]]; then
             if [[ -z "${DOMAIN_NAME}" || -z "${CERTIFICATE_ARN}" ]]; then
               echo "Both domain_name and certificate_arn are required when enabling HTTPS." >&2
@@ -157,7 +157,7 @@ jobs:
               echo "certificate_arn must be in the same region as the deploy (${AWS_REGION})." >&2
               exit 1
             fi
-            context_args="${context_args} --context domainName=${DOMAIN_NAME} --context certificateArn=${CERTIFICATE_ARN}"
+            context_args="--context domainName=${DOMAIN_NAME} --context certificateArn=${CERTIFICATE_ARN}"
             echo "Custom domain: enabled" >> "$GITHUB_STEP_SUMMARY"
             echo "- **Domain:** ${DOMAIN_NAME}" >> "$GITHUB_STEP_SUMMARY"
           else
@@ -173,6 +173,83 @@ jobs:
       - name: CDK deploy
         working-directory: infrastructure
         run: npx cdk deploy $CDK_CONTEXT_ARGS $CDK_STACKS --require-approval never
+
+      - name: Diagnostics (ECS service events + stopped tasks)
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ECS_CLUSTER=""
+          for candidate in "bp" "bp-${STAGE}"; do
+            if aws ecs describe-clusters --clusters "${candidate}" --query 'clusters[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+              ECS_CLUSTER="${candidate}"
+              break
+            fi
+          done
+          if [[ -z "${ECS_CLUSTER}" ]]; then
+            ECS_CLUSTER="bp"
+          fi
+
+          ECS_BACKEND_SERVICE="bp-backend"
+          ECS_FRONTEND_SERVICE="bp-frontend"
+          if ! aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_BACKEND_SERVICE}" --query 'services[0].serviceName' --output text >/dev/null 2>&1; then
+            ECS_BACKEND_SERVICE="bp-${STAGE}-backend"
+          fi
+          if ! aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${ECS_FRONTEND_SERVICE}" --query 'services[0].serviceName' --output text >/dev/null 2>&1; then
+            ECS_FRONTEND_SERVICE="bp-${STAGE}-frontend"
+          fi
+
+          echo "=== CloudFormation (compute stack) recent events ==="
+          STACK_NAME=""
+          for candidate in "bp-compute" "bp-${STAGE}-compute"; do
+            if aws cloudformation describe-stacks --stack-name "${candidate}" >/dev/null 2>&1; then
+              STACK_NAME="${candidate}"
+              break
+            fi
+          done
+          if [[ -n "${STACK_NAME}" ]]; then
+            aws cloudformation describe-stack-events \
+              --stack-name "${STACK_NAME}" \
+              --max-items 25 \
+              --query 'StackEvents[].{Time:Timestamp,Status:ResourceStatus,Type:ResourceType,LogicalId:LogicalResourceId,Reason:ResourceStatusReason}' \
+              --output table || true
+          else
+            echo "Could not find compute stack (tried bp-compute and bp-${STAGE}-compute)."
+          fi
+
+          echo "=== ECS backend service events ==="
+          aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_BACKEND_SERVICE}" \
+            --query 'services[0].events[0:20].[createdAt,message]' \
+            --output table || true
+
+          echo "=== ECS backend stopped tasks (most recent) ==="
+          TASK_ARNS=$(aws ecs list-tasks \
+            --cluster "${ECS_CLUSTER}" \
+            --service-name "${ECS_BACKEND_SERVICE}" \
+            --desired-status STOPPED \
+            --max-results 5 \
+            --query 'taskArns[]' \
+            --output text || true)
+
+          if [[ -n "${TASK_ARNS:-}" ]]; then
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${TASK_ARNS} \
+              --query 'tasks[].{taskArn:taskArn,stoppedReason:stoppedReason,stopCode:stopCode,containers:containers[].{name:name,exitCode:exitCode,reason:reason,lastStatus:lastStatus}}' \
+              --output json || true
+          else
+            echo "No stopped tasks found for ${ECS_BACKEND_SERVICE}."
+          fi
+
+          echo "=== ECS frontend service events ==="
+          aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_FRONTEND_SERVICE}" \
+            --query 'services[0].events[0:20].[createdAt,message]' \
+            --output table || true
 
   deploy-infra-production:
     name: Deploy Infrastructure (production)
@@ -209,7 +286,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          prefix="bp-${STAGE}"
+          prefix="bp"
           stacks=()
 
           [[ "${DEPLOY_NETWORK}" == "true" ]] && stacks+=("${prefix}-network")
@@ -246,7 +323,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          context_args="--context stage=${STAGE}"
+          context_args=""
           if [[ -n "${DOMAIN_NAME}" || -n "${CERTIFICATE_ARN}" ]]; then
             if [[ -z "${DOMAIN_NAME}" || -z "${CERTIFICATE_ARN}" ]]; then
               echo "Both domain_name and certificate_arn are required when enabling HTTPS." >&2

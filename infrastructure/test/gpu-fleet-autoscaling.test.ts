@@ -10,7 +10,6 @@ import { GpuFleetStack } from '../lib/stacks/gpu-fleet-stack';
 
 const testConfig: BpEnvironmentConfig = {
   env: { account: '111111111111', region: 'us-east-1' },
-  stage: 'staging',
   centralDbName: 'bp',
   tenantPoolDbNames: ['tenant_pool_1', 'tenant_pool_2'],
   rdsInstanceClass: 't4g.small',
@@ -47,7 +46,7 @@ test('FleetAsg uses new CloudWatch autoscaling contract', () => {
     securityGroup,
     fleet: testFleet,
     apiBaseUrl: 'https://example.com',
-    stage: testConfig.stage,
+    fleetStage: 'staging',
     modelsBucket,
     scaleToZeroTopicArn: scaleToZeroTopic.topicArn,
   });
@@ -99,10 +98,10 @@ test('GpuFleetStack no longer includes capacity controller lambda', () => {
 
   const fleetStack = new GpuFleetStack(app, 'gpu-fleet-stack-test', {
     env: testConfig.env,
-    config: testConfig,
     vpc,
     sgGpuWorkers: securityGroup,
     fleet: testFleet,
+    fleetStage: 'staging',
     apiBaseUrl: 'https://example.com',
     modelsBucket,
     scaleToZeroTopicArn: scaleToZeroTopic.topicArn,

@@ -142,7 +142,7 @@ class AdminComfyUiFleetsTest extends TestCase
         $this->assertSame('gpu-default', $this->fakeSsm->desiredCalls[0]['fleetSlug']);
     }
 
-    public function test_fleets_store_rejects_duplicate_slug_across_stages(): void
+    public function test_fleets_store_allows_same_slug_across_stages(): void
     {
         ComfyUiGpuFleet::query()->create([
             'stage' => 'staging',
@@ -161,8 +161,9 @@ class AdminComfyUiFleetsTest extends TestCase
             'instance_type' => 'g4dn.xlarge',
         ]);
 
-        $response->assertStatus(409)
-            ->assertJsonPath('data.slug.0', 'A fleet with this slug already exists in another stage (staging).');
+        $response->assertStatus(201)
+            ->assertJsonPath('success', true);
+        $this->assertSame(2, ComfyUiGpuFleet::query()->count());
     }
 
     public function test_fleets_store_rejects_invalid_instance_type(): void

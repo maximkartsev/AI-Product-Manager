@@ -4,9 +4,6 @@ export interface BpEnvironmentConfig {
   /** AWS environment (account + region) */
   readonly env: Environment;
 
-  /** e.g. 'staging', 'production' */
-  readonly stage: string;
-
   /** Primary domain name (e.g. app.example.com). Leave empty to skip HTTPS/cert setup. */
   readonly domainName?: string;
 
@@ -50,38 +47,18 @@ export interface BpEnvironmentConfig {
   readonly frontendMemory?: number;
 }
 
-export const STAGING_CONFIG: BpEnvironmentConfig = {
+export const SYSTEM_CONFIG: BpEnvironmentConfig = {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',
   },
-  stage: 'staging',
-  alertEmail: process.env.ALERT_EMAIL,
-  centralDbName: 'bp',
-  tenantPoolDbNames: ['tenant_pool_1', 'tenant_pool_2'],
-  rdsInstanceClass: 't4g.small',
-  rdsMultiAz: false,
-  redisNodeType: 'cache.t4g.micro',
-  natGateways: 1,
-  backendCpu: 512,
-  backendMemory: 1024,
-  frontendCpu: 256,
-  frontendMemory: 512,
-};
-
-export const PRODUCTION_CONFIG: BpEnvironmentConfig = {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION ?? 'us-east-1',
-  },
-  stage: 'production',
   alertEmail: process.env.ALERT_EMAIL,
   centralDbName: 'bp',
   tenantPoolDbNames: ['tenant_pool_1', 'tenant_pool_2'],
   rdsInstanceClass: 't4g.medium',
   rdsMultiAz: true,
   redisNodeType: 'cache.t4g.small',
-  natGateways: 2,
+  natGateways: 1,
   backendCpu: 1024,
   backendMemory: 2048,
   frontendCpu: 512,

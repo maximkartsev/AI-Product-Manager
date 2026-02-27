@@ -39,9 +39,7 @@ class FleetRegistrationTest extends TestCase
 
         config(['services.comfyui.fleet_secret_staging' => 'test-fleet-secret']);
         config(['services.comfyui.fleet_secret_production' => 'prod-secret']);
-        config(['services.comfyui.registration_stage' => 'staging']);
         config(['services.comfyui.max_fleet_workers' => 5]);
-        config(['app.env' => 'staging']);
 
         $this->resetState();
     }
@@ -223,7 +221,6 @@ class FleetRegistrationTest extends TestCase
         config([
             'services.comfyui.fleet_secret_staging' => 'staging-secret',
             'services.comfyui.fleet_secret_production' => 'production-secret',
-            'services.comfyui.registration_stage' => 'production',
         ]);
 
         $workflow = Workflow::query()->create(['name' => 'Prod Test', 'slug' => 'prod-test', 'is_active' => true]);
@@ -248,27 +245,35 @@ class FleetRegistrationTest extends TestCase
         $good->assertStatus(200);
     }
 
-    public function test_fleet_register_rejects_stage_mismatch_with_backend_registration_stage(): void
+    public function test_fleet_register_accepts_both_fleet_stages_on_single_backend(): void
     {
         config([
             'services.comfyui.fleet_secret_staging' => 'staging-secret',
             'services.comfyui.fleet_secret_production' => 'production-secret',
-            'services.comfyui.registration_stage' => 'production',
         ]);
 
-        $workflow = Workflow::query()->create(['name' => 'Mismatch Test', 'slug' => 'mismatch-test', 'is_active' => true]);
-        $this->createFleetWithWorkflows('staging', 'staging-fleet', [$workflow]);
+        $stagingWorkflow = Workflow::query()->create(['name' => 'Staging Test', 'slug' => 'staging-test', 'is_active' => true]);
+        $productionWorkflow = Workflow::query()->create(['name' => 'Production Test', 'slug' => 'production-test', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'staging-fleet', [$stagingWorkflow]);
+        $this->createFleetWithWorkflows('production', 'production-fleet', [$productionWorkflow]);
 
-        $response = $this->postJson('/api/worker/register', [
-            'worker_id' => 'i-stage-mismatch',
+        $stagingResponse = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-stage-worker',
             'fleet_slug' => 'staging-fleet',
             'stage' => 'staging',
         ], [
             'X-Fleet-Secret' => 'staging-secret',
         ]);
+        $stagingResponse->assertStatus(200);
 
-        $response->assertStatus(422)
-            ->assertJsonPath('message', 'Stage mismatch. This backend accepts only production workers.');
+        $productionResponse = $this->postJson('/api/worker/register', [
+            'worker_id' => 'i-production-worker',
+            'fleet_slug' => 'production-fleet',
+            'stage' => 'production',
+        ], [
+            'X-Fleet-Secret' => 'production-secret',
+        ]);
+        $productionResponse->assertStatus(200);
     }
 
     public function test_fleet_register_rejects_duplicate_worker_id(): void

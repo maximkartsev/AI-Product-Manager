@@ -27,14 +27,13 @@ export class MonitoringStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, ecsCluster, albFullName, albTargetGroupBackend, backendServiceName, frontendServiceName, dbInstanceId, natGatewayIds } = props;
-    const stage = config.stage;
 
     // ========================================
     // SNS Alert Topic
     // ========================================
 
     const alertTopic = new sns.Topic(this, 'AlertTopic', {
-      topicName: `bp-${stage}-ops-alerts`,
+      topicName: 'bp-ops-alerts',
     });
 
     this.alertTopicArn = alertTopic.topicArn;
@@ -62,7 +61,7 @@ export class MonitoringStack extends cdk.Stack {
     });
 
     const p1Alb5xx = new cloudwatch.Alarm(this, 'P1-Alb5xxHigh', {
-      alarmName: `${stage}-p1-alb-5xx-critical`,
+      alarmName: 'p1-alb-5xx-critical',
       metric: alb5xxMetric,
       threshold: 50,
       evaluationPeriods: 1,
@@ -78,7 +77,7 @@ export class MonitoringStack extends cdk.Stack {
       period: cdk.Duration.minutes(1),
     });
     const p1BackendUnhealthy = new cloudwatch.Alarm(this, 'P1-BackendUnhealthyHosts', {
-      alarmName: `${stage}-p1-backend-unhealthy-hosts`,
+      alarmName: 'p1-backend-unhealthy-hosts',
       metric: backendUnhealthyHosts,
       threshold: 1,
       evaluationPeriods: 1,
@@ -87,7 +86,7 @@ export class MonitoringStack extends cdk.Stack {
     p1BackendUnhealthy.addAlarmAction(alarmAction);
 
     const p1RdsCpu = new cloudwatch.Alarm(this, 'P1-RdsCpuCritical', {
-      alarmName: `${stage}-p1-rds-cpu-critical`,
+      alarmName: 'p1-rds-cpu-critical',
       metric: new cloudwatch.Metric({
         namespace: 'AWS/RDS',
         metricName: 'CPUUtilization',
@@ -101,7 +100,7 @@ export class MonitoringStack extends cdk.Stack {
     p1RdsCpu.addAlarmAction(alarmAction);
 
     const p1RdsStorage = new cloudwatch.Alarm(this, 'P1-RdsStorageLow', {
-      alarmName: `${stage}-p1-rds-storage-low`,
+      alarmName: 'p1-rds-storage-low',
       metric: new cloudwatch.Metric({
         namespace: 'AWS/RDS',
         metricName: 'FreeStorageSpace',
@@ -118,7 +117,7 @@ export class MonitoringStack extends cdk.Stack {
     // --- P2: Warning ---
 
     const p2Alb5xx = new cloudwatch.Alarm(this, 'P2-Alb5xxWarning', {
-      alarmName: `${stage}-p2-alb-5xx-warning`,
+      alarmName: 'p2-alb-5xx-warning',
       metric: alb5xxMetric,
       threshold: 10,
       evaluationPeriods: 1,
@@ -127,7 +126,7 @@ export class MonitoringStack extends cdk.Stack {
     p2Alb5xx.addAlarmAction(alarmAction);
 
     const p2RdsCpu = new cloudwatch.Alarm(this, 'P2-RdsCpuWarning', {
-      alarmName: `${stage}-p2-rds-cpu-warning`,
+      alarmName: 'p2-rds-cpu-warning',
       metric: new cloudwatch.Metric({
         namespace: 'AWS/RDS',
         metricName: 'CPUUtilization',
@@ -145,7 +144,7 @@ export class MonitoringStack extends cdk.Stack {
     // ========================================
 
     const dashboard = new cloudwatch.Dashboard(this, 'Dashboard', {
-      dashboardName: `bp-${stage}`,
+      dashboardName: 'bp',
     });
 
     // Row 1: App Health
@@ -328,7 +327,7 @@ export class MonitoringStack extends cdk.Stack {
     if (config.budgetMonthlyUsd && config.alertEmail) {
       new budgets.CfnBudget(this, 'MonthlyBudget', {
         budget: {
-          budgetName: `bp-${stage}-monthly`,
+          budgetName: 'bp-monthly',
           budgetType: 'COST',
           timeUnit: 'MONTHLY',
           budgetLimit: {

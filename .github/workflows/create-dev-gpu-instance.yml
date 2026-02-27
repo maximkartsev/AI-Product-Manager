@@ -7,6 +7,14 @@ on:
         description: 'Fleet slug (e.g. gpu-default)'
         required: true
         type: string
+      fleet_stage:
+        description: 'Fleet stage'
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
       aws_region:
         description: 'AWS region'
         required: false
@@ -31,67 +39,16 @@ env:
 
 jobs:
   resolve-stage:
-    name: Resolve Stage
+    name: Resolve Fleet Stage
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: ${{ inputs.aws_region }}
     outputs:
       stage: ${{ steps.set-stage.outputs.stage }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials (staging)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_STAGING }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Check staging desired_config
-        id: check-staging
-        shell: bash
-        run: |
-          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage staging --region "${{ env.AWS_REGION }}"; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Configure AWS credentials (production)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_PRODUCTION }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Check production desired_config
-        id: check-production
-        shell: bash
-        run: |
-          if bash .github/scripts/resolve-stage.sh --fleet-slug "${{ inputs.fleet_slug }}" --stage production --region "${{ env.AWS_REGION }}"; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Resolve stage
+      - name: Set stage from input
         id: set-stage
         shell: bash
         run: |
-          STAGING_FOUND="${{ steps.check-staging.outputs.found }}"
-          PRODUCTION_FOUND="${{ steps.check-production.outputs.found }}"
-          if [[ "$STAGING_FOUND" == "true" && "$PRODUCTION_FOUND" == "true" ]]; then
-            echo "Fleet slug exists in both staging and production. Slugs must be globally unique." >&2
-            exit 1
-          fi
-          if [[ "$STAGING_FOUND" == "true" ]]; then
-            echo "stage=staging" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ "$PRODUCTION_FOUND" == "true" ]]; then
-            echo "stage=production" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "No desired_config found for fleet_slug '${{ inputs.fleet_slug }}' in staging or production." >&2
-          exit 1
+          echo "stage=${{ inputs.fleet_stage }}" >> "$GITHUB_OUTPUT"
 
   launch-dev:
     name: Launch Dev GPU - ${{ inputs.fleet_slug }}
@@ -119,12 +76,12 @@ jobs:
           set -euo pipefail
 
           DESIRED_JSON=$(aws ssm get-parameter \
-            --name "/bp/${STAGE}/fleets/${FLEET_SLUG}/desired_config" \
+            --name "/bp/fleets/${STAGE}/${FLEET_SLUG}/desired_config" \
             --query "Parameter.Value" \
             --output text 2>/dev/null || true)
 
           if [ -z "${DESIRED_JSON:-}" ] || [ "$DESIRED_JSON" = "None" ]; then
-            echo "No desired_config found at /bp/${STAGE}/fleets/${FLEET_SLUG}/desired_config." >&2
+            echo "No desired_config found at /bp/fleets/${STAGE}/${FLEET_SLUG}/desired_config." >&2
             exit 1
           fi
 
@@ -164,11 +121,11 @@ jobs:
         run: |
           set -euo pipefail
           PROFILE_NAME=$(aws ssm get-parameter \
-            --name "/bp/${STAGE}/packer/instance_profile" \
+            --name "/bp/packer/instance_profile" \
             --query "Parameter.Value" \
             --output text 2>/dev/null || true)
           if [ -z "${PROFILE_NAME:-}" ] || [ "$PROFILE_NAME" = "None" ]; then
-            echo "No instance profile found at /bp/${STAGE}/packer/instance_profile." >&2
+            echo "No instance profile found at /bp/packer/instance_profile." >&2
             exit 1
           fi
           echo "INSTANCE_PROFILE=${PROFILE_NAME}" >> "$GITHUB_ENV"

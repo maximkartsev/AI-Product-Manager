@@ -1,10 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import { Construct } from 'constructs';
-import type { BpEnvironmentConfig } from '../config/environment';
 
 export interface CiCdStackProps extends cdk.StackProps {
-  readonly config: BpEnvironmentConfig;
 }
 
 export class CiCdStack extends cdk.Stack {
@@ -14,14 +12,12 @@ export class CiCdStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: CiCdStackProps) {
     super(scope, id, props);
 
-    const stage = props.config.stage;
-
     // ========================================
     // ECR Repositories
     // ========================================
 
     this.backendRepo = new ecr.Repository(this, 'BackendRepo', {
-      repositoryName: `bp-backend-${stage}`,
+      repositoryName: 'bp-backend',
       lifecycleRules: [
         {
           description: 'Keep last 10 images',
@@ -34,7 +30,7 @@ export class CiCdStack extends cdk.Stack {
     });
 
     this.frontendRepo = new ecr.Repository(this, 'FrontendRepo', {
-      repositoryName: `bp-frontend-${stage}`,
+      repositoryName: 'bp-frontend',
       lifecycleRules: [
         {
           description: 'Keep last 10 images',

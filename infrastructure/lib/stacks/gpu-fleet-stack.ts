@@ -6,12 +6,11 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
-import type { BpEnvironmentConfig } from '../config/environment';
 import type { FleetConfig } from '../config/fleets';
 import { FleetAsg } from '../constructs/fleet-asg';
 
 export interface GpuFleetStackProps extends cdk.StackProps {
-  readonly config: BpEnvironmentConfig;
+  readonly fleetStage: 'staging' | 'production';
   readonly vpc: ec2.IVpc;
   readonly sgGpuWorkers: ec2.ISecurityGroup;
   readonly fleet: FleetConfig;
@@ -28,22 +27,21 @@ export class GpuFleetStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: GpuFleetStackProps) {
     super(scope, id, props);
 
-    const { config, vpc, sgGpuWorkers, fleet, apiBaseUrl, modelsBucket, scaleToZeroTopicArn, opsAlertTopicArn } = props;
-    const stage = config.stage;
+    const { fleetStage, vpc, sgGpuWorkers, fleet, apiBaseUrl, modelsBucket, scaleToZeroTopicArn, opsAlertTopicArn } = props;
 
     const fleetAsg = new FleetAsg(this, `Fleet-${fleet.slug}`, {
       vpc,
       securityGroup: sgGpuWorkers,
       fleet,
       apiBaseUrl,
-      stage,
+      fleetStage,
       modelsBucket,
       scaleToZeroTopicArn,
     });
 
     this.asgName = fleetAsg.asg.autoScalingGroupName;
 
-    const logRetention = stage === 'production'
+    const logRetention = fleetStage === 'production'
       ? logs.RetentionDays.ONE_MONTH
       : logs.RetentionDays.ONE_WEEK;
 
@@ -56,10 +54,10 @@ export class GpuFleetStack extends cdk.Stack {
       const opsTopic = sns.Topic.fromTopicArn(this, 'OpsAlertsTopic', opsAlertTopicArn);
       const alarmAction = new cw_actions.SnsAction(opsTopic);
 
-      const dimensions = { FleetSlug: fleet.slug, Stage: stage };
+      const dimensions = { FleetSlug: fleet.slug, Stage: fleetStage };
 
       new cloudwatch.Alarm(this, 'QueueDeepAlarm', {
-        alarmName: `${stage}-p3-${fleet.slug}-queue-deep`,
+        alarmName: `${fleetStage}-p3-${fleet.slug}-queue-deep`,
         metric: new cloudwatch.Metric({
           namespace: 'ComfyUI/Workers',
           metricName: 'QueueDepth',
@@ -73,7 +71,7 @@ export class GpuFleetStack extends cdk.Stack {
       }).addAlarmAction(alarmAction);
 
       new cloudwatch.Alarm(this, 'ErrorRateAlarm', {
-        alarmName: `${stage}-p2-${fleet.slug}-error-rate`,
+        alarmName: `${fleetStage}-p2-${fleet.slug}-error-rate`,
         metric: new cloudwatch.Metric({
           namespace: 'ComfyUI/Workers',
           metricName: 'ErrorRate',

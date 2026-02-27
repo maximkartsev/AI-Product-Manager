@@ -266,9 +266,8 @@ Expected:
 ##### 3) Check CloudWatch logs for crashes
 
 ```bash
-STAGE=staging
-aws logs tail "/ecs/bp-backend-${STAGE}" --follow
-aws logs tail "/ecs/bp-frontend-${STAGE}" --follow
+aws logs tail "/ecs/bp-backend" --follow
+aws logs tail "/ecs/bp-frontend" --follow
 ```
 
 Common fatal misconfigurations you’ll see here:
@@ -280,9 +279,12 @@ Common fatal misconfigurations you’ll see here:
 
 Even if stacks deploy, the app may not function until these are set:
 
-- **Laravel `APP_KEY`** (Secrets Manager): `/bp/<stage>/laravel/app-key`
+- **Laravel `APP_KEY`** (Secrets Manager): `/bp/laravel/app-key`
   - Must be a Laravel key string like `base64:...`
-- **Fleet secret** (SSM): `/bp/<stage>/fleet-secret`
+- **OAuth secrets** (Secrets Manager): `/bp/oauth/secrets`
+- **Fleet secret** (SSM):
+  - Staging: `/bp/fleets/staging/fleet-secret`
+  - Production: `/bp/fleets/production/fleet-secret`
   - Must not be `CHANGE_ME_AFTER_DEPLOY`
 
 ##### 5) Database migrations (required)

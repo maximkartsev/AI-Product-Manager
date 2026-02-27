@@ -204,7 +204,7 @@ resolve_models_bucket() {
 
   aws ssm get-parameter \
     --region "$AWS_REGION" \
-    --name "/bp/${STAGE}/models/bucket" \
+    --name "/bp/models/bucket" \
     --query 'Parameter.Value' \
     --output text 2>/dev/null || true
 }
@@ -273,7 +273,7 @@ EOF
       --policy-name "$inline_policy_name" \
       --policy-document "$policy_doc" >/dev/null || echo "WARNING: Failed to attach S3 read policy to ${role_name}."
   else
-    echo "WARNING: Could not resolve /bp/${STAGE}/models/bucket and MODELS_BUCKET is empty."
+    echo "WARNING: Could not resolve /bp/models/bucket and MODELS_BUCKET is empty."
     echo "         Bundle apply may fail unless your instance role can read s3://<models-bucket>/assets/* and /bundles/*."
   fi
 

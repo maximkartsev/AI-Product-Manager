@@ -3,16 +3,10 @@ param(
   [string] $Region,
 
   [Parameter(Mandatory = $true)]
-  [string] $StagingEnvPath,
+  [string] $EnvPath,
 
   [Parameter(Mandatory = $true)]
-  [string] $ProductionEnvPath,
-
-  [Parameter(Mandatory = $true)]
-  [string] $AppleP8PathStaging,
-
-  [Parameter(Mandatory = $true)]
-  [string] $AppleP8PathProduction,
+  [string] $AppleP8Path,
 
   [string] $Profile = ""
 )
@@ -23,9 +17,7 @@ $env:AWS_PAGER = ""
 
 function Get-AwsCliArgs {
   $args = @("--region", $Region)
-  # Avoid AWS CLI pager hangs in non-interactive runs
   $args += @("--no-cli-pager")
-  # Avoid indefinite hangs on network/endpoint issues
   $args += @("--cli-connect-timeout", "10", "--cli-read-timeout", "60")
   if (-not [string]::IsNullOrWhiteSpace($Profile)) {
     $args += @("--profile", $Profile)
@@ -39,11 +31,25 @@ function Invoke-AwsText {
     [string[]] $Arguments
   )
 
-  # Do not capture output: capturing can hang depending on host/encoding/pager settings.
-  # AWS CLI responses here are metadata only (no secret values), so streaming is safe.
+  function Redact-AwsArgs([string[]] $ArgsIn) {
+    $out = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $ArgsIn.Count; $i++) {
+      $tok = $ArgsIn[$i]
+      $out.Add($tok) | Out-Null
+      if ($tok -in @('--secret-string','--value')) {
+        if ($i + 1 -lt $ArgsIn.Count) {
+          $i++
+          $out.Add('<REDACTED>') | Out-Null
+        }
+      }
+    }
+    return $out.ToArray()
+  }
+
   & aws @Arguments
   if ($LASTEXITCODE -ne 0) {
-    throw "AWS CLI failed: aws $($Arguments -join ' ')"
+    $safe = (Redact-AwsArgs $Arguments) -join ' '
+    throw "AWS CLI failed: aws $safe"
   }
 
   return ""
@@ -96,18 +102,16 @@ function Get-RequiredEnvValue {
     [Parameter(Mandatory = $true)]
     [hashtable] $EnvMap,
     [Parameter(Mandatory = $true)]
-    [string] $Key,
-    [Parameter(Mandatory = $true)]
-    [string] $Stage
+    [string] $Key
   )
 
   if (-not $EnvMap.ContainsKey($Key)) {
-    throw "[$Stage] Missing required key in env file: $Key"
+    throw "Missing required key in env file: $Key"
   }
 
   $value = [string]$EnvMap[$Key]
   if ([string]::IsNullOrWhiteSpace($value)) {
-    throw "[$Stage] Required key is empty in env file: $Key"
+    throw "Required key is empty in env file: $Key"
   }
 
   return $value
@@ -171,13 +175,8 @@ function Put-SecretsManagerValue {
 }
 
 function Force-BackendRedeploy {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string] $Stage
-  )
-
-  $cluster = "bp-$Stage"
-  $service = "bp-$Stage-backend"
+  $cluster = "bp"
+  $service = "bp-backend"
 
   Invoke-AwsText (@(
       "ecs", "update-service",
@@ -187,81 +186,74 @@ function Force-BackendRedeploy {
     ) + (Get-AwsCliArgs)) | Out-Null
 }
 
-function Sync-StageFromEnv {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string] $Stage,
-    [Parameter(Mandatory = $true)]
-    [hashtable] $EnvMap,
-    [Parameter(Mandatory = $true)]
-    [string] $AppleP8Path
-  )
-
-  if (-not (Test-Path -Path $AppleP8Path -PathType Leaf)) {
-    throw "[$Stage] Apple private key file does not exist: $AppleP8Path"
-  }
-
-  $fleetEnvKey = if ($Stage -eq "production") { "COMFYUI_FLEET_SECRET_PRODUCTION" } else { "COMFYUI_FLEET_SECRET_STAGING" }
-  $fleetSecret = Get-OptionalEnvValue -EnvMap $EnvMap -Key $fleetEnvKey
-  $generatedFleetSecret = $false
-  if ([string]::IsNullOrWhiteSpace($fleetSecret)) {
-    $fleetSecret = New-RandomHexSecret -Bytes 48
-    $generatedFleetSecret = $true
-  }
-
-  $appKey = Get-RequiredEnvValue -EnvMap $EnvMap -Key "APP_KEY" -Stage $Stage
-  $googleClientId = Get-RequiredEnvValue -EnvMap $EnvMap -Key "GOOGLE_CLIENT_ID" -Stage $Stage
-  $googleClientSecret = Get-RequiredEnvValue -EnvMap $EnvMap -Key "GOOGLE_CLIENT_SECRET" -Stage $Stage
-  $tiktokClientId = Get-RequiredEnvValue -EnvMap $EnvMap -Key "TIKTOK_CLIENT_ID" -Stage $Stage
-  $tiktokClientSecret = Get-RequiredEnvValue -EnvMap $EnvMap -Key "TIKTOK_CLIENT_SECRET" -Stage $Stage
-  $appleClientId = Get-RequiredEnvValue -EnvMap $EnvMap -Key "APPLE_CLIENT_ID" -Stage $Stage
-  $appleKeyId = Get-RequiredEnvValue -EnvMap $EnvMap -Key "APPLE_KEY_ID" -Stage $Stage
-  $appleTeamId = Get-RequiredEnvValue -EnvMap $EnvMap -Key "APPLE_TEAM_ID" -Stage $Stage
-  $appleClientSecret = Get-OptionalEnvValue -EnvMap $EnvMap -Key "APPLE_CLIENT_SECRET"
-  $applePrivateKeyP8B64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($AppleP8Path))
-
-  $fleetSecretParamName = "/bp/$Stage/fleet-secret"
-  $appKeySecretId = "/bp/$Stage/laravel/app-key"
-  $oauthSecretId = "/bp/$Stage/oauth/secrets"
-
-  Write-Host "[$Stage] Writing SSM parameter $fleetSecretParamName"
-  Put-SsmStringParameter -Name $fleetSecretParamName -Value $fleetSecret
-
-  Write-Host "[$Stage] Writing Secrets Manager value $appKeySecretId"
-  Put-SecretsManagerValue -SecretId $appKeySecretId -SecretString $appKey
-
-  $oauthPayload = [ordered]@{
-    google_client_id = $googleClientId
-    google_client_secret = $googleClientSecret
-    tiktok_client_id = $tiktokClientId
-    tiktok_client_secret = $tiktokClientSecret
-    apple_client_id = $appleClientId
-    apple_client_secret = $appleClientSecret
-    apple_key_id = $appleKeyId
-    apple_team_id = $appleTeamId
-    apple_private_key_p8_b64 = $applePrivateKeyP8B64
-  }
-
-  $oauthPayloadJson = $oauthPayload | ConvertTo-Json -Depth 10 -Compress
-  Write-Host "[$Stage] Writing Secrets Manager value $oauthSecretId"
-  Put-SecretsManagerValue -SecretId $oauthSecretId -SecretString $oauthPayloadJson
-
-  Write-Host "[$Stage] Forcing ECS backend redeploy"
-  Force-BackendRedeploy -Stage $Stage
-
-  if ($generatedFleetSecret) {
-    Write-Warning "[$Stage] $fleetEnvKey was missing in env file and a new value was generated."
-    Write-Warning "[$Stage] A new value was generated and stored in SSM: /bp/$Stage/fleet-secret"
-    Write-Warning "[$Stage] Persist this value in your stage env source for repeatable deployments."
-  }
-
-  Write-Host "[$Stage] Done."
+if (-not (Test-Path -Path $AppleP8Path -PathType Leaf)) {
+  throw "Apple private key file does not exist: $AppleP8Path"
 }
 
-$stagingEnv = Parse-DotEnv -Path $StagingEnvPath
-$productionEnv = Parse-DotEnv -Path $ProductionEnvPath
+$envMap = Parse-DotEnv -Path $EnvPath
 
-Sync-StageFromEnv -Stage "staging" -EnvMap $stagingEnv -AppleP8Path $AppleP8PathStaging
-Sync-StageFromEnv -Stage "production" -EnvMap $productionEnv -AppleP8Path $AppleP8PathProduction
+$appKey = Get-RequiredEnvValue -EnvMap $envMap -Key "APP_KEY"
+$googleClientId = Get-RequiredEnvValue -EnvMap $envMap -Key "GOOGLE_CLIENT_ID"
+$googleClientSecret = Get-RequiredEnvValue -EnvMap $envMap -Key "GOOGLE_CLIENT_SECRET"
+$tiktokClientId = Get-RequiredEnvValue -EnvMap $envMap -Key "TIKTOK_CLIENT_ID"
+$tiktokClientSecret = Get-RequiredEnvValue -EnvMap $envMap -Key "TIKTOK_CLIENT_SECRET"
+$appleClientId = Get-RequiredEnvValue -EnvMap $envMap -Key "APPLE_CLIENT_ID"
+$appleKeyId = Get-RequiredEnvValue -EnvMap $envMap -Key "APPLE_KEY_ID"
+$appleTeamId = Get-RequiredEnvValue -EnvMap $envMap -Key "APPLE_TEAM_ID"
+$appleClientSecret = Get-OptionalEnvValue -EnvMap $envMap -Key "APPLE_CLIENT_SECRET"
+$applePrivateKeyP8B64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($AppleP8Path))
 
-Write-Host "All stages synced successfully."
+$fleetSecretStaging = Get-OptionalEnvValue -EnvMap $envMap -Key "COMFYUI_FLEET_SECRET_STAGING"
+$fleetSecretProduction = Get-OptionalEnvValue -EnvMap $envMap -Key "COMFYUI_FLEET_SECRET_PRODUCTION"
+$generatedStaging = $false
+$generatedProduction = $false
+if ([string]::IsNullOrWhiteSpace($fleetSecretStaging)) {
+  $fleetSecretStaging = New-RandomHexSecret -Bytes 48
+  $generatedStaging = $true
+}
+if ([string]::IsNullOrWhiteSpace($fleetSecretProduction)) {
+  $fleetSecretProduction = New-RandomHexSecret -Bytes 48
+  $generatedProduction = $true
+}
+
+$oauthPayload = [ordered]@{
+  google_client_id = $googleClientId
+  google_client_secret = $googleClientSecret
+  tiktok_client_id = $tiktokClientId
+  tiktok_client_secret = $tiktokClientSecret
+  apple_client_id = $appleClientId
+  apple_client_secret = $appleClientSecret
+  apple_key_id = $appleKeyId
+  apple_team_id = $appleTeamId
+  apple_private_key_p8_b64 = $applePrivateKeyP8B64
+}
+$oauthPayloadJson = $oauthPayload | ConvertTo-Json -Depth 10 -Compress
+
+Write-Host "[system] Writing SSM parameter /bp/fleets/staging/fleet-secret"
+Put-SsmStringParameter -Name "/bp/fleets/staging/fleet-secret" -Value $fleetSecretStaging
+
+Write-Host "[system] Writing SSM parameter /bp/fleets/production/fleet-secret"
+Put-SsmStringParameter -Name "/bp/fleets/production/fleet-secret" -Value $fleetSecretProduction
+
+Write-Host "[system] Writing Secrets Manager value /bp/laravel/app-key"
+Put-SecretsManagerValue -SecretId "/bp/laravel/app-key" -SecretString $appKey
+
+Write-Host "[system] Writing Secrets Manager value /bp/oauth/secrets"
+Put-SecretsManagerValue -SecretId "/bp/oauth/secrets" -SecretString $oauthPayloadJson
+
+Write-Host "[system] Forcing ECS backend redeploy"
+Force-BackendRedeploy
+
+if ($generatedStaging) {
+  Write-Warning "[system] COMFYUI_FLEET_SECRET_STAGING was missing in env file and a new value was generated."
+  Write-Warning "[system] A new value was stored in SSM: /bp/fleets/staging/fleet-secret"
+}
+if ($generatedProduction) {
+  Write-Warning "[system] COMFYUI_FLEET_SECRET_PRODUCTION was missing in env file and a new value was generated."
+  Write-Warning "[system] A new value was stored in SSM: /bp/fleets/production/fleet-secret"
+}
+if ($generatedStaging -or $generatedProduction) {
+  Write-Warning "[system] Persist generated fleet secrets in your env source for repeatable deployments."
+}
+
+Write-Host "Single-system secret sync completed successfully."

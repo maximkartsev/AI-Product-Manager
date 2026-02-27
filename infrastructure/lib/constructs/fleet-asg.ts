@@ -15,7 +15,7 @@ export interface FleetAsgProps {
   readonly securityGroup: ec2.ISecurityGroup;
   readonly fleet: FleetConfig;
   readonly apiBaseUrl: string;
-  readonly stage: string;
+  readonly fleetStage: 'staging' | 'production';
   readonly modelsBucket: s3.IBucket;
   /** SNS topic ARN for scale-to-zero Lambda trigger */
   readonly scaleToZeroTopicArn?: string;
@@ -29,11 +29,11 @@ export class FleetAsg extends Construct {
   constructor(scope: Construct, id: string, props: FleetAsgProps) {
     super(scope, id);
 
-    const { vpc, securityGroup, fleet, apiBaseUrl, stage, modelsBucket } = props;
+    const { vpc, securityGroup, fleet, apiBaseUrl, fleetStage, modelsBucket } = props;
     const fleetSlug = fleet.slug;
 
     // Resolve AMI: prefer an explicit SSM parameter, then an explicit AMI ID, otherwise default to
-    // /bp/ami/fleets/<stage>/<fleetSlug>.
+    // /bp/ami/fleets/<fleet_stage>/<fleetSlug>.
     //
     // NOTE: MachineImage.genericLinux requires a concrete region key (e.g. "us-east-1"), so we
     // must use the stack's resolved region instead of cdk.Aws.REGION (a token).
@@ -48,7 +48,7 @@ export class FleetAsg extends Construct {
       machineImage = ec2.MachineImage.genericLinux({ [region]: fleet.amiId });
     } else {
       machineImage = ec2.MachineImage.genericLinux({
-        [region]: `resolve:ssm:/bp/ami/fleets/${stage}/${fleetSlug}`,
+        [region]: `resolve:ssm:/bp/ami/fleets/${fleetStage}/${fleetSlug}`,
       });
     }
 
@@ -65,8 +65,8 @@ export class FleetAsg extends Construct {
     workerRole.addToPolicy(new iam.PolicyStatement({
       actions: ['ssm:GetParameter'],
       resources: [
-        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleet-secret`,
-        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/${stage}/fleets/${fleetSlug}/active_bundle`,
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/fleets/${fleetStage}/fleet-secret`,
+        `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/fleets/${fleetStage}/${fleetSlug}/active_bundle`,
       ],
     }));
 
@@ -94,7 +94,7 @@ export class FleetAsg extends Construct {
       resources: [`arn:aws:logs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:log-group:/gpu-workers/${fleetSlug}:*`],
     }));
 
-    const spotAsgName = `asg-${stage}-${fleetSlug}`;
+    const spotAsgName = `asg-${fleetStage}-${fleetSlug}`;
 
     const buildUserData = (asgName: string): ec2.UserData => {
       const userData = ec2.UserData.forLinux();
@@ -106,10 +106,10 @@ export class FleetAsg extends Construct {
       'exec > >(tee -a "$ASSET_LOG") 2>&1',
       '',
       '# Fetch fleet secret from SSM',
-      `FLEET_SECRET=$(aws ssm get-parameter --name "/bp/${stage}/fleet-secret" --with-decryption --query "Parameter.Value" --output text --region ${cdk.Aws.REGION})`,
+      `FLEET_SECRET=$(aws ssm get-parameter --name "/bp/fleets/${fleetStage}/fleet-secret" --with-decryption --query "Parameter.Value" --output text --region ${cdk.Aws.REGION})`,
       '',
       '# Resolve active asset bundle prefix for this fleet (optional)',
-      `ACTIVE_PREFIX=$(aws ssm get-parameter --name "/bp/${stage}/fleets/${fleetSlug}/active_bundle" --query "Parameter.Value" --output text --region ${cdk.Aws.REGION} 2>/dev/null || echo "none")`,
+      `ACTIVE_PREFIX=$(aws ssm get-parameter --name "/bp/fleets/${fleetStage}/${fleetSlug}/active_bundle" --query "Parameter.Value" --output text --region ${cdk.Aws.REGION} 2>/dev/null || echo "none")`,
       'ACTIVE_PREFIX=${ACTIVE_PREFIX%/}',
       'BAKED_BUNDLE_ID=""',
       'if [ -f /opt/comfyui/.baked_bundle_id ]; then',
@@ -154,7 +154,7 @@ export class FleetAsg extends Construct {
       'WORKER_ID="$INSTANCE_ID"',
       'FLEET_SECRET="$FLEET_SECRET"',
       `FLEET_SLUG="${fleetSlug}"`,
-      `FLEET_STAGE="${stage}"`,
+      `FLEET_STAGE="${fleetStage}"`,
       `ASG_NAME="${asgName}"`,
       'COMFYUI_BASE_URL="http://127.0.0.1:8188"',
       'POLL_INTERVAL_SECONDS=3',
@@ -172,7 +172,7 @@ export class FleetAsg extends Construct {
 
     // Launch templates
     const spotLaunchTemplate = new ec2.LaunchTemplate(this, 'LtSpot', {
-      launchTemplateName: `lt-${stage}-${fleetSlug}`,
+      launchTemplateName: `lt-${fleetStage}-${fleetSlug}`,
       machineImage,
       role: workerRole,
       userData: buildUserData(spotAsgName),
@@ -222,7 +222,7 @@ export class FleetAsg extends Construct {
     // ========================================
 
     const namespace = 'ComfyUI/Workers';
-    const dimensions = { FleetSlug: fleetSlug, Stage: stage };
+    const dimensions = { FleetSlug: fleetSlug, Stage: fleetStage };
 
     // QueueDepth metric
     const queueDepthMetric = new cloudwatch.Metric({
@@ -235,7 +235,7 @@ export class FleetAsg extends Construct {
 
     // Queue depth alarm retained for visibility
     this.queueDepthAlarm = new cloudwatch.Alarm(this, 'QueueDepthAlarm', {
-      alarmName: `${stage}-${fleetSlug}-queue-has-jobs`,
+      alarmName: `${fleetStage}-${fleetSlug}-queue-has-jobs`,
       metric: queueDepthMetric,
       threshold: 0,
       evaluationPeriods: 1,
@@ -267,7 +267,7 @@ export class FleetAsg extends Construct {
     });
 
     this.queueEmptyAlarm = new cloudwatch.Alarm(this, 'QueueEmptyAlarm', {
-      alarmName: `${stage}-${fleetSlug}-queue-empty`,
+      alarmName: `${fleetStage}-${fleetSlug}-queue-empty`,
       metric: queueDepthMetric,
       threshold: 0,
       evaluationPeriods: fleet.scaleToZeroMinutes ?? 15,

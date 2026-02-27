@@ -35,8 +35,9 @@ permissions:
 env:
   AWS_REGION: ${{ inputs.aws_region }}
   STAGE: ${{ inputs.stage }}
-  ECS_CLUSTER: bp-${{ inputs.stage }}
-  ECS_BACKEND_TASK_DEFINITION: bp-${{ inputs.stage }}-backend
+  # Resource names are constant; "stage" selects the AWS account/role.
+  ECS_CLUSTER: bp
+  ECS_BACKEND_TASK_DEFINITION: bp-backend
 
 jobs:
   db-migrate:
@@ -67,7 +68,7 @@ jobs:
 
           # Network config for awsvpc tasks (required for Fargate run-task).
           # Prefer environment secrets, but fall back to the running ECS service config.
-          SERVICE_NAME="bp-${STAGE}-backend"
+          SERVICE_NAME="bp-backend"
 
           if [[ -z "${PRIVATE_SUBNET_IDS:-}" ]]; then
             PRIVATE_SUBNET_IDS=$(aws ecs describe-services \
@@ -175,7 +176,7 @@ jobs:
 
           # Best-effort: print CloudWatch logs for the task's php-fpm container
           TASK_ID="${TASK_ARN##*/}"
-          LOG_GROUP="/ecs/bp-backend-${STAGE}"
+          LOG_GROUP="/ecs/bp-backend"
           LOG_STREAM_PREFIX="php/php-fpm/${TASK_ID}"
 
           echo "CloudWatch log group: ${LOG_GROUP}"

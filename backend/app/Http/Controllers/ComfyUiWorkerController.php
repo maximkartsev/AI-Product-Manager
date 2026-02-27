@@ -97,18 +97,9 @@ class ComfyUiWorkerController extends BaseController
         $plainToken = Str::random(64);
         $tokenHash = hash('sha256', $plainToken);
 
-        $stage = (string) ($request->input('stage') ?: config('app.env'));
+        $stage = (string) $request->input('stage', 'production');
         if (!in_array($stage, ['staging', 'production'], true)) {
             return $this->sendError('Invalid stage. Expected staging or production.', [], 422);
-        }
-
-        $registrationStage = (string) config('services.comfyui.registration_stage', config('app.env'));
-        if (in_array($registrationStage, ['staging', 'production'], true) && $stage !== $registrationStage) {
-            return $this->sendError(
-                "Stage mismatch. This backend accepts only {$registrationStage} workers.",
-                [],
-                422
-            );
         }
 
         $fleetSlug = (string) $request->input('fleet_slug');

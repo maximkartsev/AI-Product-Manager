@@ -109,13 +109,13 @@ class ComfyUiFleetsController extends BaseController
         $templateSlug = $request->input('template_slug');
         $instanceType = $request->input('instance_type');
 
-        $existingFleet = ComfyUiGpuFleet::query()->where('slug', $slug)->first();
+        $existingFleet = ComfyUiGpuFleet::query()
+            ->where('stage', $stage)
+            ->where('slug', $slug)
+            ->first();
         if ($existingFleet) {
-            $errorMessage = $existingFleet->stage === $stage
-                ? 'A fleet with this slug already exists for this stage.'
-                : sprintf('A fleet with this slug already exists in another stage (%s).', $existingFleet->stage);
             return $this->sendError('Validation Error', [
-                'slug' => [$errorMessage],
+                'slug' => ['A fleet with this slug already exists for this stage.'],
             ], 409);
         }
 
@@ -146,7 +146,7 @@ class ComfyUiFleetsController extends BaseController
             return $this->sendError('Failed to write desired fleet config to SSM', [
                 'ssm' => [
                     $e->getMessage(),
-                    'Hint: ensure the backend ECS task role allows ssm:PutParameter for /bp/<stage>/fleets/*/desired_config (redeploy compute stack).',
+                    'Hint: ensure the backend ECS task role allows ssm:PutParameter for /bp/fleets/*/*/desired_config (redeploy compute stack).',
                 ],
             ], 502);
         }
@@ -254,7 +254,7 @@ class ComfyUiFleetsController extends BaseController
                 return $this->sendError('Failed to write desired fleet config to SSM', [
                     'ssm' => [
                         $e->getMessage(),
-                        'Hint: ensure the backend ECS task role allows ssm:PutParameter for /bp/<stage>/fleets/*/desired_config (redeploy compute stack).',
+                        'Hint: ensure the backend ECS task role allows ssm:PutParameter for /bp/fleets/*/*/desired_config (redeploy compute stack).',
                     ],
                 ], 502);
             }

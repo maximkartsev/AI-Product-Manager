@@ -11,26 +11,29 @@ import { GpuSharedStack } from '../lib/stacks/gpu-shared-stack';
 import { GpuFleetStack } from '../lib/stacks/gpu-fleet-stack';
 import { MonitoringStack } from '../lib/stacks/monitoring-stack';
 import { CiCdStack } from '../lib/stacks/cicd-stack';
-import { STAGING_CONFIG, PRODUCTION_CONFIG, type BpEnvironmentConfig } from '../lib/config/environment';
+import { SYSTEM_CONFIG, type BpEnvironmentConfig } from '../lib/config/environment';
 import { getFleetTemplateBySlug } from '../lib/config/fleets';
 
 const app = new cdk.App();
 
-// Select config based on context or default to staging
-const stage = app.node.tryGetContext('stage') ?? 'staging';
-const baseConfig = stage === 'production' ? PRODUCTION_CONFIG : STAGING_CONFIG;
+const baseConfig = SYSTEM_CONFIG;
 const contextDomainName = app.node.tryGetContext('domainName');
 const contextCertArn = app.node.tryGetContext('certificateArn');
 const contextAlertEmail = app.node.tryGetContext('alertEmail');
 const contextBudgetUsdRaw = app.node.tryGetContext('budgetMonthlyUsd');
+const contextFleetStage = app.node.tryGetContext('fleetStage');
 const contextFleetSlug = app.node.tryGetContext('fleetSlug');
 const contextTemplateSlug = app.node.tryGetContext('templateSlug');
 const contextInstanceType = app.node.tryGetContext('instanceType');
 const wantsDynamicFleet = Boolean(contextFleetSlug || contextTemplateSlug || contextInstanceType);
 
-if (wantsDynamicFleet && (!contextFleetSlug || !contextTemplateSlug || !contextInstanceType)) {
-  throw new Error('fleetSlug, templateSlug, and instanceType are required for per-fleet GPU deployments.');
+if (wantsDynamicFleet && (!contextFleetStage || !contextFleetSlug || !contextTemplateSlug || !contextInstanceType)) {
+  throw new Error('fleetStage, fleetSlug, templateSlug, and instanceType are required for per-fleet GPU deployments.');
 }
+if (wantsDynamicFleet && contextFleetStage !== 'staging' && contextFleetStage !== 'production') {
+  throw new Error(`fleetStage must be "staging" or "production" (received "${contextFleetStage}")`);
+}
+const fleetStage = contextFleetStage as 'staging' | 'production' | undefined;
 const contextBudgetUsd = contextBudgetUsdRaw !== undefined && contextBudgetUsdRaw !== ''
   ? Number(contextBudgetUsdRaw)
   : undefined;
@@ -40,17 +43,16 @@ const budgetMonthlyUsd = Number.isFinite(contextBudgetUsd)
 
 const config: BpEnvironmentConfig = {
   ...baseConfig,
-  stage,
   domainName: contextDomainName ?? baseConfig.domainName,
   certificateArn: contextCertArn ?? baseConfig.certificateArn,
   alertEmail: contextAlertEmail ?? baseConfig.alertEmail,
   budgetMonthlyUsd,
 };
 
-const prefix = `bp-${config.stage}`;
+const prefix = 'bp';
 
 cdk.Tags.of(app).add('Project', 'AI-Product-Manager');
-cdk.Tags.of(app).add('Stage', config.stage);
+cdk.Tags.of(app).add('DeploymentModel', 'single-system-fleet-stages');
 const owner = app.node.tryGetContext('owner');
 if (owner) {
   cdk.Tags.of(app).add('Owner', owner);
@@ -116,12 +118,12 @@ cdk.Tags.of(monitoring).add('Service', 'monitoring');
 
 const gpuShared = new GpuSharedStack(app, `${prefix}-gpu-shared`, {
   env: config.env,
-  config,
   description: 'Shared GPU scale-to-zero resources',
 });
 cdk.Tags.of(gpuShared).add('Service', 'gpu-shared');
 
 if (wantsDynamicFleet) {
+  const resolvedFleetStage = fleetStage as 'staging' | 'production';
   const template = getFleetTemplateBySlug(contextTemplateSlug);
   if (!template) {
     throw new Error(`Unknown fleet template: ${contextTemplateSlug}`);
@@ -140,12 +142,12 @@ if (wantsDynamicFleet) {
     scaleToZeroMinutes: template.scaleToZeroMinutes,
   };
 
-  const gpuFleet = new GpuFleetStack(app, `${prefix}-gpu-fleet-${contextFleetSlug}`, {
+  const gpuFleet = new GpuFleetStack(app, `${prefix}-gpu-fleet-${resolvedFleetStage}-${contextFleetSlug}`, {
     env: config.env,
-    config,
     vpc: network.vpc,
     sgGpuWorkers: network.sgGpuWorkers,
     fleet: fleetConfig,
+    fleetStage: resolvedFleetStage,
     apiBaseUrl: compute.apiBaseUrl,
     modelsBucket: data.modelsBucket,
     scaleToZeroTopicArn: gpuShared.scaleToZeroTopicArn,
@@ -160,14 +162,10 @@ if (wantsDynamicFleet) {
 
 const cicd = new CiCdStack(app, `${prefix}-cicd`, {
   env: config.env,
-  config,
   description: 'ECR repositories with lifecycle policies',
 });
 cdk.Tags.of(cicd).add('Service', 'cicd');
 
-// Enable cdk-nag (AWS Solutions checks) in non-production for auditing
-if (config.stage !== 'production') {
-  Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
-}
+Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
 
 app.synth();

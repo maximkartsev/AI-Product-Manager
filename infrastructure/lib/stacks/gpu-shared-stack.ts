@@ -5,10 +5,8 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 import { NagSuppressions } from 'cdk-nag';
-import type { BpEnvironmentConfig } from '../config/environment';
 
 export interface GpuSharedStackProps extends cdk.StackProps {
-  readonly config: BpEnvironmentConfig;
 }
 
 export class GpuSharedStack extends cdk.Stack {
@@ -17,28 +15,21 @@ export class GpuSharedStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: GpuSharedStackProps) {
     super(scope, id, props);
 
-    const stage = props.config.stage;
-
     const topic = new sns.Topic(this, 'ScaleToZeroTopic', {
-      topicName: `bp-${stage}-scale-to-zero`,
+      topicName: 'bp-scale-to-zero',
     });
 
     const fn = new lambda.Function(this, 'ScaleToZeroFn', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.handler',
       timeout: cdk.Duration.seconds(30),
-      environment: {
-        STAGE: stage,
-      },
       code: lambda.Code.fromInline(`
 import json
 import boto3
-import os
 import re
 
 asg_client = boto3.client('autoscaling')
-stage = os.environ.get('STAGE', '')
-pattern = re.compile(rf"^{re.escape(stage)}-(.+)-queue-empty$")
+pattern = re.compile(r"^(staging|production)-(.+)-queue-empty$")
 
 def handler(event, context):
     for record in event.get('Records', []):
@@ -54,8 +45,9 @@ def handler(event, context):
             print(f"Alarm name did not match pattern: {alarm_name}")
             continue
 
-        fleet_slug = match.group(1)
-        asg_name = f"asg-{stage}-{fleet_slug}"
+        fleet_stage = match.group(1)
+        fleet_slug = match.group(2)
+        asg_name = f"asg-{fleet_stage}-{fleet_slug}"
 
         response = asg_client.describe_auto_scaling_groups(
             AutoScalingGroupNames=[asg_name]
@@ -90,7 +82,7 @@ def handler(event, context):
 
     new cdk.CfnOutput(this, 'ScaleToZeroTopicArn', {
       value: topic.topicArn,
-      exportName: `bp-${stage}-scale-to-zero-topic-arn`,
+      exportName: 'bp-scale-to-zero-topic-arn',
     });
 
     NagSuppressions.addResourceSuppressions(topic, [

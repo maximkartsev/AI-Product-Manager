@@ -34,13 +34,13 @@ Internet
 
 | Stack | ID | Purpose |
 |-------|----|---------|
-| **NetworkStack** | `bp-<stage>-network` | VPC (10.0.0.0/16, 2 AZs), subnets (public/private/isolated), NAT Gateway, 6 security groups, S3 gateway endpoint |
-| **DataStack** | `bp-<stage>-data` | RDS MariaDB 10.11, ElastiCache Redis 7.1, S3 media bucket, S3 logs bucket, CloudFront CDN, secrets (APP_KEY, fleet, OAuth) |
-| **ComputeStack** | `bp-<stage>-compute` | ECS Fargate cluster, ALB (HTTP/HTTPS), backend service (4 containers), frontend service, auto-scaling |
-| **GpuSharedStack** | `bp-<stage>-gpu-shared` | Shared scale-to-zero SNS + Lambda for per-fleet ASGs |
-| **GpuFleetStack** | `bp-<stage>-gpu-fleet-<fleet_slug>` | Per-fleet EC2 ASG (100% Spot), step scaling 0→1, backlog tracking 1→N |
-| **MonitoringStack** | `bp-<stage>-monitoring` | CloudWatch dashboard, P1/P2 alarms, SNS alert topic, optional budget alerts |
-| **CiCdStack** | `bp-<stage>-cicd` | ECR repositories (backend + frontend) with lifecycle policies (keep last 10 images) |
+| **NetworkStack** | `bp-network` | VPC (10.0.0.0/16, 2 AZs), subnets (public/private/isolated), NAT Gateway, 6 security groups, S3 gateway endpoint |
+| **DataStack** | `bp-data` | RDS MariaDB 10.11, ElastiCache Redis 7.1, S3 media bucket, S3 logs bucket, CloudFront CDN, secrets (APP_KEY, fleet, OAuth) |
+| **ComputeStack** | `bp-compute` | ECS Fargate cluster, ALB (HTTP/HTTPS), backend service (4 containers), frontend service, auto-scaling |
+| **GpuSharedStack** | `bp-gpu-shared` | Shared scale-to-zero SNS + Lambda for per-fleet ASGs |
+| **GpuFleetStack** | `bp-gpu-fleet-<fleet_stage>-<fleet_slug>` | Per-fleet-stage EC2 ASG (100% Spot), step scaling 0→1, backlog tracking 1→N |
+| **MonitoringStack** | `bp-monitoring` | CloudWatch dashboard, P1/P2 alarms, SNS alert topic, optional budget alerts |
+| **CiCdStack** | `bp-cicd` | ECR repositories (backend + frontend) with lifecycle policies (keep last 10 images) |
 
 Dependency chain: `Network → Data → Compute → Monitoring`. GPU is `GpuShared → GpuFleet` (provisioned per fleet); CiCd is standalone.
 
@@ -129,25 +129,28 @@ npx cdk deploy --all
 After the first deploy, populate manually-managed secrets:
 
 ```bash
-STAGE=staging
-
 # 1. Laravel APP_KEY
 php artisan key:generate --show  # run locally to generate
 aws secretsmanager put-secret-value \
-  --secret-id "/bp/${STAGE}/laravel/app-key" \
+  --secret-id "/bp/laravel/app-key" \
   --secret-string "base64:YOUR_GENERATED_KEY"
 
-# 2. Fleet secret (GPU worker registration)
+# 2. Fleet secrets (GPU worker registration)
 aws ssm put-parameter \
-  --name "/bp/${STAGE}/fleet-secret" \
+  --name "/bp/fleets/staging/fleet-secret" \
   --value "$(openssl rand -hex 32)" \
   --type String \
   --overwrite
-# Used by backend (`COMFYUI_FLEET_SECRET_STAGING` or `COMFYUI_FLEET_SECRET_PRODUCTION`) and GPU workers
+aws ssm put-parameter \
+  --name "/bp/fleets/production/fleet-secret" \
+  --value "$(openssl rand -hex 32)" \
+  --type String \
+  --overwrite
+# Used by backend (`COMFYUI_FLEET_SECRET_STAGING` + `COMFYUI_FLEET_SECRET_PRODUCTION`) and GPU workers
 
 # 3. OAuth secrets (if using social login)
 aws secretsmanager put-secret-value \
-  --secret-id "/bp/${STAGE}/oauth/secrets" \
+  --secret-id "/bp/oauth/secrets" \
   --secret-string '{
     "google_client_id":"...",
     "google_client_secret":"...",
@@ -161,53 +164,37 @@ aws secretsmanager put-secret-value \
   }'
 ```
 
-#### End-to-end secret sync from `.env` (staging + production)
+#### End-to-end secret sync from `.env` (single system + two fleet stages)
 
-Use the script below to push required values from stage env files into AWS, including:
-- Fleet secret (`/bp/<stage>/fleet-secret`, used by ECS backend and GPU workers)
-- Laravel `APP_KEY` (`/bp/<stage>/laravel/app-key`)
-- OAuth payload (`/bp/<stage>/oauth/secrets`)
-- ECS backend forced redeploy (`bp-<stage>-backend`)
+Use the script below to push required values from one app env file into AWS, including:
+- Fleet secrets (`/bp/fleets/staging/fleet-secret` and `/bp/fleets/production/fleet-secret`)
+- Laravel `APP_KEY` (`/bp/laravel/app-key`)
+- OAuth payload (`/bp/oauth/secrets`)
+- ECS backend forced redeploy (`bp-backend`)
 
 ```powershell
 powershell -NoProfile -File .\scripts\sync-env-to-aws.ps1 `
   -Region us-east-1 `
-  -StagingEnvPath ..\backend\.env.staging `
-  -ProductionEnvPath ..\backend\.env.production `
-  -AppleP8PathStaging C:\secure\keys\apple-staging.p8 `
-  -AppleP8PathProduction C:\secure\keys\apple-production.p8
+  -EnvPath ..\backend\.env `
+  -AppleP8Path C:\secure\keys\apple-production.p8
 ```
 
-Required env keys in each stage env file:
+Required env keys in the app env file:
 - `APP_KEY`
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 - `TIKTOK_CLIENT_ID`, `TIKTOK_CLIENT_SECRET`
 - `APPLE_CLIENT_ID`, `APPLE_KEY_ID`, `APPLE_TEAM_ID`
-- `COMFYUI_FLEET_SECRET_STAGING` (staging file) or `COMFYUI_FLEET_SECRET_PRODUCTION` (production file). If missing, the script generates a new value and prints it.
+- `COMFYUI_FLEET_SECRET_STAGING`, `COMFYUI_FLEET_SECRET_PRODUCTION` (if either is missing, the script generates it and prints a warning)
 
 ## Configuration
 
-### Environment Presets (`lib/config/environment.ts`)
+### Environment Preset (`lib/config/environment.ts`)
 
-| Parameter | Staging | Production |
-|-----------|---------|------------|
-| `rdsInstanceClass` | t4g.small | t4g.medium |
-| `rdsMultiAz` | false | true |
-| `redisNodeType` | cache.t4g.micro | cache.t4g.small |
-| `natGateways` | 1 | 2 |
-| `backendCpu` / `Memory` | 512 / 1024 | 1024 / 2048 |
-| `frontendCpu` / `Memory` | 256 / 512 | 512 / 1024 |
+The infrastructure now uses a **single system preset** (`SYSTEM_CONFIG`) for non-fleet resources.
 
-Stage is selected via CDK context: `npx cdk deploy --context stage=production`.
+Fleet stage (`staging` / `production`) remains only for GPU fleet routing, fleet secrets, and worker metrics dimensions.
 
-#### Stages: staging vs production
-
-- **staging**: default stage in this repo (resource names like `bp-staging`, smaller/cheaper defaults).
-- **production**: appears when you deploy with `--context stage=production` (resource names like `bp-production`, larger/HA defaults). A separate AWS account is recommended.
-
-Important: GitHub Actions **Environments** (e.g. `staging-migrations`) are GitHub approval/secret scopes, not the AWS “stage”.
-
-CI note: `.github/workflows/deploy.yml` supports `stage` (staging/production). Production should use a separate AWS account and `AWS_DEPLOY_ROLE_ARN_PRODUCTION`.
+Important: GitHub Actions **Environments** are approval/secret scopes; they are independent from fleet stage.
 
 ### CDK Context (`cdk.json`)
 
@@ -245,12 +232,12 @@ See [GitHub Actions to AWS (OIDC)](#github-actions-to-aws-oidc) for the exact tr
 
 Fleet templates live in `backend/resources/comfyui/fleet-templates.json`.
 
-- **Backend**: validates `template_slug` + `instance_type` on fleet create/update and writes `/bp/<stage>/fleets/<fleet_slug>/desired_config` (SSM).
+- **Backend**: validates `template_slug` + `instance_type` on fleet create/update and writes `/bp/fleets/<fleet_stage>/<fleet_slug>/desired_config` (SSM).
 - **Infrastructure**: reads the same templates file (via `lib/config/fleets.ts`) to validate CDK context and apply defaults (max size, warmup, backlog, scale-to-zero).
 
 Creating capacity is a separate, operator-driven step:
 - Create the fleet in the Admin UI.
-- Run GitHub Actions **Provision GPU Fleet** to create `bp-<stage>-gpu-fleet-<fleet_slug>`.
+- Run GitHub Actions **Provision GPU Fleet** to create `bp-gpu-fleet-<fleet_stage>-<fleet_slug>`.
 
 ## Deployment
 
@@ -266,23 +253,23 @@ export CDK_DEFAULT_REGION=us-east-1
 npx cdk bootstrap
 
 # 2. Deploy CI/CD stack first (creates ECR repos)
-npx cdk deploy bp-staging-cicd
+npx cdk deploy bp-cicd
 
 # 3. Build and push initial Docker images (from repo root)
 #    See "Docker Images" section below
 
 # 4. Deploy remaining stacks
-npx cdk deploy bp-staging-network bp-staging-data bp-staging-compute bp-staging-monitoring bp-staging-gpu-shared
+npx cdk deploy bp-network bp-data bp-compute bp-monitoring bp-gpu-shared
 
 # 5. Set secrets (see Post-Deploy above)
 
-# 6. Ensure ECR images exist (bp-backend-<stage>:nginx-latest/php-latest, bp-frontend-<stage>:latest)
+# 6. Ensure ECR images exist (`bp-backend`:nginx-latest/php-latest, `bp-frontend`:latest)
 #    CI build-and-push populates these tags; manual build instructions below.
 
 # 7. Run initial migrations
 aws ecs run-task \
-  --cluster bp-staging \
-  --task-definition bp-staging-backend \
+  --cluster bp \
+  --task-definition bp-backend \
   --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","migrate","--force"]}]}' \
   --launch-type FARGATE \
   --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-xxx"],"securityGroups":["sg-xxx"]}}'
@@ -314,7 +301,7 @@ cd infrastructure
 npx cdk diff --all
 
 # Deploy specific stacks
-npx cdk deploy bp-staging-data bp-staging-compute
+npx cdk deploy bp-data bp-compute
 
 # Deploy everything
 npx cdk deploy --all
@@ -339,16 +326,16 @@ Notes:
 ```bash
 # Central database
 aws ecs run-task \
-  --cluster bp-staging \
-  --task-definition bp-staging-backend \
+  --cluster bp \
+  --task-definition bp-backend \
   --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","migrate","--force"]}]}' \
   --launch-type FARGATE \
   --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-xxx"],"securityGroups":["sg-xxx"]}}'
 
 # Tenant pool databases
 aws ecs run-task \
-  --cluster bp-staging \
-  --task-definition bp-staging-backend \
+  --cluster bp \
+  --task-definition bp-backend \
   --overrides '{"containerOverrides":[{"name":"php-fpm","command":["php","artisan","tenancy:pools-migrate","--force"]}]}' \
   --launch-type FARGATE \
   --network-configuration '{"awsvpcConfiguration":{"subnets":["subnet-xxx"],"securityGroups":["sg-xxx"]}}'
@@ -362,7 +349,7 @@ We store assets as **content-addressed singletons** in S3, and bundles as **mani
 
 **S3 layout**
 
-- Models bucket: `bp-models-<account>-<stage>`
+- Models bucket: `bp-models-<account>`
 - Assets: `assets/<kind>/<sha256>`
 - Bundles: `bundles/<bundle_id>/manifest.json`
 
@@ -403,10 +390,10 @@ Full schema: `docs/comfyui-assets-bundles-fleets.md`.
 
 **Active bundle pointer**
 
-For each fleet + stage, the active bundle is stored in SSM:
+For each fleet + fleet-stage, the active bundle is stored in SSM:
 
 ```
-/bp/<stage>/fleets/<fleet_slug>/active_bundle
+/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle
 ```
 
 The SSM **value** is the bundle prefix (e.g. `bundles/<bundle_id>`).
@@ -421,23 +408,23 @@ The SSM **value** is the bundle prefix (e.g. `bundles/<bundle_id>`).
 
 **Important: AWS S3 vs local MinIO**
 
-- **Assets and bundles live in AWS S3 only** (`bp-models-<account>-<stage>`). Local MinIO is **dev-only** and not reachable by AWS EC2/SSM/Actions unless you explicitly expose and configure it.
+- **Assets and bundles live in AWS S3 only** (`bp-models-<account>`). Local MinIO is **dev-only** and not reachable by AWS EC2/SSM/Actions unless you explicitly expose and configure it.
 - **Bucket discovery**:
   - CDK outputs (DataStack), or
-  - `aws ssm get-parameter --name /bp/<stage>/models/bucket --query Parameter.Value --output text`
+  - `aws ssm get-parameter --name /bp/models/bucket --query Parameter.Value --output text`
 - **Storage config split**:
   - Media uploads use the default `s3` disk (`AWS_*`) → MinIO locally, S3 in staging/prod.
   - ComfyUI models/logs use dedicated disks (`COMFYUI_MODELS_*`, `COMFYUI_LOGS_*`) so models stay in AWS S3 even when media is local.
 - **AWS S3 readers**: `bake-ami.yml` (Packer), `apply-comfyui-bundle.yml` (SSM), GPU worker boot (user-data).
 
-#### One-time setup (per stage)
+#### One-time setup
 
 - **Deploy infrastructure (creates bucket/roles/SSM pointers)**:
 
 ```bash
-# Example (staging)
+# Example
 cd infrastructure
-npx cdk deploy bp-staging-network bp-staging-data bp-staging-compute bp-staging-monitoring bp-staging-gpu-shared
+npx cdk deploy bp-network bp-data bp-compute bp-monitoring bp-gpu-shared
 ```
 
 - **Deploy updated backend/frontend code** (so the new admin endpoints + `/admin/assets` UI exist):
@@ -448,15 +435,15 @@ npx cdk deploy bp-staging-network bp-staging-data bp-staging-compute bp-staging-
   - Via CLI (staging example): see [Database Migrations](#database-migrations).
 
 - **Set required secrets** (if not already done):
-  - Fleet secret: `/bp/<stage>/fleet-secret` (SSM)
-  - Laravel `APP_KEY`: `/bp/<stage>/laravel/app-key` (Secrets Manager)
+  - Fleet secrets: `/bp/fleets/staging/fleet-secret` and `/bp/fleets/production/fleet-secret` (SSM)
+  - Laravel `APP_KEY`: `/bp/laravel/app-key` (Secrets Manager)
 
 - **Optional: enable GitHub “apply bundle” audit logging**:
   - Read the asset-ops secret:
 
 ```bash
 aws secretsmanager get-secret-value \
-  --secret-id "/bp/<stage>/asset-ops/secret" \
+  --secret-id "/bp/asset-ops/secret" \
   --query SecretString --output text
 ```
 
@@ -473,7 +460,7 @@ aws secretsmanager get-secret-value \
    - Assign workflows in **Fleet Workflow Assignment**.
 4. **Activate a bundle for the fleet**:
    - In **Fleets**, pick a bundle and click **Activate**.
-   - This updates `/bp/<stage>/fleets/<fleet_slug>/active_bundle`.
+   - This updates `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`.
 5. **Build / bake AMIs (recommended for stage/prod)**:
    - Run GitHub Actions → **Build Base GPU AMI** (`build-ami.yml`) with:
      - `fleet_slug`
@@ -481,18 +468,18 @@ aws secretsmanager get-secret-value \
    - Run GitHub Actions → **Bake GPU AMI (Active Bundle)** (`bake-ami.yml`) with:
      - `fleet_slug`
      - `aws_region` (optional)
-   - Both workflows resolve **stage** from `fleet_slug` and write the AMI alias to `/bp/ami/fleets/<stage>/<fleet_slug>`.
+   - Both workflows write the AMI alias to `/bp/ami/fleets/<fleet_stage>/<fleet_slug>`.
    - The bake workflow auto-resolves:
-     - `models_s3_bucket` from `/bp/<stage>/models/bucket`
-     - `models_s3_prefix` from `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
-     - `packer_instance_profile` from `/bp/<stage>/packer/instance_profile`
+     - `models_s3_bucket` from `/bp/models/bucket`
+     - `models_s3_prefix` from `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`
+     - `packer_instance_profile` from `/bp/packer/instance_profile`
 6. **Roll the ASG** so new instances pick up the new AMI + active bundle:
    - AWS Console → Auto Scaling Groups → start **Instance refresh**, or
    - CLI (example):
 
 ```bash
 aws autoscaling start-instance-refresh \
-  --auto-scaling-group-name "asg-<stage>-<fleet_slug>" \
+  --auto-scaling-group-name "asg-<fleet_stage>-<fleet_slug>" \
   --preferences '{"MinHealthyPercentage":90,"InstanceWarmup":300}'
 ```
 
@@ -508,7 +495,7 @@ aws autoscaling start-instance-refresh \
 
 - **Boot sync logs**: `/var/log/comfyui-asset-sync.log` on the GPU instance (and `journalctl -u comfyui.service` / `-u comfyui-worker.service`).
 - **No active bundle**: the default SSM value is `none`, which skips sync.
-- **Wrong AMI in ASG**: verify `/bp/ami/fleets/<stage>/<fleet_slug>` exists and is `aws:ec2:image`.
+- **Wrong AMI in ASG**: verify `/bp/ami/fleets/<fleet_stage>/<fleet_slug>` exists and is `aws:ec2:image`.
 
 ### Building AMIs (Packer)
 
@@ -529,7 +516,7 @@ Actions → "Bake GPU AMI (Active Bundle)" → Run workflow
 The pipeline:
 1. Resolves stage from `fleet_slug`
 2. Runs `packer build` with NVIDIA drivers, ComfyUI, Python worker
-3. Stores the new AMI ID in SSM Parameter Store (`/bp/ami/fleets/<stage>/<fleet_slug>`)
+3. Stores the new AMI ID in SSM Parameter Store (`/bp/ami/fleets/<fleet_stage>/<fleet_slug>`)
 
 To build locally:
 
@@ -541,7 +528,7 @@ packer build \
   -var "fleet_slug=gpu-default" \
   -var "instance_type=g4dn.xlarge" \
   -var "aws_region=us-east-1" \
-  -var "models_s3_bucket=bp-models-<account>-<stage>" \
+  -var "models_s3_bucket=bp-models-<account>" \
   -var "models_s3_prefix=bundles/<bundle_id>" \
   -var "bundle_id=<bundle_id>" \
   .
@@ -560,20 +547,20 @@ Use `.github/workflows/apply-comfyui-bundle.yml` to sync a bundle onto a **runni
 **Inputs:**
 - `instance_id` — EC2 instance ID
 - `fleet_slug` — e.g. `gpu-default`
-- `logs_bucket` — optional, `bp-logs-<account>-<stage>`
+- `logs_bucket` — optional, `bp-logs-<account>`
 
 **Requirements:**
 - The dev instance must have **SSM** enabled and an instance profile with **S3 read** to the models bucket.
-- The workflow resolves stage from `fleet_slug` and uses `/bp/<stage>/fleets/<fleet_slug>/active_bundle`.
+- The workflow uses `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`.
 - The workflow will upload SSM command output to the logs bucket (if provided).
 - If `ASSET_OPS_API_URL` + `ASSET_OPS_SECRET` are set, the workflow also records an audit log via the backend.
 
 ### Adding a New Fleet (new approach)
 
 1. Ensure a suitable template exists in `backend/resources/comfyui/fleet-templates.json`.
-2. Create the fleet in the Admin UI (template + instance type). This writes `/bp/<stage>/fleets/<fleet_slug>/desired_config`.
-3. Run GitHub Actions → **Provision GPU Fleet** to create `bp-<stage>-gpu-fleet-<fleet_slug>` (stage auto-resolved from slug).
-4. If `/bp/ami/fleets/<stage>/<fleet_slug>` is missing, run **Build Base GPU AMI**.
+2. Create the fleet in the Admin UI (template + instance type). This writes `/bp/fleets/<fleet_stage>/<fleet_slug>/desired_config`.
+3. Run GitHub Actions → **Provision GPU Fleet** to create `bp-gpu-fleet-<fleet_stage>-<fleet_slug>`.
+4. If `/bp/ami/fleets/<fleet_stage>/<fleet_slug>` is missing, run **Build Base GPU AMI**.
 5. Activate the bundle in the Admin UI, then run **Bake GPU AMI (Active Bundle)** and refresh the ASG.
 
 ### Monitoring Workers
@@ -664,10 +651,10 @@ Defaults and constraints (from backend config):
 ### Deployment artifact uploads
 
 - **ECR images (ECS runtime)**:
-  - Backend repo: `bp-backend-<stage>`
+  - Backend repo: `bp-backend`
     - `nginx-latest`
     - `php-latest`
-  - Frontend repo: `bp-frontend-<stage>`
+  - Frontend repo: `bp-frontend`
     - `latest`
     - `<sha7>` (CI tag)
   - CI `deploy.yml` builds and pushes these tags on every `main` push.
@@ -675,30 +662,31 @@ Defaults and constraints (from backend config):
 - **GPU AMI builds**:
   - Trigger GitHub Actions `build-ami.yml` (Base) or `bake-ami.yml` (Active Bundle).
   - Inputs: `fleet_slug`, `aws_region` (optional).
-  - Output: AMI ID written to SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
+  - Output: AMI ID written to SSM at `/bp/ami/fleets/<fleet_stage>/<fleet_slug>`.
   - Bake auto-resolves models bucket, active bundle prefix, and packer instance profile from SSM.
 
 ## Secrets Reference
 
 | Secret | Store | Path | Auto-Generated? | Manual Setup |
 |--------|-------|------|-----------------|--------------|
-| RDS master credentials | Secrets Manager | `/bp/<stage>/rds/master-credentials` | Yes (CDK) | — |
-| Redis AUTH token | Secrets Manager | `/bp/<stage>/redis/auth-token` | Yes (CDK) | — |
-| Laravel APP_KEY | Secrets Manager | `/bp/<stage>/laravel/app-key` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/laravel/app-key --secret-string "base64:..."` |
-| Fleet secret | SSM Parameter Store | `/bp/<stage>/fleet-secret` | No (`CHANGE_ME_AFTER_DEPLOY`) | `aws ssm put-parameter --name /bp/<stage>/fleet-secret --value "..." --type String --overwrite` |
-| Asset ops secret | Secrets Manager | `/bp/<stage>/asset-ops/secret` | Yes (CDK) | Use the secret value as `ASSET_OPS_SECRET` in GitHub Actions |
-| Models bucket | SSM Parameter Store | `/bp/<stage>/models/bucket` | Yes (CDK) | — |
-| Packer instance profile | SSM Parameter Store | `/bp/<stage>/packer/instance_profile` | Yes (CDK) | Used by AMI bake workflow |
-| OAuth secrets | Secrets Manager | `/bp/<stage>/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/<stage>/oauth/secrets --secret-string '{"google_client_id":"...","google_client_secret":"...","tiktok_client_id":"...","tiktok_client_secret":"...","apple_client_id":"...","apple_client_secret":"","apple_key_id":"...","apple_team_id":"...","apple_private_key_p8_b64":"..."}'` |
-| GPU AMI IDs | SSM Parameter Store | `/bp/ami/fleets/<stage>/<fleet_slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/fleets/<stage>/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
-| Active asset bundle | SSM Parameter Store | `/bp/<stage>/fleets/<fleet_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/<stage>/fleets/<slug>/active_bundle --value "bundles/<bundle_id>" --type String --overwrite` |
-| Redis endpoint | SSM Parameter Store | `/bp/<stage>/redis/endpoint` | Yes (CDK) | — |
+| RDS master credentials | Secrets Manager | `/bp/rds/master-credentials` | Yes (CDK) | — |
+| Redis AUTH token | Secrets Manager | `/bp/redis/auth-token` | Yes (CDK) | — |
+| Laravel APP_KEY | Secrets Manager | `/bp/laravel/app-key` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/laravel/app-key --secret-string "base64:..."` |
+| Fleet secret (staging) | SSM Parameter Store | `/bp/fleets/staging/fleet-secret` | No (`CHANGE_ME_AFTER_DEPLOY`) | `aws ssm put-parameter --name /bp/fleets/staging/fleet-secret --value "..." --type String --overwrite` |
+| Fleet secret (production) | SSM Parameter Store | `/bp/fleets/production/fleet-secret` | No (`CHANGE_ME_AFTER_DEPLOY`) | `aws ssm put-parameter --name /bp/fleets/production/fleet-secret --value "..." --type String --overwrite` |
+| Asset ops secret | Secrets Manager | `/bp/asset-ops/secret` | Yes (CDK) | Use the secret value as `ASSET_OPS_SECRET` in GitHub Actions |
+| Models bucket | SSM Parameter Store | `/bp/models/bucket` | Yes (CDK) | — |
+| Packer instance profile | SSM Parameter Store | `/bp/packer/instance_profile` | Yes (CDK) | Used by AMI bake workflow |
+| OAuth secrets | Secrets Manager | `/bp/oauth/secrets` | No (placeholder) | `aws secretsmanager put-secret-value --secret-id /bp/oauth/secrets --secret-string '{"google_client_id":"...","google_client_secret":"...","tiktok_client_id":"...","tiktok_client_secret":"...","apple_client_id":"...","apple_client_secret":"","apple_key_id":"...","apple_team_id":"...","apple_private_key_p8_b64":"..."}'` |
+| GPU AMI IDs | SSM Parameter Store | `/bp/ami/fleets/<fleet_stage>/<fleet_slug>` | Yes (Packer CI) | `aws ssm put-parameter --name /bp/ami/fleets/<fleet_stage>/<slug> --value ami-xxx --data-type "aws:ec2:image" --type String --overwrite` |
+| Active asset bundle | SSM Parameter Store | `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle` | Yes (CDK, default: `none`) | Set via **Admin → Assets**, or `aws ssm put-parameter --name /bp/fleets/<fleet_stage>/<slug>/active_bundle --value "bundles/<bundle_id>" --type String --overwrite` |
+| Redis endpoint | SSM Parameter Store | `/bp/redis/endpoint` | Yes (CDK) | — |
 
 ## Monitoring & Alerts
 
 ### Dashboard
 
-Name: `bp-<stage>` (e.g. `bp-staging`)
+Name: `bp`
 
 | Row | Widgets |
 |-----|---------|
@@ -709,13 +697,12 @@ Name: `bp-<stage>` (e.g. `bp-staging`)
 
 ### Log Groups & Retention
 
-- Backend: `/ecs/bp-backend-<stage>`
-- Frontend: `/ecs/bp-frontend-<stage>`
+- Backend: `/ecs/bp-backend`
+- Frontend: `/ecs/bp-frontend`
 - GPU workers: `/gpu-workers/<fleet-slug>`
 
 Retention:
-- **Production**: 30 days
-- **Non-production**: 7 days
+- **System logs**: 30 days
 
 ### Alarm Tiers
 
@@ -731,7 +718,7 @@ Retention:
 
 ### SNS Topic
 
-Topic name: `bp-<stage>-ops-alerts`. Subscribes `ALERT_EMAIL` if configured.
+Topic name: `bp-ops-alerts`. Subscribes `ALERT_EMAIL` if configured.
 
 To add Slack/PagerDuty: create an SNS subscription to the topic ARN with the appropriate protocol (HTTPS webhook for Slack via AWS Chatbot, HTTPS endpoint for PagerDuty).
 
@@ -763,15 +750,15 @@ npx cdk deploy --all \
 1. Scale ECS services to zero:
 
 ```bash
-aws ecs update-service --cluster bp-staging --service bp-staging-backend --desired-count 0
-aws ecs update-service --cluster bp-staging --service bp-staging-frontend --desired-count 0
+aws ecs update-service --cluster bp --service bp-backend --desired-count 0
+aws ecs update-service --cluster bp --service bp-frontend --desired-count 0
 ```
 
 2. Scale GPU ASGs to zero (repeat for each fleet slug):
 
 ```bash
 aws autoscaling update-auto-scaling-group \
-  --auto-scaling-group-name asg-<stage>-<fleet_slug> \
+  --auto-scaling-group-name asg-<fleet_stage>-<fleet_slug> \
   --min-size 0 --max-size 0 --desired-capacity 0
 ```
 
@@ -779,12 +766,12 @@ aws autoscaling update-auto-scaling-group \
 
 ```bash
 aws ecs describe-services \
-  --cluster bp-staging \
-  --services bp-staging-backend bp-staging-frontend \
+  --cluster bp \
+  --services bp-backend bp-frontend \
   --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount}'
 
 aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names asg-<stage>-<fleet_slug> \
+  --auto-scaling-group-names asg-<fleet_stage>-<fleet_slug> \
   --query 'AutoScalingGroups[].{name:AutoScalingGroupName,desired:DesiredCapacity,instances:Instances[].InstanceId}'
 ```
 
@@ -794,11 +781,11 @@ For a full “wipe and redeploy” runbook, see: `docs/recreate-infrastructure.m
 
 ```bash
 cd infrastructure
-# Per-fleet stacks (repeat for each fleet slug you provisioned)
-npx cdk destroy bp-staging-gpu-fleet-<fleet_slug>
+# Per-fleet stacks (repeat for each fleet-stage + slug)
+npx cdk destroy bp-gpu-fleet-<fleet_stage>-<fleet_slug>
 
 # Shared + core stacks
-npx cdk destroy bp-staging-gpu-shared bp-staging-monitoring bp-staging-compute bp-staging-data bp-staging-network bp-staging-cicd
+npx cdk destroy bp-gpu-shared bp-monitoring bp-compute bp-data bp-network bp-cicd
 ```
 
 Notes:
@@ -813,8 +800,8 @@ Notes:
 | Symptom | Diagnosis | Fix |
 |---------|-----------|-----|
 | ECS tasks stuck in PENDING | No capacity, or image pull failures | Check ECR image exists, check SG allows outbound to ECR/S3 |
-| Backend returns 502 | PHP-FPM container not ready or crashed | Check `/ecs/bp-backend-<stage>` logs, verify DB connectivity |
-| GPU workers not starting | AMI not found or SSM parameter missing | Verify SSM parameter `/bp/ami/fleets/<stage>/<fleet_slug>` has a valid AMI ID |
+| Backend returns 502 | PHP-FPM container not ready or crashed | Check `/ecs/bp-backend` logs, verify DB connectivity |
+| GPU workers not starting | AMI not found or SSM parameter missing | Verify SSM parameter `/bp/ami/fleets/<fleet_stage>/<fleet_slug>` has a valid AMI ID |
 | Scale-to-zero not working | Lambda not triggered | Check alarm state, verify SNS subscription, check Lambda logs |
 | ALB returns 404 | No healthy targets | Check target group health, verify ECS service desired count > 0 |
 | CDK deploy fails on secrets | Secret already exists | Import with `cdk import` or delete manually from Secrets Manager |
@@ -825,35 +812,35 @@ Notes:
 ```bash
 # ECS Exec into running backend container
 aws ecs execute-command \
-  --cluster bp-staging \
+  --cluster bp \
   --task <task-id> \
   --container php-fpm \
   --interactive \
   --command "/bin/bash"
 
 # Tail backend logs
-aws logs tail /ecs/bp-backend-staging --follow
+aws logs tail /ecs/bp-backend --follow
 
 # Tail GPU worker logs
 aws logs tail /gpu-workers/<fleet_slug> --follow
 
 # Check ECS service status
 aws ecs describe-services \
-  --cluster bp-staging \
-  --services bp-staging-backend bp-staging-frontend \
+  --cluster bp \
+  --services bp-backend bp-frontend \
   --query 'services[].{name:serviceName,status:status,running:runningCount,desired:desiredCount}'
 
 # Check GPU ASG status
 aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names asg-<stage>-<fleet_slug> \
+  --auto-scaling-group-names asg-<fleet_stage>-<fleet_slug> \
   --query 'AutoScalingGroups[].{name:AutoScalingGroupName,desired:DesiredCapacity,min:MinSize,max:MaxSize,instances:Instances[].InstanceId}'
 
 # Force new deployment (pick up latest image)
-aws ecs update-service --cluster bp-staging --service bp-staging-backend --force-new-deployment
+aws ecs update-service --cluster bp --service bp-backend --force-new-deployment
 
 # Check CloudWatch alarm states
 aws cloudwatch describe-alarms \
-  --alarm-name-prefix staging-p \
+  --alarm-name-prefix p \
   --query 'MetricAlarms[].{name:AlarmName,state:StateValue}'
 ```
 
@@ -878,7 +865,7 @@ test-frontend ─┘
 - `aws_region` (optional)
 - `start_instance_refresh` (optional)
 
-**Output:** AMI ID stored in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
+**Output:** AMI ID stored in SSM at `/bp/ami/fleets/<fleet_stage>/<fleet_slug>`.
 
 ### `bake-ami.yml` (Bake GPU AMI - Active Bundle)
 
@@ -890,11 +877,11 @@ test-frontend ─┘
 - `start_instance_refresh` (optional)
 
 **Auto-resolves:**
-- models bucket from `/bp/<stage>/models/bucket`
-- active bundle from `/bp/<stage>/fleets/<fleet_slug>/active_bundle`
-- packer instance profile from `/bp/<stage>/packer/instance_profile`
+- models bucket from `/bp/models/bucket`
+- active bundle from `/bp/fleets/<fleet_stage>/<fleet_slug>/active_bundle`
+- packer instance profile from `/bp/packer/instance_profile`
 
-**Output:** AMI ID stored in SSM at `/bp/ami/fleets/<stage>/<fleet_slug>`.
+**Output:** AMI ID stored in SSM at `/bp/ami/fleets/<fleet_stage>/<fleet_slug>`.
 
 ### `apply-comfyui-bundle.yml`
 
@@ -905,7 +892,7 @@ test-frontend ─┘
 **Inputs:**
 - `instance_id` (required)
 - `fleet_slug` (required)
-- `logs_bucket` (optional) — `bp-logs-<account>-<stage>`
+- `logs_bucket` (optional) — `bp-logs-<account>`
 
 **Optional audit logging:**
 - Set GitHub secrets `ASSET_OPS_API_URL` and `ASSET_OPS_SECRET` to record a `dev_bundle_applied` event via `POST /api/ops/comfyui-assets/sync-logs`.
@@ -919,7 +906,7 @@ test-frontend ─┘
 | `PRIVATE_SUBNET_IDS` | (Optional) JSON array of private subnet IDs for one-off ECS tasks (db-migrate/db-seed), e.g. `["subnet-123","subnet-456"]` |
 | `BACKEND_SG_ID` | (Optional) Backend security group ID for one-off ECS tasks (db-migrate/db-seed), e.g. `sg-0123abcd` |
 | `ASSET_OPS_API_URL` | (Optional) Backend API base URL for asset ops logging (used by apply bundle workflow) |
-| `ASSET_OPS_SECRET` | (Optional) Shared secret for asset ops logging (Secrets Manager `/bp/<stage>/asset-ops/secret`) |
+| `ASSET_OPS_SECRET` | (Optional) Shared secret for asset ops logging (Secrets Manager `/bp/asset-ops/secret`) |
 
 ### GitHub Actions to AWS (OIDC)
 
@@ -985,10 +972,10 @@ Recommended (split by workflow / least privilege, tighten resources later):
 - For `.github/workflows/build-ami.yml` / `.github/workflows/bake-ami.yml` (Packer AMI build + SSM):
   - `AmazonEC2FullAccess`
   - `AmazonSSMFullAccess` (or restrict to `ssm:PutParameter` on `/bp/ami/*`)
-  - `iam:PassRole` for the instance profile in `/bp/<stage>/packer/instance_profile`
+  - `iam:PassRole` for the instance profile in `/bp/packer/instance_profile`
 - For `.github/workflows/apply-comfyui-bundle.yml` (SSM + optional logs upload):
   - Allow `ssm:SendCommand` and `ssm:GetCommandInvocation` to the target instance(s)
-  - If `logs_bucket` is used, allow `s3:PutObject` to `bp-logs-<account>-<stage>/asset-sync/*`
+  - If `logs_bucket` is used, allow `s3:PutObject` to `bp-logs-<account>/asset-sync/*`
 - For `.github/workflows/create-dev-gpu-instance.yml` (EC2 + SSM):
   - Allow `ec2:RunInstances`, `ec2:CreateSecurityGroup`, `ec2:AuthorizeSecurityGroupIngress`, `ec2:Describe*`
   - `iam:PassRole` for the instance profile used by the dev instance
@@ -1051,14 +1038,14 @@ infrastructure/
 │   └── app.ts                              # CDK app entry point, stack instantiation
 ├── lib/
 │   ├── config/
-│   │   ├── environment.ts                  # Stage configs (staging/production presets)
+│   │   ├── environment.ts                  # Single-system config preset
 │   │   └── fleets.ts                       # Fleet templates loader + helpers (reads backend/resources/comfyui/fleet-templates.json)
 │   ├── stacks/
 │   │   ├── network-stack.ts                # VPC, subnets, security groups, S3 endpoint
 │   │   ├── data-stack.ts                   # RDS, Redis, S3, CloudFront, secrets
 │   │   ├── compute-stack.ts                # ECS cluster, ALB, backend/frontend services
 │   │   ├── gpu-shared-stack.ts             # Shared scale-to-zero SNS + Lambda
-│   │   ├── gpu-fleet-stack.ts              # Single-fleet GPU ASG stack (bp-<stage>-gpu-fleet-<fleet_slug>)
+│   │   ├── gpu-fleet-stack.ts              # Single-fleet GPU ASG stack (bp-gpu-fleet-<fleet_stage>-<fleet_slug>)
 │   │   ├── monitoring-stack.ts             # Dashboard, alarms (P1/P2), SNS
 │   │   └── cicd-stack.ts                   # ECR repositories
 │   └── constructs/

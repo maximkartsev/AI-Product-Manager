@@ -60,12 +60,13 @@ permissions:
 env:
   AWS_REGION: ${{ inputs.aws_region }}
   STAGE: ${{ inputs.stage }}
-  ECR_BACKEND_REPO: bp-backend-${{ inputs.stage }}
-  ECR_FRONTEND_REPO: bp-frontend-${{ inputs.stage }}
-  ECS_CLUSTER: bp-${{ inputs.stage }}
-  ECS_BACKEND_SERVICE: bp-${{ inputs.stage }}-backend
-  ECS_FRONTEND_SERVICE: bp-${{ inputs.stage }}-frontend
-  ECS_BACKEND_TASK_DEFINITION: bp-${{ inputs.stage }}-backend
+  # Resource names are constant; "stage" selects the AWS account/role.
+  ECR_BACKEND_REPO: bp-backend
+  ECR_FRONTEND_REPO: bp-frontend
+  ECS_CLUSTER: bp
+  ECS_BACKEND_SERVICE: bp-backend
+  ECS_FRONTEND_SERVICE: bp-frontend
+  ECS_BACKEND_TASK_DEFINITION: bp-backend
 
 jobs:
   # ==========================================

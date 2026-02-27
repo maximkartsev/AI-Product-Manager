@@ -34,7 +34,6 @@ export class DataStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, vpc, sgRds, sgRedis } = props;
-    const stage = config.stage;
 
     // ========================================
     // RDS MariaDB 10.11
@@ -64,19 +63,17 @@ export class DataStack extends cdk.Stack {
       securityGroups: [sgRds],
       databaseName: config.centralDbName,
       credentials: rds.Credentials.fromGeneratedSecret('bp_admin', {
-        secretName: `/bp/${stage}/rds/master-credentials`,
+        secretName: '/bp/rds/master-credentials',
       }),
       parameterGroup: dbParameterGroup,
-      multiAz: config.rdsMultiAz ?? false,
+      multiAz: config.rdsMultiAz ?? true,
       allocatedStorage: 20,
       maxAllocatedStorage: 100,
       storageType: rds.StorageType.GP3,
       storageEncrypted: true,
       backupRetention: cdk.Duration.days(7),
-      deletionProtection: stage === 'production',
-      removalPolicy: stage === 'production'
-        ? cdk.RemovalPolicy.RETAIN
-        : cdk.RemovalPolicy.SNAPSHOT,
+      deletionProtection: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
       monitoringInterval: cdk.Duration.seconds(60),
       enablePerformanceInsights,
       performanceInsightRetention: enablePerformanceInsights
@@ -95,7 +92,7 @@ export class DataStack extends cdk.Stack {
     // ========================================
 
     const redisAuthToken = new secretsmanager.Secret(this, 'RedisAuth', {
-      secretName: `/bp/${stage}/redis/auth-token`,
+      secretName: '/bp/redis/auth-token',
       generateSecretString: {
         excludePunctuation: true,
         passwordLength: 32,
@@ -124,7 +121,7 @@ export class DataStack extends cdk.Stack {
 
     // Store Redis endpoint in SSM for easy reference
     new ssm.StringParameter(this, 'RedisEndpointParam', {
-      parameterName: `/bp/${stage}/redis/endpoint`,
+      parameterName: '/bp/redis/endpoint',
       stringValue: redis.attrRedisEndpointAddress,
     });
 
@@ -133,7 +130,7 @@ export class DataStack extends cdk.Stack {
     // ========================================
 
     this.mediaBucket = new s3.Bucket(this, 'MediaBucket', {
-      bucketName: `bp-media-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      bucketName: `bp-media-${cdk.Aws.ACCOUNT_ID}`,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
@@ -151,10 +148,8 @@ export class DataStack extends cdk.Stack {
           abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
         },
       ],
-      removalPolicy: stage === 'production'
-        ? cdk.RemovalPolicy.RETAIN
-        : cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: stage !== 'production',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
     });
 
     // ========================================
@@ -162,7 +157,7 @@ export class DataStack extends cdk.Stack {
     // ========================================
 
     const accessLogsBucket = new s3.Bucket(this, 'AccessLogsBucket', {
-      bucketName: `bp-access-logs-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      bucketName: `bp-access-logs-${cdk.Aws.ACCOUNT_ID}`,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
@@ -174,10 +169,8 @@ export class DataStack extends cdk.Stack {
           expiration: cdk.Duration.days(90),
         },
       ],
-      removalPolicy: stage === 'production'
-        ? cdk.RemovalPolicy.RETAIN
-        : cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: stage !== 'production',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
     });
 
     // ========================================
@@ -185,7 +178,7 @@ export class DataStack extends cdk.Stack {
     // ========================================
 
     this.modelsBucket = new s3.Bucket(this, 'ModelsBucket', {
-      bucketName: `bp-models-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      bucketName: `bp-models-${cdk.Aws.ACCOUNT_ID}`,
       encryption: s3.BucketEncryption.S3_MANAGED,
       serverAccessLogsBucket: accessLogsBucket,
       serverAccessLogsPrefix: 's3-access-logs/models/',
@@ -206,15 +199,13 @@ export class DataStack extends cdk.Stack {
           abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
         },
       ],
-      removalPolicy: stage === 'production'
-        ? cdk.RemovalPolicy.RETAIN
-        : cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: stage !== 'production',
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
     });
 
     // Store models bucket name in SSM for tooling/ops
     new ssm.StringParameter(this, 'ModelsBucketParam', {
-      parameterName: `/bp/${stage}/models/bucket`,
+      parameterName: '/bp/models/bucket',
       stringValue: this.modelsBucket.bucketName,
     });
 
@@ -224,7 +215,7 @@ export class DataStack extends cdk.Stack {
 
     const packerRole = new iam.Role(this, 'PackerRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
-      description: `Packer build role for ${stage} ComfyUI AMIs`,
+      description: 'Packer build role for ComfyUI AMIs',
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
       ],
@@ -252,7 +243,7 @@ export class DataStack extends cdk.Stack {
     });
 
     new ssm.StringParameter(this, 'PackerInstanceProfileParam', {
-      parameterName: `/bp/${stage}/packer/instance_profile`,
+      parameterName: '/bp/packer/instance_profile',
       stringValue: packerInstanceProfile.ref,
       description: 'EC2 instance profile name for Packer AMI builds',
     });
@@ -262,7 +253,7 @@ export class DataStack extends cdk.Stack {
     // ========================================
 
     const logsBucket = new s3.Bucket(this, 'LogsBucket', {
-      bucketName: `bp-logs-${cdk.Aws.ACCOUNT_ID}-${stage}`,
+      bucketName: `bp-logs-${cdk.Aws.ACCOUNT_ID}`,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
@@ -307,29 +298,35 @@ export class DataStack extends cdk.Stack {
 
     // APP_KEY (generated once, stored in Secrets Manager)
     new secretsmanager.Secret(this, 'LaravelAppKey', {
-      secretName: `/bp/${stage}/laravel/app-key`,
+      secretName: '/bp/laravel/app-key',
       description: 'Laravel APP_KEY (base64:...)',
       // Value must be set manually after first deploy:
-      // aws secretsmanager put-secret-value --secret-id /bp/<stage>/laravel/app-key --secret-string "base64:YOUR_KEY"
+      // aws secretsmanager put-secret-value --secret-id /bp/laravel/app-key --secret-string "base64:YOUR_KEY"
     });
 
-    // Fleet secret (SSM SecureString for GPU workers)
-    new ssm.StringParameter(this, 'FleetSecret', {
-      parameterName: `/bp/${stage}/fleet-secret`,
+    // Fleet secrets (SSM SecureString for GPU workers per fleet-stage)
+    new ssm.StringParameter(this, 'FleetSecretStaging', {
+      parameterName: '/bp/fleets/staging/fleet-secret',
       stringValue: 'CHANGE_ME_AFTER_DEPLOY',
-      description: 'Fleet secret for GPU worker registration. Update via AWS Console or CLI.',
+      description: 'Fleet secret for staging fleet-stage worker registration.',
+      tier: ssm.ParameterTier.STANDARD,
+    });
+    new ssm.StringParameter(this, 'FleetSecretProduction', {
+      parameterName: '/bp/fleets/production/fleet-secret',
+      stringValue: 'CHANGE_ME_AFTER_DEPLOY',
+      description: 'Fleet secret for production fleet-stage worker registration.',
       tier: ssm.ParameterTier.STANDARD,
     });
 
     // OAuth secrets placeholders
     new secretsmanager.Secret(this, 'OauthSecrets', {
-      secretName: `/bp/${stage}/oauth/secrets`,
+      secretName: '/bp/oauth/secrets',
       description: 'OAuth client secrets (Google, Apple, TikTok). Set as JSON after deploy.',
     });
 
     // Asset ops secret (for GitHub Actions -> backend audit logging)
     this.assetOpsSecret = new secretsmanager.Secret(this, 'AssetOpsSecret', {
-      secretName: `/bp/${stage}/asset-ops/secret`,
+      secretName: '/bp/asset-ops/secret',
       description: 'Shared secret for asset ops automation (e.g., GitHub Actions).',
       generateSecretString: {
         excludePunctuation: true,

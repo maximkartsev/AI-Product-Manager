@@ -7,7 +7,6 @@ import type { BpEnvironmentConfig } from '../lib/config/environment';
 
 const baseConfig: BpEnvironmentConfig = {
   env: { account: '111111111111', region: 'us-east-1' },
-  stage: 'staging',
   centralDbName: 'bp',
   tenantPoolDbNames: ['tenant_pool_1', 'tenant_pool_2'],
   rdsInstanceClass: 't4g.small',

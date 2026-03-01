@@ -60,7 +60,7 @@ use \App\Http\Controllers\Admin\StudioExperimentVariantsController as AdminStudi
 use \App\Http\Controllers\Admin\StudioFleetConfigSnapshotsController as AdminStudioFleetConfigSnapshotsController;
 use \App\Http\Controllers\Admin\StudioProductionFleetSnapshotsController as AdminStudioProductionFleetSnapshotsController;
 use \App\Http\Controllers\Admin\StudioRunArtifactsController as AdminStudioRunArtifactsController;
-use \App\Http\Controllers\Admin\StudioLoadTestExecutorController as AdminStudioLoadTestExecutorController;
+use \App\Http\Controllers\Admin\StudioLoadTestSubmissionController as AdminStudioLoadTestSubmissionController;
 use \App\Http\Controllers\Admin\StudioVariantRegistryController as AdminStudioVariantRegistryController;
 use \App\Http\Controllers\Admin\StudioBenchmarkMatrixRunsController as AdminStudioBenchmarkMatrixRunsController;
 use \App\Http\Controllers\Admin\StudioQualityEvaluationsController as AdminStudioQualityEvaluationsController;
@@ -133,9 +133,9 @@ Route::middleware([EnsureAssetOpsSecret::class])
     });
 
 Route::middleware([EnsureStudioExecutorSecret::class])
-    ->prefix('ops/studio/load-test')
+    ->prefix('admin/studio/load-test')
     ->group(function () {
-        Route::post('/submit-dispatches', [AdminStudioLoadTestExecutorController::class, 'submitDispatches']);
+        Route::post('/submit', [AdminStudioLoadTestSubmissionController::class, 'submit']);
     });
 
 /**
@@ -275,6 +275,7 @@ Route::middleware([
             Route::get('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'index']);
             Route::post('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'store']);
             Route::get('/studio/load-test-runs/{id}', [AdminStudioLoadTestRunsController::class, 'show']);
+            Route::get('/studio/load-test-runs/{id}/status', [AdminStudioLoadTestRunsController::class, 'status']);
             Route::post('/studio/load-test-runs/{id}/start', [AdminStudioLoadTestRunsController::class, 'start']);
             Route::post('/studio/load-test-runs/{id}/cancel', [AdminStudioLoadTestRunsController::class, 'cancel']);
             Route::get('/studio/experiment-variants', [AdminStudioExperimentVariantsController::class, 'index']);

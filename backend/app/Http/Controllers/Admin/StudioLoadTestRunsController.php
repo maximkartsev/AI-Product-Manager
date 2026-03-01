@@ -3,8 +3,9 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\BaseController;
+use App\Models\AiJobDispatch;
 use App\Models\LoadTestRun;
-use App\Services\LoadTesting\EcsLoadTestTaskLauncher;
+use App\Services\LoadTest\EcsRunTaskService;
 use App\Services\LoadTesting\LoadTestRunnerService;
 use App\Services\Observability\ActionLogService;
 use Carbon\Carbon;
@@ -17,7 +18,7 @@ use Illuminate\Support\Facades\Validator;
 class StudioLoadTestRunsController extends BaseController
 {
     public function __construct(
-        private readonly EcsLoadTestTaskLauncher $taskLauncher,
+        private readonly EcsRunTaskService $taskLauncher,
         private readonly LoadTestRunnerService $runnerService,
         private readonly ActionLogService $actionLogService
     ) {
@@ -47,6 +48,82 @@ class StudioLoadTestRunsController extends BaseController
         }
 
         return $this->sendResponse($this->payload($item), 'Load test run retrieved successfully');
+    }
+
+    public function status(int $id): JsonResponse
+    {
+        $item = LoadTestRun::query()->find($id);
+        if (!$item) {
+            return $this->sendError('Load test run not found.', [], 404);
+        }
+
+        $dispatchStats = AiJobDispatch::query()
+            ->where('load_test_run_id', $item->id)
+            ->selectRaw('
+                COUNT(*) as total_dispatches,
+                SUM(CASE WHEN status = "queued" THEN 1 ELSE 0 END) as queued_count,
+                SUM(CASE WHEN status = "leased" THEN 1 ELSE 0 END) as leased_count,
+                SUM(CASE WHEN status = "completed" THEN 1 ELSE 0 END) as completed_count,
+                SUM(CASE WHEN status = "failed" THEN 1 ELSE 0 END) as failed_count
+            ')
+            ->first();
+
+        $metrics = is_array($item->metrics_json) ? $item->metrics_json : [];
+        $submittedFromMetrics = (int) data_get($metrics, 'total_submitted_dispatches', 0);
+        $submitted = max(
+            $submittedFromMetrics,
+            (int) ($dispatchStats->total_dispatches ?? 0)
+        );
+
+        $faultEvents = data_get($metrics, 'fault_events', []);
+        if (!is_array($faultEvents) || empty($faultEvents)) {
+            $stageReports = data_get($metrics, 'stages', []);
+            if (is_array($stageReports)) {
+                $faultEvents = collect($stageReports)
+                    ->map(function (mixed $stage): ?array {
+                        if (!is_array($stage)) {
+                            return null;
+                        }
+                        $fault = $stage['fault'] ?? null;
+                        if (!is_array($fault)) {
+                            return null;
+                        }
+
+                        return [
+                            'stage_id' => $stage['stage_id'] ?? null,
+                            'stage_order' => $stage['stage_order'] ?? null,
+                            'status' => $fault['status'] ?? 'unknown',
+                            'fault_method' => $fault['fault_method'] ?? null,
+                            'fis_experiment_arn' => $fault['experiment_arn'] ?? null,
+                            'target_instance_ids' => $fault['target_instance_ids'] ?? [],
+                        ];
+                    })
+                    ->filter()
+                    ->values()
+                    ->all();
+            }
+        }
+
+        return $this->sendResponse([
+            'id' => $item->id,
+            'status' => $item->status,
+            'started_at' => $this->toIso8601($item->started_at),
+            'completed_at' => $this->toIso8601($item->completed_at),
+            'submitted_count' => $submitted,
+            'queued_count' => (int) ($dispatchStats->queued_count ?? 0),
+            'leased_count' => (int) ($dispatchStats->leased_count ?? 0),
+            'completed_count' => (int) ($dispatchStats->completed_count ?? 0),
+            'failed_count' => (int) ($dispatchStats->failed_count ?? 0),
+            'success_count' => (int) ($item->success_count ?? 0),
+            'failure_count' => (int) ($item->failure_count ?? 0),
+            'achieved_rps' => $item->achieved_rps,
+            'achieved_rpm' => $item->achieved_rpm,
+            'p95_latency_ms' => $item->p95_latency_ms,
+            'queue_wait_p95_seconds' => $item->queue_wait_p95_seconds,
+            'processing_p95_seconds' => $item->processing_p95_seconds,
+            'fault_events' => $faultEvents,
+            'ecs_task_arn' => data_get($metrics, 'ecs_task_arn', data_get($metrics, 'runner.launch.task_arn')),
+        ], 'Load test run status retrieved successfully.');
     }
 
     public function store(Request $request): JsonResponse
@@ -165,6 +242,9 @@ class StudioLoadTestRunsController extends BaseController
             'launch' => $launch,
             'launched_at' => now()->toIso8601String(),
         ];
+        if ($launch['launched'] ?? false) {
+            $metrics['ecs_task_arn'] = $launch['task_arn'] ?? null;
+        }
         $item->metrics_json = $metrics;
 
         if (!($launch['launched'] ?? false)) {
@@ -220,12 +300,23 @@ class StudioLoadTestRunsController extends BaseController
         if (!$item) {
             return $this->sendError('Load test run not found.', [], 404);
         }
-        if (in_array((string) $item->status, ['completed', 'failed', 'cancelled'], true)) {
-            return $this->sendError('Load test run cannot be cancelled from current status.', [], 422);
+
+        if ((string) $item->status === 'cancelled') {
+            return $this->sendResponse(
+                $this->payload($item),
+                'Load test run already cancelled.'
+            );
+        }
+
+        if (in_array((string) $item->status, ['completed', 'failed'], true)) {
+            return $this->sendResponse(
+                $this->payload($item),
+                'Load test run already completed and cannot be cancelled.'
+            );
         }
 
         $metrics = is_array($item->metrics_json) ? $item->metrics_json : [];
-        $taskArn = data_get($metrics, 'runner.launch.task_arn');
+        $taskArn = data_get($metrics, 'ecs_task_arn', data_get($metrics, 'runner.launch.task_arn'));
         $stopResult = $this->taskLauncher->stop(
             is_string($taskArn) ? $taskArn : null,
             'load_test_cancelled'

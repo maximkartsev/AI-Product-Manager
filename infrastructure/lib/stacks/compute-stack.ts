@@ -201,10 +201,23 @@ export class ComputeStack extends cdk.Stack {
       },
     });
 
+    const loadTestRunnerTaskDef = new ecs.FargateTaskDefinition(this, 'LoadTestRunnerTask', {
+      family: 'bp-load-test-runner',
+      cpu: 512,
+      memoryLimitMiB: 1024,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+
     // Grant task role access to S3 buckets
     mediaBucket.grantReadWrite(backendTaskDef.taskRole);
     this.modelsBucket.grantReadWrite(backendTaskDef.taskRole);
     this.logsBucket.grantRead(backendTaskDef.taskRole);
+    mediaBucket.grantReadWrite(loadTestRunnerTaskDef.taskRole);
+    this.modelsBucket.grantReadWrite(loadTestRunnerTaskDef.taskRole);
+    this.logsBucket.grantRead(loadTestRunnerTaskDef.taskRole);
 
     // Grant CloudWatch PutMetricData for workers:publish-metrics
     backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
@@ -222,6 +235,43 @@ export class ComputeStack extends cdk.Stack {
         `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/fleets/*/*/active_bundle`,
         `arn:aws:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/bp/fleets/*/*/desired_config`,
       ],
+    }));
+
+    backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['ecs:RunTask'],
+      resources: [loadTestRunnerTaskDef.taskDefinitionArn],
+      conditions: {
+        ArnEquals: {
+          'ecs:cluster': cluster.clusterArn,
+        },
+      },
+    }));
+    backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['ecs:StopTask', 'ecs:DescribeTasks'],
+      resources: [
+        `arn:aws:ecs:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:task/${cluster.clusterName}/*`,
+      ],
+    }));
+    const runnerPassRoleResources = [
+      loadTestRunnerTaskDef.taskRole.roleArn,
+      ...(loadTestRunnerTaskDef.executionRole ? [loadTestRunnerTaskDef.executionRole.roleArn] : []),
+    ];
+    backendTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['iam:PassRole'],
+      resources: runnerPassRoleResources,
+    }));
+
+    loadTestRunnerTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['fis:StartExperiment', 'fis:GetExperiment'],
+      resources: ['*'],
+    }));
+    loadTestRunnerTaskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: [
+        'autoscaling:DescribeAutoScalingGroups',
+        'autoscaling:DescribeAutoScalingInstances',
+        'ec2:DescribeInstances',
+      ],
+      resources: ['*'],
     }));
 
     const backendLogGroup = new logs.LogGroup(this, 'BackendLogs', {
@@ -271,6 +321,9 @@ export class ComputeStack extends cdk.Stack {
       `exec ${processCommand}`,
     ].join('\n');
 
+    const privateSubnetIds = vpc.privateSubnets.map((subnet) => subnet.subnetId).join(',');
+    const runnerSecurityGroups = [sgBackend.securityGroupId].join(',');
+
     // Shared environment variables for all PHP containers
     const phpEnvironment: Record<string, string> = {
       APP_ENV: 'production',
@@ -301,6 +354,11 @@ export class ComputeStack extends cdk.Stack {
       COMFYUI_MODELS_DISK: 'comfyui_models',
       COMFYUI_LOGS_BUCKET: this.logsBucket.bucketName,
       COMFYUI_LOGS_DISK: 'comfyui_logs',
+      STUDIO_LOAD_TEST_RUNNER_CLUSTER: cluster.clusterName,
+      STUDIO_LOAD_TEST_RUNNER_TASK_DEFINITION: loadTestRunnerTaskDef.taskDefinitionArn,
+      STUDIO_LOAD_TEST_RUNNER_CONTAINER_NAME: 'runner',
+      STUDIO_LOAD_TEST_RUNNER_SUBNETS: privateSubnetIds,
+      STUDIO_LOAD_TEST_RUNNER_SECURITY_GROUPS: runnerSecurityGroups,
     };
 
     const phpSecrets: Record<string, ecs.Secret> = {
@@ -359,6 +417,26 @@ export class ComputeStack extends cdk.Stack {
       environment: phpEnvironment,
       secrets: phpSecrets,
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'queue', logGroup: backendLogGroup }),
+    });
+
+    const loadTestRunnerLogGroup = new logs.LogGroup(this, 'LoadTestRunnerLogs', {
+      logGroupName: '/ecs/bp-load-test-runner',
+      retention: this.logRetention,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    loadTestRunnerTaskDef.addContainer('runner', {
+      image: ecs.ContainerImage.fromEcrRepository(this.backendRepo, 'php-latest'),
+      essential: true,
+      entryPoint: ['/bin/sh', '-lc'],
+      command: [buildPhpBootstrapCommand('/usr/local/bin/php artisan studio:run-load-test')],
+      environment: phpEnvironment,
+      secrets: phpSecrets,
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'runner', logGroup: loadTestRunnerLogGroup }),
+    });
+
+    new cdk.CfnOutput(this, 'LoadTestRunnerTaskDefinitionArn', {
+      value: loadTestRunnerTaskDef.taskDefinitionArn,
     });
 
     // ========================================
@@ -495,6 +573,10 @@ export class ComputeStack extends cdk.Stack {
     NagSuppressions.addResourceSuppressions(backendTaskDef, [
       { id: 'AwsSolutions-IAM5', reason: 'S3 and CloudWatch wildcard scoped by bucket/namespace' },
       { id: 'AwsSolutions-ECS2', reason: 'Non-secret env vars are acceptable in task definition' },
+    ], true);
+    NagSuppressions.addResourceSuppressions(loadTestRunnerTaskDef, [
+      { id: 'AwsSolutions-IAM5', reason: 'Runner requires scoped wildcard permissions for ECS/FIS describe flows' },
+      { id: 'AwsSolutions-ECS2', reason: 'Runner task definition includes non-secret environment configuration' },
     ], true);
     NagSuppressions.addResourceSuppressions(frontendTaskDef, [
       { id: 'AwsSolutions-ECS2', reason: 'Frontend only has non-secret env vars' },

@@ -2,6 +2,11 @@ ngrok http --url=uitest.ngrok.app 3003
 ngrok http --url=back-123.ngrok.app 80
 ngrok http --url=minio.ngrok.pizza 9000
 
+Reliable way to run tests in your WSL Docker setup
+# inside WSL repo root
+cid=$(docker compose -p bp -f laradock/docker-compose.yml ps -q workspace)
+docker exec "$cid" bash -lc "cd /var/www && php artisan test"
+
 wsl.exe -d Ubuntu-22.04 bash -lc "docker exec bcfaa89c8b6305a31d1cfdc0f716383c7b81b1055a0c147d615443b22a4d7697 sh -lc 'command -v php || true; ls -1 /usr/bin | grep -i php | head -n 30; ls -1 /usr/local/bin | grep -i php | head -n 30; ls -1 /usr/sbin | grep -i php | head -n 30'"
 
 Local dev storage (MinIO + AWS S3)

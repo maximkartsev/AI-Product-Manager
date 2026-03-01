@@ -38,10 +38,10 @@ const studioSections = [
     cta: "Open Blackbox Runs",
   },
   {
-    title: "Load Test Scenarios",
-    description: "Define and tune staged load-test patterns for effect validation.",
-    href: "/admin/effects",
-    cta: "Open Effects",
+    title: "Load Test Runs",
+    description: "Create scenario runs, start/cancel runner tasks, and monitor live load-test progress.",
+    href: "/admin/studio/runs/load-test",
+    cta: "Open Load Test Runs",
   },
   {
     title: "Studio Cost Model",

@@ -1154,8 +1154,72 @@ export type StudioLoadTestRun = {
   status?: string | null;
   achieved_rpm?: number | null;
   achieved_rps?: number | null;
+  success_count?: number | null;
+  failure_count?: number | null;
+  p95_latency_ms?: number | null;
+  queue_wait_p95_seconds?: number | null;
+  processing_p95_seconds?: number | null;
+  metrics_json?: Record<string, unknown> | unknown[] | null;
+  started_at?: string | null;
+  completed_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type StudioLoadTestStage = {
+  id?: number;
+  stage_order?: number | null;
+  stage_type?: "spike" | "steady" | "sine" | "drop" | "ramp" | string;
+  duration_seconds?: number | null;
+  target_rpm?: number | null;
+  target_rps?: number | null;
+  fault_enabled?: boolean;
+  fault_kind?: string | null;
+  fault_interruption_rate?: number | null;
+  fault_target_scope?: string | null;
+  fault_method?: string | null;
+  fault_notice_seconds?: number | null;
+  economics_spot_discount_override?: number | null;
+  config_json?: Record<string, unknown> | unknown[] | null;
+};
+
+export type StudioLoadTestScenario = {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
+  created_by_user_id?: number | null;
+  stages?: StudioLoadTestStage[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type StudioLoadTestRunStatusData = {
+  id: number;
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  submitted_count: number;
+  queued_count: number;
+  leased_count: number;
+  completed_count: number;
+  failed_count: number;
+  success_count: number;
+  failure_count: number;
+  achieved_rps?: number | null;
+  achieved_rpm?: number | null;
+  p95_latency_ms?: number | null;
+  queue_wait_p95_seconds?: number | null;
+  processing_p95_seconds?: number | null;
+  fault_events?: Array<{
+    stage_id?: number | null;
+    stage_order?: number | null;
+    status?: string | null;
+    fault_method?: string | null;
+    fis_experiment_arn?: string | null;
+    target_instance_ids?: string[];
+  }>;
+  ecs_task_arn?: string | null;
 };
 
 export type StudioExperimentVariant = {
@@ -1483,6 +1547,10 @@ export function createStudioBlackboxRun(payload: StudioBlackboxRunPayload): Prom
   return apiPost<StudioBlackboxRunData>("/admin/studio/blackbox-runs", payload);
 }
 
+export function getStudioLoadTestScenarios(): Promise<StudioListResponse<StudioLoadTestScenario>> {
+  return apiGet<StudioListResponse<StudioLoadTestScenario>>("/admin/studio/load-test-scenarios");
+}
+
 export function getStudioLoadTestRuns(params: { status?: string } = {}): Promise<StudioListResponse<StudioLoadTestRun>> {
   const query: Query = {
     status: params.status ?? undefined,
@@ -1490,8 +1558,43 @@ export function getStudioLoadTestRuns(params: { status?: string } = {}): Promise
   return apiGet<StudioListResponse<StudioLoadTestRun>>("/admin/studio/load-test-runs", query);
 }
 
-export function createStudioLoadTestRun(payload: Record<string, unknown>): Promise<StudioLoadTestRun> {
+export type StudioLoadTestRunCreatePayload = {
+  load_test_scenario_id: number;
+  execution_environment_id: number;
+  effect_revision_id: number;
+  input_file_id: number;
+  input_payload?: Record<string, unknown>;
+  benchmark_context_id?: string;
+  metrics_json?: Record<string, unknown>;
+};
+
+export function createStudioLoadTestRun(payload: StudioLoadTestRunCreatePayload): Promise<StudioLoadTestRun> {
   return apiPost<StudioLoadTestRun>("/admin/studio/load-test-runs", payload);
+}
+
+export function getStudioLoadTestRunStatus(runId: number): Promise<StudioLoadTestRunStatusData> {
+  return apiGet<StudioLoadTestRunStatusData>(`/admin/studio/load-test-runs/${runId}/status`);
+}
+
+export function startStudioLoadTestRun(
+  runId: number,
+  payload: {
+    mode?: "ecs" | "inline";
+    allow_inline_fallback?: boolean;
+    input_file_id?: number;
+    input_payload?: Record<string, unknown>;
+    benchmark_context_id?: string;
+  } = {},
+): Promise<{
+  run: StudioLoadTestRun;
+  launch?: Record<string, unknown>;
+  execution?: Record<string, unknown>;
+}> {
+  return apiPost(`/admin/studio/load-test-runs/${runId}/start`, payload);
+}
+
+export function cancelStudioLoadTestRun(runId: number): Promise<StudioLoadTestRun> {
+  return apiPost<StudioLoadTestRun>(`/admin/studio/load-test-runs/${runId}/cancel`, {});
 }
 
 export function getStudioExperimentVariants(params: { is_active?: boolean } = {}): Promise<StudioListResponse<StudioExperimentVariant>> {

@@ -21,15 +21,17 @@ class WorkflowSlugImmutableTest extends TestCase
     {
         parent::setUp();
 
-        config([
-            'database.default' => 'central',
-            'database.connections.central' => [
-                'driver' => 'sqlite',
-                'database' => ':memory:',
-                'prefix' => '',
-                'foreign_key_constraints' => true,
-            ],
-        ]);
+        config(['database.default' => 'central']);
+        if (extension_loaded('pdo_sqlite')) {
+            config([
+                'database.connections.central' => [
+                    'driver' => 'sqlite',
+                    'database' => ':memory:',
+                    'prefix' => '',
+                    'foreign_key_constraints' => true,
+                ],
+            ]);
+        }
         DB::purge('central');
         DB::reconnect('central');
 

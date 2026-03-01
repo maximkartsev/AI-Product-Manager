@@ -130,7 +130,18 @@ class AiJobSubmissionTest extends TestCase
         ]);
         $stubDispatch->id = 888888;
 
+        $runtimeEffect = $effect->fresh();
+        $runtimeEffect->setRelation('workflow', Workflow::query()->findOrFail((int) $runtimeEffect->workflow_id));
+
         $mock = $this->mock(EffectRunSubmissionService::class);
+        $mock->shouldReceive('buildRuntimeEffectForPublicRun')
+            ->once()
+            ->andReturn([
+                'runtime_effect' => $runtimeEffect,
+                'workflow_id' => (int) $runtimeEffect->workflow_id,
+                'dispatch_stage' => 'production',
+                'selected_variant_id' => null,
+            ]);
         $mock->shouldReceive('submitPrepared')
             ->once()
             ->andReturn([

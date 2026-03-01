@@ -12,6 +12,8 @@ class PartnerUsageEvent extends CentralModel
         'tenant_id',
         'tenant_job_id',
         'dispatch_id',
+        'load_test_run_id',
+        'benchmark_context_id',
         'workflow_id',
         'effect_id',
         'user_id',
@@ -35,6 +37,7 @@ class PartnerUsageEvent extends CentralModel
     protected $casts = [
         'tenant_job_id' => 'integer',
         'dispatch_id' => 'integer',
+        'load_test_run_id' => 'integer',
         'workflow_id' => 'integer',
         'effect_id' => 'integer',
         'user_id' => 'integer',

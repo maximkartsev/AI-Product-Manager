@@ -136,6 +136,22 @@ class FleetRegistrationTest extends TestCase
         $response->assertStatus(404);
     }
 
+    public function test_fleet_register_rejects_non_ec2_worker_identity(): void
+    {
+        $workflow = Workflow::query()->create(['name' => 'Face Swap', 'slug' => 'face-swap', 'is_active' => true]);
+        $this->createFleetWithWorkflows('staging', 'test-fleet', [$workflow]);
+
+        $response = $this->postJson('/api/worker/register', [
+            'worker_id' => 'dev-laptop-01',
+            'fleet_slug' => 'test-fleet',
+            'stage' => 'staging',
+        ], [
+            'X-Fleet-Secret' => 'test-fleet-secret',
+        ]);
+
+        $response->assertStatus(422);
+    }
+
     public function test_fleet_register_rejects_when_fleet_has_no_workflows(): void
     {
         ComfyUiGpuFleet::query()->create([
@@ -438,7 +454,6 @@ class FleetRegistrationTest extends TestCase
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
             'tenant_job_id' => 1,
-            'provider' => 'self_hosted',
             'status' => 'leased',
             'priority' => 0,
             'attempts' => 1,
@@ -475,7 +490,6 @@ class FleetRegistrationTest extends TestCase
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
             'tenant_job_id' => 1,
-            'provider' => 'self_hosted',
             'status' => 'leased',
             'priority' => 0,
             'attempts' => 1,
@@ -504,7 +518,6 @@ class FleetRegistrationTest extends TestCase
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
             'tenant_job_id' => 1,
-            'provider' => 'self_hosted',
             'status' => 'leased',
             'priority' => 0,
             'attempts' => 1,
@@ -539,7 +552,6 @@ class FleetRegistrationTest extends TestCase
         $dispatch = AiJobDispatch::query()->create([
             'tenant_id' => 'tenant-1',
             'tenant_job_id' => 1,
-            'provider' => 'self_hosted',
             'status' => 'leased',
             'priority' => 0,
             'attempts' => 0,

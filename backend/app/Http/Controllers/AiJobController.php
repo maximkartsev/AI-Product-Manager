@@ -5,15 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\Effect;
-use App\Models\EffectRevision;
 use App\Models\File;
 use App\Models\User;
 use App\Models\Video;
-use App\Models\Workflow;
 use App\Services\EffectRunSubmissionService;
-use App\Services\EffectPublicationService;
-use App\Services\EffectRevisionService;
-use App\Services\TokenLedgerService;
 use App\Services\WorkflowPayloadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,7 +23,6 @@ class AiJobController extends BaseController
         $validator = Validator::make($request->all(), [
             'effect_id' => 'numeric|required|exists:effects,id',
             'idempotency_key' => 'string|required|max:255',
-            'provider' => 'string|nullable|max:50',
             'video_id' => 'numeric|nullable',
             'input_file_id' => 'numeric|nullable',
             'input_payload' => 'array|nullable',
@@ -68,25 +62,22 @@ class AiJobController extends BaseController
             }
 
             try {
-                $runtime = $this->buildRuntimeEffectForPublicRun($existingEffect);
+                $runtime = $submissionService->buildRuntimeEffectForPublicRun($existingEffect);
             } catch (\RuntimeException $e) {
                 return $this->sendError($e->getMessage(), [], 422);
             }
 
             $dispatch = null;
             if (in_array($existing->status, ['queued', 'processing'], true)) {
-                $existingProvider = $existing->provider ?: (string) $request->input(
-                    'provider',
-                    config('services.comfyui.default_provider', 'self_hosted')
-                );
                 $dispatch = $submissionService->ensureDispatchForJob(
                     $existing,
                     (int) $request->input('priority', 0),
-                    $existingProvider,
                     null,
                     null,
                     (int) $runtime['workflow_id'],
-                    (string) $runtime['dispatch_stage']
+                    (string) $runtime['dispatch_stage'],
+                    null,
+                    $runtime['selected_variant_id'] ?? null
                 );
             }
             return $this->sendResponse($existing, 'Job already submitted', [
@@ -103,13 +94,12 @@ class AiJobController extends BaseController
         }
 
         try {
-            $runtime = $this->buildRuntimeEffectForPublicRun($effect);
+            $runtime = $submissionService->buildRuntimeEffectForPublicRun($effect);
         } catch (\RuntimeException $e) {
             return $this->sendError($e->getMessage(), [], 422);
         }
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
-        $provider = (string) $request->input('provider', config('services.comfyui.default_provider', 'self_hosted'));
         $videoId = $request->input('video_id');
         $inputFileId = $request->input('input_file_id');
 
@@ -160,13 +150,13 @@ class AiJobController extends BaseController
                 tokenCost: $tokenCost,
                 videoId: $resolvedVideoId,
                 inputFileId: $inputFileId ? (int) $inputFileId : null,
-                provider: $provider,
                 preparedPayload: $inputPayload,
                 workUnits: $workUnits['units'] ?? null,
                 workUnitKind: $workUnits['kind'] ?? null,
                 workflowId: (int) $runtime['workflow_id'],
                 dispatchStage: (string) $runtime['dispatch_stage'],
-                priority: (int) $request->input('priority', 0)
+                priority: (int) $request->input('priority', 0),
+                benchmarkContextId: $runtime['selected_variant_id'] ?? null
             );
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'Insufficient token balance.') {
@@ -360,100 +350,4 @@ class AiJobController extends BaseController
             : str_starts_with($normalized, 'video/');
     }
 
-    private function ensureDispatch(
-        AiJob $job,
-        int $priority = 0,
-        ?string $provider = null,
-        ?float $workUnits = null,
-        ?string $workUnitKind = null,
-        ?int $workflowId = null,
-        string $dispatchStage = 'production'
-    ): ?AiJobDispatch
-    {
-        try {
-            return AiJobDispatch::query()->firstOrCreate([
-                'tenant_id' => (string) $job->tenant_id,
-                'tenant_job_id' => $job->id,
-            ], [
-                'provider' => $provider ?: ($job->provider ?: config('services.comfyui.default_provider', 'self_hosted')),
-                'workflow_id' => $workflowId,
-                'stage' => $dispatchStage,
-                'status' => 'queued',
-                'priority' => $priority,
-                'attempts' => 0,
-                'work_units' => $workUnits,
-                'work_unit_kind' => $workUnitKind,
-            ]);
-        } catch (\Throwable $e) {
-            $job->status = 'failed';
-            $job->error_message = 'Failed to enqueue job for dispatch.';
-            $job->completed_at = now();
-            $job->save();
-
-            try {
-                app(TokenLedgerService::class)->refundForJob($job, ['source' => 'dispatch_enqueue']);
-            } catch (\Throwable $ledgerError) {
-                // ignore refund failures to avoid masking dispatch errors
-            }
-
-            return null;
-        }
-    }
-
-    /**
-     * @return array{runtime_effect: Effect, workflow_id: int, dispatch_stage: string}
-     */
-    private function buildRuntimeEffectForPublicRun(Effect $effect): array
-    {
-        $effect->loadMissing('workflow');
-
-        $revision = null;
-        if ($effect->published_revision_id) {
-            $revision = EffectRevision::query()
-                ->where('effect_id', $effect->id)
-                ->find((int) $effect->published_revision_id);
-        }
-
-        if (!$revision) {
-            $revision = app(EffectRevisionService::class)->createSnapshot($effect, null);
-            $effect->published_revision_id = $revision->id;
-            $effect->save();
-        }
-
-        $workflowId = (int) ($revision?->workflow_id ?: $effect->workflow_id);
-        if ($workflowId <= 0) {
-            throw new \RuntimeException('Effect has no configured workflow.');
-        }
-
-        $workflow = Workflow::query()->find($workflowId);
-        if (!$workflow) {
-            throw new \RuntimeException('Effect has no configured workflow.');
-        }
-
-        $environment = app(EffectPublicationService::class)->resolveProductionEnvironmentForEffect(
-            $effect,
-            $workflow->id
-        );
-        if (!$environment || $environment->kind !== 'prod_asg' || $environment->stage !== 'production') {
-            throw new \RuntimeException('Effect is not available for production processing.');
-        }
-        if ((int) ($effect->prod_execution_environment_id ?? 0) !== (int) $environment->id) {
-            $effect->prod_execution_environment_id = $environment->id;
-            $effect->save();
-        }
-
-        $runtimeEffect = $effect->replicate();
-        $runtimeEffect->id = $effect->id;
-        $runtimeEffect->workflow_id = $workflow->id;
-        $runtimeEffect->property_overrides = is_array($revision?->property_overrides)
-            ? $revision->property_overrides
-            : $effect->property_overrides;
-        $runtimeEffect->setRelation('workflow', $workflow);
-
-        return [
-            'runtime_effect' => $runtimeEffect,
-            'workflow_id' => $workflow->id,
-            'dispatch_stage' => $environment->stage,
-        ];
-    }
 }

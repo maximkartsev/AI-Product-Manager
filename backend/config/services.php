@@ -57,7 +57,6 @@ return [
     ],
 
     'comfyui' => [
-        'default_provider' => env('COMFYUI_DEFAULT_PROVIDER', 'self_hosted'),
         'lease_ttl_seconds' => env('COMFYUI_LEASE_TTL_SECONDS', 900),
         'max_attempts' => env('COMFYUI_MAX_ATTEMPTS', 3),
         'presigned_ttl_seconds' => env('COMFYUI_PRESIGNED_TTL_SECONDS', 900),
@@ -83,6 +82,15 @@ return [
         'aws_region' => env('COMFYUI_AWS_REGION', 'us-east-1'),
         'emit_workflow_metrics' => env('COMFYUI_EMIT_WORKFLOW_METRICS', true),
         'emit_fleet_metrics' => env('COMFYUI_EMIT_FLEET_METRICS', true),
+        'studio_executor_secret' => env('STUDIO_EXECUTOR_SECRET'),
+        'load_test_runner_cluster' => env('STUDIO_LOAD_TEST_RUNNER_CLUSTER'),
+        'load_test_runner_task_definition' => env('STUDIO_LOAD_TEST_RUNNER_TASK_DEFINITION'),
+        'load_test_runner_container_name' => env('STUDIO_LOAD_TEST_RUNNER_CONTAINER_NAME', 'runner'),
+        'load_test_runner_subnets' => env('STUDIO_LOAD_TEST_RUNNER_SUBNETS'),
+        'load_test_runner_security_groups' => env('STUDIO_LOAD_TEST_RUNNER_SECURITY_GROUPS'),
+        'quality_eval_provider' => env('STUDIO_QUALITY_EVAL_PROVIDER', 'gemini'),
+        'gemini_api_key' => env('GEMINI_API_KEY'),
+        'gemini_model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
     ],
 
 ];

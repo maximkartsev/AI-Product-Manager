@@ -197,7 +197,6 @@ export type VideosIndexData = {
 export type AiJobRequest = {
   effect_id: number;
   idempotency_key: string;
-  provider?: string | null;
   video_id?: number | null;
   input_file_id?: number | null;
   input_payload?: Record<string, unknown> | null;
@@ -1940,6 +1939,51 @@ export type UnitEconomicsData = {
   totals: UnitEconomicsTotals;
 };
 
+export type StudioMoneyHudRow = {
+  benchmark_matrix_run_item_id: number;
+  variant_id: string;
+  execution_environment_id?: number | null;
+  instance_type?: string | null;
+  dispatch_count: number;
+  success_count: number;
+  failure_count: number;
+  failure_rate_percent: number;
+  quality_score?: number | null;
+  p95_latency_seconds?: number | null;
+  queue_wait_p95_seconds?: number | null;
+  processing_seconds_total: number;
+  compute_cost_usd: number;
+  partner_cost_usd: number;
+  estimated_revenue_usd: number;
+  margin_usd: number;
+  bottleneck_classification: string;
+};
+
+export type StudioMoneyHudRecommendation = {
+  type: string;
+  action: string;
+  target_variant_id?: string | null;
+  reason: string;
+  expected_margin_usd?: number | null;
+  failure_rate_percent?: number | null;
+  queue_wait_p95_seconds?: number | null;
+};
+
+export type StudioMoneyHudData = {
+  benchmark_matrix_run_id: number;
+  benchmark_context_id?: string | null;
+  status: string;
+  rows: StudioMoneyHudRow[];
+  winner?: StudioMoneyHudRow | null;
+  totals: {
+    compute_cost_usd: number;
+    partner_cost_usd: number;
+    estimated_revenue_usd: number;
+    margin_usd: number;
+  };
+  recommendations: StudioMoneyHudRecommendation[];
+};
+
 export function getUnitEconomicsAnalytics(params: {
   from?: string;
   to?: string;
@@ -1949,6 +1993,12 @@ export function getUnitEconomicsAnalytics(params: {
     to: params.to ?? undefined,
   };
   return apiGet<UnitEconomicsData>("/admin/economics/unit-economics", query);
+}
+
+export function getStudioMoneyHud(benchmarkMatrixRunId: number): Promise<StudioMoneyHudData> {
+  return apiGet<StudioMoneyHudData>("/admin/studio/economics/money-hud", {
+    benchmark_matrix_run_id: benchmarkMatrixRunId,
+  });
 }
 
 // ---- Admin Workflows

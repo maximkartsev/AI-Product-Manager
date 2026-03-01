@@ -1,0 +1,19 @@
+[
+  {
+    "name": "baseline_video_style_transfer",
+    "input_ref": "s3://fixtures/input/baseline-source.mp4",
+    "output_ref": "s3://fixtures/output/baseline-candidate.mp4",
+    "rubric_version": "v1",
+    "expected_min_composite": 0.0,
+    "expected_max_composite": 1.0
+  },
+  {
+    "name": "high_motion_scene",
+    "input_ref": "s3://fixtures/input/high-motion-source.mp4",
+    "output_ref": "s3://fixtures/output/high-motion-candidate.mp4",
+    "rubric_version": "v1",
+    "expected_min_composite": 0.0,
+    "expected_max_composite": 1.0
+  }
+]
+

@@ -6,10 +6,13 @@ use App\Models\ComfyUiWorker;
 use App\Models\ComfyUiWorkerSession;
 use App\Models\ComfyUiWorkflowFleet;
 use App\Models\ExecutionEnvironment;
+use App\Models\LoadTestRun;
 use App\Models\ProductionFleetSnapshot;
 use App\Models\WorkerAuditLog;
 use App\Services\ComfyUiCloudWatchRegionResolver;
 use App\Services\ComfyUiFleetCloudWatchMetricsBuilder;
+use App\Services\LoadTesting\LoadTestRunnerService;
+use App\Services\Observability\ActionLogAnomalyDetector;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +26,54 @@ Artisan::command('videos:cleanup-expired', function () {
     $count = app(VideoCleanupService::class)->cleanupExpiredVideos();
     $this->comment("Expired videos cleaned: {$count}");
 })->purpose('Cleanup expired processed videos');
+
+Artisan::command('studio:run-load-test {--run-id=} {--dry-run}', function () {
+    $runId = (int) $this->option('run-id');
+    if ($runId <= 0) {
+        $this->error('Missing required --run-id option.');
+        return 1;
+    }
+
+    $run = LoadTestRun::query()->find($runId);
+    if (!$run) {
+        $this->error("Load test run {$runId} was not found.");
+        return 1;
+    }
+
+    try {
+        $result = app(LoadTestRunnerService::class)->run($run, (bool) $this->option('dry-run'));
+    } catch (\Throwable $e) {
+        $run->status = 'failed';
+        $run->completed_at = now();
+        $run->metrics_json = array_merge($run->metrics_json ?? [], [
+            'runner_error' => $e->getMessage(),
+        ]);
+        $run->save();
+
+        $this->error('Load test execution failed: ' . $e->getMessage());
+        return 1;
+    }
+
+    $this->info('Load test execution completed.');
+    $this->line(json_encode($result, JSON_PRETTY_PRINT));
+    return 0;
+})->purpose('Execute a load test scenario run (inline runner)');
+
+Artisan::command('studio:scan-action-log-anomalies {--lookback-minutes=30}', function () {
+    $lookbackMinutes = (int) $this->option('lookback-minutes');
+    if ($lookbackMinutes < 5) {
+        $lookbackMinutes = 5;
+    }
+    if ($lookbackMinutes > 1440) {
+        $lookbackMinutes = 1440;
+    }
+
+    $result = app(ActionLogAnomalyDetector::class)->scanRecent($lookbackMinutes);
+    $this->info('Action log anomaly scan completed.');
+    $this->line(json_encode($result, JSON_PRETTY_PRINT));
+
+    return 0;
+})->purpose('Scan recent action logs and emit anomaly guidance');
 
 /*
 |--------------------------------------------------------------------------

@@ -20,12 +20,7 @@ WORKER_ID = os.environ.get("WORKER_ID", f"worker-{uuid.uuid4()}")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
 FLEET_SECRET = os.environ.get("FLEET_SECRET", "")
 
-COMFY_PROVIDER = os.environ.get("COMFY_PROVIDER", "self_hosted").lower()
-COMFY_PROVIDERS = os.environ.get("COMFY_PROVIDERS", "")
-
 COMFYUI_BASE_URL = os.environ.get("COMFYUI_BASE_URL", "http://localhost:8188")
-COMFY_CLOUD_BASE_URL = os.environ.get("COMFY_CLOUD_BASE_URL", "https://cloud.comfy.org")
-COMFY_CLOUD_API_KEY = os.environ.get("COMFY_CLOUD_API_KEY", "")
 
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "3"))
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "30"))
@@ -60,22 +55,6 @@ def _backend_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return resp.json()
 
 
-def _cloud_headers() -> Dict[str, str]:
-    if not COMFY_CLOUD_API_KEY:
-        raise RuntimeError("COMFY_CLOUD_API_KEY is required for cloud provider.")
-    return {"X-API-Key": COMFY_CLOUD_API_KEY}
-
-
-def _cloud_request(method: str, path: str, **kwargs) -> requests.Response:
-    url = f"{COMFY_CLOUD_BASE_URL}{path}"
-    headers = kwargs.pop("headers", {})
-    headers.update(_cloud_headers())
-    timeout = kwargs.pop("timeout", 60)
-    resp = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
-    resp.raise_for_status()
-    return resp
-
-
 def _parse_capabilities() -> Optional[Dict[str, Any]]:
     if not CAPABILITIES:
         return None
@@ -83,14 +62,6 @@ def _parse_capabilities() -> Optional[Dict[str, Any]]:
         return json.loads(CAPABILITIES)
     except json.JSONDecodeError:
         return {"raw": CAPABILITIES}
-
-
-def _parse_providers() -> List[str]:
-    if COMFY_PROVIDERS:
-        return [provider.strip() for provider in COMFY_PROVIDERS.split(",") if provider.strip()]
-    if COMFY_PROVIDER:
-        return [COMFY_PROVIDER]
-    return ["self_hosted"]
 
 
 def _fetch_imds(path: str) -> Optional[str]:
@@ -244,7 +215,6 @@ def poll(current_load: int) -> Optional[Dict[str, Any]]:
         "current_load": current_load,
         "max_concurrency": MAX_CONCURRENCY,
         "capabilities": _parse_capabilities(),
-        "providers": _parse_providers(),
     }
     data = _backend_post("/api/worker/poll", payload)
     return data.get("data", {}).get("job")
@@ -334,7 +304,6 @@ def upload_to_comfyui(file_path: str, endpoint: str) -> str:
 
 def download_and_upload_assets(
     assets: List[Dict[str, Any]],
-    provider: str,
     endpoint: str,
 ) -> Dict[str, str]:
     """Download assets from presigned URLs and upload to ComfyUI.
@@ -360,13 +329,8 @@ def download_and_upload_assets(
         # Download the asset
         tmp_path = download_input(download_url)
         try:
-            # Upload to ComfyUI
-            if provider == "cloud":
-                asset_name = os.path.basename(download_url.split("?")[0])
-                upload_result = cloud_upload_input_file(tmp_path, asset_name, None)
-                comfyui_name = upload_result.get("name", asset_name)
-            else:
-                comfyui_name = upload_to_comfyui(tmp_path, endpoint)
+            # Upload to ComfyUI on this self-hosted node.
+            comfyui_name = upload_to_comfyui(tmp_path, endpoint)
 
             placeholder_map[placeholder] = comfyui_name
 
@@ -866,95 +830,6 @@ def download_comfyui_output(file_info: Dict[str, Any]) -> str:
         return tmp.name
 
 
-def cloud_upload_asset_from_url(input_url: str, name: str, mime_type: Optional[str]) -> Dict[str, Any]:
-    payload = {
-        "url": input_url,
-        "name": name,
-        "tags": ["input"],
-        "user_metadata": {
-            "mime_type": mime_type or "application/octet-stream",
-        },
-    }
-    resp = _cloud_request("POST", "/api/assets", json=payload)
-    return resp.json()
-
-
-def cloud_upload_input_file(file_path: str, name: str, mime_type: Optional[str]) -> Dict[str, Any]:
-    file_name = name or os.path.basename(file_path)
-    file_mime = mime_type or "application/octet-stream"
-    form_data = {
-        "type": "input",
-    }
-    with open(file_path, "rb") as handle:
-        files = {"image": (file_name, handle, file_mime)}
-        resp = _cloud_request("POST", "/api/upload/image", data=form_data, files=files, timeout=300)
-    return resp.json()
-
-
-def cloud_submit_prompt(workflow: Dict[str, Any], extra_data: Optional[Dict[str, Any]]) -> str:
-    payload: Dict[str, Any] = {"prompt": workflow}
-    if extra_data:
-        payload["extra_data"] = extra_data
-
-    resp = _cloud_request("POST", "/api/prompt", json=payload)
-    data = resp.json()
-    prompt_id = data.get("prompt_id")
-    if not prompt_id:
-        raise RuntimeError("Comfy Cloud did not return prompt_id.")
-    return prompt_id
-
-
-def cloud_wait_for_job(prompt_id: str) -> None:
-    start = time.time()
-    while True:
-        if time.time() - start > 3600:
-            raise TimeoutError("Comfy Cloud job timed out.")
-
-        status_resp = _cloud_request("GET", f"/api/job/{prompt_id}/status")
-        status_data = status_resp.json()
-        status = status_data.get("status")
-        if status in ("completed", "success"):
-            return
-        if status in ("error", "cancelled", "failed", "non_retryable_error", "retryable_error"):
-            raise RuntimeError(status_data.get("error_message") or "Comfy Cloud job failed.")
-
-        time.sleep(2)
-
-
-def cloud_fetch_outputs(prompt_id: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    history_resp = _cloud_request("GET", f"/api/history_v2/{prompt_id}")
-    history = history_resp.json()
-    record = history.get(prompt_id) or history.get(str(prompt_id))
-    if not record:
-        raise RuntimeError("Comfy Cloud history did not return outputs.")
-    outputs = record.get("outputs", {})
-    if not outputs:
-        raise RuntimeError("Comfy Cloud outputs missing.")
-    return outputs, record
-
-
-def cloud_download_output(file_info: Dict[str, Any]) -> str:
-    filename = file_info.get("filename")
-    subfolder = file_info.get("subfolder", "")
-    file_type = file_info.get("type", "output")
-
-    if not filename:
-        raise RuntimeError("Comfy Cloud output missing filename.")
-
-    params = {
-        "filename": filename,
-        "subfolder": subfolder,
-        "type": file_type,
-    }
-    resp = _cloud_request("GET", "/api/view", params=params, stream=True, allow_redirects=True)
-    suffix = os.path.splitext(filename)[1] or ".bin"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        for chunk in resp.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                tmp.write(chunk)
-        return tmp.name
-
-
 def _safe_unlink(path: Optional[str]) -> None:
     if not path:
         return
@@ -976,11 +851,6 @@ def process_job(job: Dict[str, Any]) -> None:
     if not output_url:
         raise RuntimeError("Missing output_url in job payload.")
 
-    provider = (job.get("provider") or _parse_providers()[0]).lower()
-    if provider not in _parse_providers():
-        raise RuntimeError(f"Provider '{provider}' not supported by this worker.")
-
-    input_reference = None
     input_path = None
     output_path = None
 
@@ -990,53 +860,9 @@ def process_job(job: Dict[str, Any]) -> None:
 
     try:
         if assets and isinstance(assets, list):
-            comfyui_endpoint = COMFY_CLOUD_BASE_URL if provider == "cloud" else COMFYUI_BASE_URL
-            asset_placeholder_map = download_and_upload_assets(assets, provider, comfyui_endpoint)
+            asset_placeholder_map = download_and_upload_assets(assets, COMFYUI_BASE_URL)
 
-        if provider == "cloud":
-            if not input_url and not asset_placeholder_map:
-                raise RuntimeError("Missing input_url for cloud provider.")
-
-            if input_url and not asset_placeholder_map:
-                # Legacy path: no asset pipeline
-                asset_name = input_payload.get("input_name") or os.path.basename(input_url.split("?")[0])
-                input_path = download_input(input_url)
-                upload = cloud_upload_input_file(input_path, asset_name, input_payload.get("input_mime_type"))
-                input_reference = upload.get("name")
-                if not input_reference:
-                    raise RuntimeError("Cloud input upload missing filename.")
-                input_payload["input_reference_prefix"] = ""
-            elif input_url:
-                # Asset pipeline handled the primary input upload already
-                input_payload["input_reference_prefix"] = ""
-
-            workflow = prepare_workflow(input_payload, input_reference, asset_placeholder_map)
-            extra_data = dict(input_payload.get("extra_data") or {})
-            prompt_id = cloud_submit_prompt(workflow, extra_data or None)
-            cloud_wait_for_job(prompt_id)
-            outputs, history_entry = cloud_fetch_outputs(prompt_id)
-            output_file_info = extract_output_file(outputs, output_node_id)
-            output_path = cloud_download_output(output_file_info)
-
-            output_metadata: Dict[str, Any] = {}
-            try:
-                usage_events = extract_partner_usage_events(workflow, history_entry)
-                if usage_events:
-                    output_metadata["partner_usage_events"] = usage_events
-            except Exception as exc:
-                print(f"[worker] Partner usage extraction skipped: {exc}")
-
-            upload_output(output_url, output_headers, output_path)
-            complete_job(
-                dispatch_id,
-                lease_token,
-                prompt_id,
-                output_path,
-                output_metadata if output_metadata else None,
-            )
-            return
-
-        # self_hosted: run on local ComfyUI instance
+        # Always run against self-hosted ComfyUI on this AWS node.
         input_path = download_input(input_url) if input_url else None
         workflow = prepare_workflow(input_payload, input_path, asset_placeholder_map)
 

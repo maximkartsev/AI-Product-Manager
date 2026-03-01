@@ -23,6 +23,7 @@ class StudioBlackboxRunnerService
     /**
      * @param array<string, mixed> $inputPayload
      * @param array<string, mixed> $costModelInput
+     * @param array<string, mixed> $dispatchContext
      * @return array{
      *   run: EffectTestRun,
      *   job_ids: array<int, int>,
@@ -40,7 +41,8 @@ class StudioBlackboxRunnerService
         int $inputFileId,
         array $inputPayload,
         int $count,
-        array $costModelInput = []
+        array $costModelInput = [],
+        array $dispatchContext = []
     ): array {
         $workflow = $this->resolveWorkflow($effect, $revision);
         $this->assertEnvironment($environment);
@@ -63,8 +65,14 @@ class StudioBlackboxRunnerService
         );
 
         $tokenCost = (int) ceil((float) $effect->credits_cost);
-        $provider = (string) config('services.comfyui.default_provider', 'self_hosted');
-        $dispatchStage = 'staging';
+        $dispatchStage = (string) ($dispatchContext['dispatch_stage'] ?? 'staging');
+        $benchmarkContextId = isset($dispatchContext['benchmark_context_id'])
+            ? (string) $dispatchContext['benchmark_context_id']
+            : null;
+        $loadTestRunId = isset($dispatchContext['load_test_run_id']) ? (int) $dispatchContext['load_test_run_id'] : null;
+        $experimentVariantId = isset($dispatchContext['experiment_variant_id'])
+            ? (int) $dispatchContext['experiment_variant_id']
+            : null;
 
         $run->status = 'running';
         $run->started_at = now();
@@ -81,7 +89,6 @@ class StudioBlackboxRunnerService
                 tokenCost: $tokenCost,
                 videoId: null,
                 inputFileId: (int) $inputFile->id,
-                provider: $provider,
                 preparedPayload: $jobPayload,
                 workUnits: $workUnits['units'] ?? null,
                 workUnitKind: $workUnits['kind'] ?? null,
@@ -92,7 +99,11 @@ class StudioBlackboxRunnerService
                     'source' => 'studio_blackbox',
                     'effect_id' => $effect->id,
                     'effect_test_run_id' => $run->id,
-                ]
+                    'benchmark_context_id' => $benchmarkContextId,
+                    'experiment_variant_id' => $experimentVariantId,
+                ],
+                loadTestRunId: $loadTestRunId,
+                benchmarkContextId: $benchmarkContextId
             );
 
             $job = $submission['job'];
@@ -115,6 +126,8 @@ class StudioBlackboxRunnerService
         $run->completed_at = null;
         $run->metrics_json = array_merge($run->metrics_json ?? [], [
             'dispatch_stage' => $dispatchStage,
+            'benchmark_context_id' => $benchmarkContextId,
+            'experiment_variant_id' => $experimentVariantId,
             'job_ids' => $jobIds,
             'dispatch_ids' => $dispatchIds,
             'cost_report' => $costReport,

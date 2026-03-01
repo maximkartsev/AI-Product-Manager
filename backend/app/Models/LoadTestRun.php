@@ -56,4 +56,14 @@ class LoadTestRun extends CentralModel
         'completed_at' => 'datetime',
         'created_by_user_id' => 'integer',
     ];
+
+    public function scenario()
+    {
+        return $this->belongsTo(LoadTestScenario::class, 'load_test_scenario_id');
+    }
+
+    public function executionEnvironment()
+    {
+        return $this->belongsTo(ExecutionEnvironment::class, 'execution_environment_id');
+    }
 }

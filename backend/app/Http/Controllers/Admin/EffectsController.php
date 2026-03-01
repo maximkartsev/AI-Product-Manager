@@ -308,13 +308,12 @@ class EffectsController extends BaseController
         }
 
         $count = (int) $request->input('count');
-        $provider = (string) config('services.comfyui.default_provider', 'self_hosted');
         $tenantId = (string) tenant()->getKey();
         $videoIds = [];
         $jobIds = [];
 
         for ($i = 0; $i < $count; $i++) {
-            [$video, $job] = DB::connection('tenant')->transaction(function () use ($effect, $inputFile, $inputPayload, $user, $tenantId, $provider, $jobPayload) {
+            [$video, $job] = DB::connection('tenant')->transaction(function () use ($effect, $inputFile, $inputPayload, $user, $tenantId, $jobPayload) {
                 $video = Video::query()->create([
                     'tenant_id' => $tenantId,
                     'user_id' => (int) $user->id,
@@ -329,7 +328,6 @@ class EffectsController extends BaseController
                     'tenant_id' => $tenantId,
                     'user_id' => (int) $user->id,
                     'effect_id' => $effect->id,
-                    'provider' => $provider,
                     'video_id' => $video->id,
                     'input_file_id' => $inputFile->id,
                     'status' => 'queued',
@@ -346,7 +344,6 @@ class EffectsController extends BaseController
             AiJobDispatch::query()->create([
                 'tenant_id' => $tenantId,
                 'tenant_job_id' => $job->id,
-                'provider' => $provider,
                 'workflow_id' => $effect->workflow_id,
                 'stage' => $stage,
                 'status' => 'queued',

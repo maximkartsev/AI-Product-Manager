@@ -78,7 +78,6 @@ class AiJobsSeeder extends Seeder
                 'tenant_job_id' => $job->id,
             ],
             [
-                'provider' => $job->provider ?: config('services.comfyui.default_provider', 'self_hosted'),
                 'workflow_id' => $workflowId,
                 'status' => $status,
                 'priority' => 0,

@@ -17,6 +17,7 @@ import {
   updateEconomicsSettings,
   updatePartnerUsagePricing,
   getUnitEconomicsAnalytics,
+  getStudioMoneyHud,
   getAdminWorkflows,
   updateAdminWorkflow,
   type EconomicsSettings,
@@ -28,6 +29,7 @@ import {
   type UnitEconomicsByEffect,
   type UnitEconomicsData,
   type AdminWorkflow,
+  type StudioMoneyHudData,
 } from "@/lib/api";
 
 type RateRow = {
@@ -167,6 +169,9 @@ export default function AdminEconomicsPage() {
   const [partnerPricingDraftRows, setPartnerPricingDraftRows] = useState<PartnerPricingDraftRow[]>([]);
   const [loadingPartnerPricing, setLoadingPartnerPricing] = useState(true);
   const [savingPartnerPricing, setSavingPartnerPricing] = useState(false);
+  const [moneyHudRunId, setMoneyHudRunId] = useState("");
+  const [moneyHudData, setMoneyHudData] = useState<StudioMoneyHudData | null>(null);
+  const [loadingMoneyHud, setLoadingMoneyHud] = useState(false);
 
   const loadSettings = useCallback(async () => {
     setLoadingSettings(true);
@@ -237,6 +242,25 @@ export default function AdminEconomicsPage() {
       setLoadingUnitData(false);
     }
   }, [fromDate, toDate]);
+
+  const loadMoneyHud = useCallback(async () => {
+    const parsedRunId = Number(moneyHudRunId.trim());
+    if (!Number.isFinite(parsedRunId) || parsedRunId <= 0) {
+      toast.error("Enter a valid Benchmark Matrix Run ID.");
+      return;
+    }
+
+    setLoadingMoneyHud(true);
+    try {
+      const result = await getStudioMoneyHud(parsedRunId);
+      setMoneyHudData(result);
+    } catch (error) {
+      setMoneyHudData(null);
+      toast.error(extractErrorMessage(error, "Failed to load Money HUD."));
+    } finally {
+      setLoadingMoneyHud(false);
+    }
+  }, [moneyHudRunId]);
 
   useEffect(() => {
     loadSettings();
@@ -1031,6 +1055,108 @@ export default function AdminEconomicsPage() {
                 </TableBody>
               </Table>
             </div>
+          )}
+        </section>
+
+        <section className="space-y-4 rounded-lg border border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold">Money HUD (Benchmark)</h2>
+              <p className="text-xs text-muted-foreground">
+                Load per-variant margin, bottlenecks, and recommendations for a benchmark matrix run.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                value={moneyHudRunId}
+                onChange={(event) => setMoneyHudRunId(event.target.value)}
+                placeholder="Benchmark run ID"
+                className="w-48"
+              />
+              <Button variant="outline" onClick={loadMoneyHud} disabled={loadingMoneyHud}>
+                {loadingMoneyHud ? "Loading..." : "Load Money HUD"}
+              </Button>
+            </div>
+          </div>
+
+          {moneyHudData ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-md border border-border bg-muted px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Compute Cost</div>
+                  <div className="text-lg font-semibold">{formatCurrency(moneyHudData.totals.compute_cost_usd)}</div>
+                </div>
+                <div className="rounded-md border border-border bg-muted px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Partner Cost</div>
+                  <div className="text-lg font-semibold">{formatCurrency(moneyHudData.totals.partner_cost_usd)}</div>
+                </div>
+                <div className="rounded-md border border-border bg-muted px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Estimated Revenue</div>
+                  <div className="text-lg font-semibold">{formatCurrency(moneyHudData.totals.estimated_revenue_usd)}</div>
+                </div>
+                <div className="rounded-md border border-border bg-muted px-3 py-2">
+                  <div className="text-xs text-muted-foreground">Total Margin</div>
+                  <div className="text-lg font-semibold">{formatCurrency(moneyHudData.totals.margin_usd)}</div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Variant</TableHead>
+                      <TableHead className="text-right">Quality</TableHead>
+                      <TableHead className="text-right">Failure %</TableHead>
+                      <TableHead className="text-right">Queue p95</TableHead>
+                      <TableHead className="text-right">Compute $</TableHead>
+                      <TableHead className="text-right">Partner $</TableHead>
+                      <TableHead className="text-right">Margin $</TableHead>
+                      <TableHead>Bottleneck</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {moneyHudData.rows.length > 0 ? (
+                      moneyHudData.rows.map((row) => (
+                        <TableRow key={row.benchmark_matrix_run_item_id}>
+                          <TableCell className="font-medium">{row.variant_id}</TableCell>
+                          <TableCell className="text-right">{formatNumber(row.quality_score ?? null, 4)}</TableCell>
+                          <TableCell className="text-right">{formatNumber(row.failure_rate_percent, 2)}</TableCell>
+                          <TableCell className="text-right">{formatNumber(row.queue_wait_p95_seconds ?? null, 2)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(row.compute_cost_usd)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(row.partner_cost_usd)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(row.margin_usd)}</TableCell>
+                          <TableCell>{row.bottleneck_classification}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                          No benchmark variants found for this run.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="rounded-lg border border-border p-3">
+                <h3 className="text-sm font-medium mb-2">Recommendations</h3>
+                {moneyHudData.recommendations.length > 0 ? (
+                  <ul className="space-y-1 text-sm text-muted-foreground">
+                    {moneyHudData.recommendations.map((recommendation, index) => (
+                      <li key={`${recommendation.action}-${index}`}>
+                        {recommendation.action}: {recommendation.reason}
+                        {recommendation.target_variant_id ? ` (${recommendation.target_variant_id})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No recommendations generated.</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Load a benchmark run to view Money HUD details.</p>
           )}
         </section>
       </div>

@@ -9,6 +9,7 @@ use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureWorkerToken;
 use App\Http\Middleware\EnsureFleetSecret;
 use App\Http\Middleware\EnsureAssetOpsSecret;
+use App\Http\Middleware\EnsureStudioExecutorSecret;
 use App\Http\Controllers\ComfyUiWorkerController;
 use App\Http\Controllers\ComfyUiAssetOpsController;
 use App\Http\Controllers\Webhook\PaymentWebhookController;
@@ -59,6 +60,13 @@ use \App\Http\Controllers\Admin\StudioExperimentVariantsController as AdminStudi
 use \App\Http\Controllers\Admin\StudioFleetConfigSnapshotsController as AdminStudioFleetConfigSnapshotsController;
 use \App\Http\Controllers\Admin\StudioProductionFleetSnapshotsController as AdminStudioProductionFleetSnapshotsController;
 use \App\Http\Controllers\Admin\StudioRunArtifactsController as AdminStudioRunArtifactsController;
+use \App\Http\Controllers\Admin\StudioLoadTestExecutorController as AdminStudioLoadTestExecutorController;
+use \App\Http\Controllers\Admin\StudioVariantRegistryController as AdminStudioVariantRegistryController;
+use \App\Http\Controllers\Admin\StudioBenchmarkMatrixRunsController as AdminStudioBenchmarkMatrixRunsController;
+use \App\Http\Controllers\Admin\StudioQualityEvaluationsController as AdminStudioQualityEvaluationsController;
+use \App\Http\Controllers\Admin\StudioMoneyHudController as AdminStudioMoneyHudController;
+use \App\Http\Controllers\Admin\StudioRoutingController as AdminStudioRoutingController;
+use \App\Http\Controllers\Admin\StudioActionLogsController as AdminStudioActionLogsController;
 
 /**
  * Central/public routes (no tenant initialization required).
@@ -122,6 +130,12 @@ Route::middleware([EnsureAssetOpsSecret::class])
     ->prefix('ops/comfyui-assets')
     ->group(function () {
         Route::post('/sync-logs', [ComfyUiAssetOpsController::class, 'storeSyncLog']);
+    });
+
+Route::middleware([EnsureStudioExecutorSecret::class])
+    ->prefix('ops/studio/load-test')
+    ->group(function () {
+        Route::post('/submit-dispatches', [AdminStudioLoadTestExecutorController::class, 'submitDispatches']);
     });
 
 /**
@@ -261,10 +275,29 @@ Route::middleware([
             Route::get('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'index']);
             Route::post('/studio/load-test-runs', [AdminStudioLoadTestRunsController::class, 'store']);
             Route::get('/studio/load-test-runs/{id}', [AdminStudioLoadTestRunsController::class, 'show']);
+            Route::post('/studio/load-test-runs/{id}/start', [AdminStudioLoadTestRunsController::class, 'start']);
+            Route::post('/studio/load-test-runs/{id}/cancel', [AdminStudioLoadTestRunsController::class, 'cancel']);
             Route::get('/studio/experiment-variants', [AdminStudioExperimentVariantsController::class, 'index']);
             Route::post('/studio/experiment-variants', [AdminStudioExperimentVariantsController::class, 'store']);
             Route::get('/studio/experiment-variants/{id}', [AdminStudioExperimentVariantsController::class, 'show']);
             Route::patch('/studio/experiment-variants/{id}', [AdminStudioExperimentVariantsController::class, 'update']);
+            Route::get(
+                '/studio/variant-registry/effect-revisions/{effectRevisionId}',
+                [AdminStudioVariantRegistryController::class, 'eligibleByEffectRevision']
+            );
+            Route::get('/studio/benchmark-matrix-runs', [AdminStudioBenchmarkMatrixRunsController::class, 'index']);
+            Route::post('/studio/benchmark-matrix-runs', [AdminStudioBenchmarkMatrixRunsController::class, 'store']);
+            Route::get('/studio/benchmark-matrix-runs/{id}', [AdminStudioBenchmarkMatrixRunsController::class, 'show']);
+            Route::get('/studio/quality-evaluations', [AdminStudioQualityEvaluationsController::class, 'index']);
+            Route::post('/studio/quality-evaluations', [AdminStudioQualityEvaluationsController::class, 'store']);
+            Route::get('/studio/quality-evaluations/{id}', [AdminStudioQualityEvaluationsController::class, 'show']);
+            Route::get('/studio/economics/money-hud', [AdminStudioMoneyHudController::class, 'show']);
+            Route::get('/studio/routing/effect-revisions/{effectRevisionId}', [AdminStudioRoutingController::class, 'show']);
+            Route::post('/studio/routing/apply', [AdminStudioRoutingController::class, 'apply']);
+            Route::post('/studio/routing/rollback', [AdminStudioRoutingController::class, 'rollback']);
+            Route::get('/studio/action-logs', [AdminStudioActionLogsController::class, 'index']);
+            Route::get('/studio/observability/sinks', [AdminStudioActionLogsController::class, 'sinks']);
+            Route::post('/studio/action-logs/scan-anomalies', [AdminStudioActionLogsController::class, 'scanAnomalies']);
             Route::get('/studio/fleet-config-snapshots', [AdminStudioFleetConfigSnapshotsController::class, 'index']);
             Route::post('/studio/fleet-config-snapshots', [AdminStudioFleetConfigSnapshotsController::class, 'store']);
             Route::get('/studio/fleet-config-snapshots/{id}', [AdminStudioFleetConfigSnapshotsController::class, 'show']);

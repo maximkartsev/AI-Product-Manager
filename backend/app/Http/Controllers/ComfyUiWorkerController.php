@@ -8,6 +8,7 @@ use App\Models\ComfyUiWorker;
 use App\Models\ComfyUiWorkerSession;
 use App\Models\ComfyUiGpuFleet;
 use App\Models\ComfyUiWorkflowFleet;
+use App\Models\DevNode;
 use App\Models\Effect;
 use App\Models\File;
 use App\Models\PartnerUsageEvent;
@@ -55,16 +56,15 @@ class ComfyUiWorkerController extends BaseController
             return $this->sendError('Validation error.', $validator->errors(), 422);
         }
 
-        $maxFleetWorkers = (int) config('services.comfyui.max_fleet_workers', 50);
-        $currentFleetCount = ComfyUiWorker::query()
-            ->where('registration_source', 'fleet')
-            ->count();
-
-        if ($currentFleetCount >= $maxFleetWorkers) {
-            return $this->sendError('Fleet worker limit reached.', [], 403);
+        $workerId = $request->input('worker_id');
+        if (!$this->isEc2InstanceId($workerId)) {
+            return $this->sendError('Worker identity must be an AWS EC2 instance id.', [], 422);
         }
 
-        $workerId = $request->input('worker_id');
+        $stage = (string) $request->input('stage', 'production');
+        if (!in_array($stage, ['staging', 'production'], true)) {
+            return $this->sendError('Invalid stage. Expected staging or production.', [], 422);
+        }
 
         // Prevent duplicate registration
         $existing = ComfyUiWorker::query()->where('worker_id', $workerId)->first();
@@ -72,35 +72,37 @@ class ComfyUiWorkerController extends BaseController
             return $this->sendError('Worker already registered.', [], 409);
         }
 
-        // Validate instance belongs to a known ASG (if worker_id looks like an EC2 instance ID)
-        if (str_starts_with($workerId, 'i-') && config('services.comfyui.validate_asg_instance', false)) {
-            try {
-                $asgClient = new \Aws\AutoScaling\AutoScalingClient([
-                    'region' => config('services.comfyui.aws_region', config('services.ses.region', 'us-east-1')),
-                    'version' => 'latest',
-                ]);
-                $result = $asgClient->describeAutoScalingInstances([
-                    'InstanceIds' => [$workerId],
-                ]);
-                if (empty($result['AutoScalingInstances'])) {
-                    return $this->sendError('Instance not found in any ASG.', [], 403);
+        $registrationSource = 'fleet';
+        if ((bool) config('services.comfyui.validate_asg_instance', false)) {
+            $isAsgWorker = $this->isAsgInstance($workerId);
+            if (!$isAsgWorker) {
+                if ($this->isRegisteredDevNode($workerId, $stage)) {
+                    $registrationSource = 'dev_node';
+                } else {
+                    return $this->sendError(
+                        'Worker instance is not part of an AWS ASG or an active DevNode.',
+                        [],
+                        403
+                    );
                 }
-            } catch (\Throwable $e) {
-                \Log::warning('ASG instance validation failed', [
-                    'worker_id' => $workerId,
-                    'error' => $e->getMessage(),
-                ]);
-                // Fail open — allow registration if AWS API is unreachable
+            }
+        } elseif ($this->isRegisteredDevNode($workerId, $stage)) {
+            $registrationSource = 'dev_node';
+        }
+
+        if ($registrationSource === 'fleet') {
+            $maxFleetWorkers = (int) config('services.comfyui.max_fleet_workers', 50);
+            $currentFleetCount = ComfyUiWorker::query()
+                ->where('registration_source', 'fleet')
+                ->count();
+
+            if ($currentFleetCount >= $maxFleetWorkers) {
+                return $this->sendError('Fleet worker limit reached.', [], 403);
             }
         }
 
         $plainToken = Str::random(64);
         $tokenHash = hash('sha256', $plainToken);
-
-        $stage = (string) $request->input('stage', 'production');
-        if (!in_array($stage, ['staging', 'production'], true)) {
-            return $this->sendError('Invalid stage. Expected staging or production.', [], 422);
-        }
 
         $fleetSlug = (string) $request->input('fleet_slug');
         $fleet = ComfyUiGpuFleet::query()
@@ -138,7 +140,7 @@ class ComfyUiWorkerController extends BaseController
             'is_draining' => false,
             'is_approved' => true,
             'last_ip' => $request->ip(),
-            'registration_source' => 'fleet',
+            'registration_source' => $registrationSource,
             'capacity_type' => $request->input('capacity_type'),
             'stage' => $stage,
         ]);
@@ -169,7 +171,7 @@ class ComfyUiWorkerController extends BaseController
                 null,
                 $request->ip(),
                 [
-                    'registration_source' => 'fleet',
+                    'registration_source' => $registrationSource,
                     'fleet_slug' => $fleetSlug,
                     'stage' => $stage,
                     'capacity_type' => $worker->capacity_type,
@@ -274,8 +276,6 @@ class ComfyUiWorkerController extends BaseController
             'worker_id' => 'string|required|max:255',
             'display_name' => 'string|nullable|max:255',
             'capabilities' => 'array|nullable',
-            'providers' => 'array|nullable',
-            'providers.*' => 'string|max:50',
             'current_load' => 'integer|nullable|min:0',
             'max_concurrency' => 'integer|nullable|min:0',
         ]);
@@ -297,15 +297,6 @@ class ComfyUiWorkerController extends BaseController
 
         $leaseTtlSeconds = (int) config('services.comfyui.lease_ttl_seconds', self::DEFAULT_LEASE_TTL_SECONDS);
         $maxAttempts = (int) config('services.comfyui.max_attempts', self::DEFAULT_MAX_ATTEMPTS);
-
-        $providers = (array) $request->input(
-            'providers',
-            [config('services.comfyui.default_provider', 'self_hosted')]
-        );
-        $providers = array_values(array_filter($providers));
-        if (empty($providers)) {
-            $providers = [config('services.comfyui.default_provider', 'self_hosted')];
-        }
         // Get worker's assigned workflow IDs for dispatch filtering
         $workflowIds = $worker->workflows()->pluck('workflows.id')->toArray();
 
@@ -313,7 +304,6 @@ class ComfyUiWorkerController extends BaseController
             $worker->worker_id,
             $leaseTtlSeconds,
             $maxAttempts,
-            $providers,
             $workflowIds,
             $worker->stage ?: 'production'
         );
@@ -634,18 +624,16 @@ class ComfyUiWorkerController extends BaseController
         string $workerId,
         int $leaseTtlSeconds,
         int $maxAttempts,
-        array $providers,
         array $workflowIds = [],
         ?string $stage = null
     ): ?AiJobDispatch
     {
-        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts, $providers, $workflowIds, $stage) {
+        return DB::connection('central')->transaction(function () use ($workerId, $leaseTtlSeconds, $maxAttempts, $workflowIds, $stage) {
             $now = now();
             $effectiveStage = $stage ?: 'production';
 
             $query = AiJobDispatch::query()
                 ->where('stage', $effectiveStage)
-                ->whereIn('provider', $providers)
                 ->where('attempts', '<', $maxAttempts)
                 ->where(function ($q) use ($now) {
                     $q
@@ -769,7 +757,6 @@ class ComfyUiWorkerController extends BaseController
                 'dispatch_id' => $dispatch->id,
                 'lease_token' => $dispatch->lease_token,
                 'lease_expires_at' => $dispatch->lease_expires_at?->toIso8601String(),
-                'provider' => $dispatch->provider,
                 'tenant_id' => $dispatch->tenant_id,
                 'job_id' => $job->id,
                 'effect_id' => $job->effect_id,
@@ -966,6 +953,46 @@ class ComfyUiWorkerController extends BaseController
         return null;
     }
 
+    private function isEc2InstanceId(string $workerId): bool
+    {
+        return (bool) preg_match('/^i-[a-z0-9-]{3,32}$/i', trim($workerId));
+    }
+
+    private function isAsgInstance(string $workerId): bool
+    {
+        try {
+            $asgClient = new \Aws\AutoScaling\AutoScalingClient([
+                'region' => config('services.comfyui.aws_region', config('services.ses.region', 'us-east-1')),
+                'version' => 'latest',
+            ]);
+            $result = $asgClient->describeAutoScalingInstances([
+                'InstanceIds' => [$workerId],
+            ]);
+
+            return !empty($result['AutoScalingInstances']);
+        } catch (\Throwable $e) {
+            \Log::warning('ASG instance validation failed', [
+                'worker_id' => $workerId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    private function isRegisteredDevNode(string $workerId, string $stage): bool
+    {
+        $allowedStages = $stage === 'production'
+            ? ['production']
+            : ['staging', 'test'];
+
+        return DevNode::query()
+            ->where('aws_instance_id', $workerId)
+            ->whereIn('stage', $allowedStages)
+            ->whereNotIn('status', ['stopped', 'error'])
+            ->exists();
+    }
+
     private function elapsedSeconds(?CarbonInterface $from, ?CarbonInterface $to): ?int
     {
         if (!$from || !$to) {
@@ -1086,6 +1113,8 @@ class ComfyUiWorkerController extends BaseController
                 'tenant_id' => $dispatch->tenant_id,
                 'tenant_job_id' => $dispatch->tenant_job_id,
                 'dispatch_id' => $dispatch->id,
+                'load_test_run_id' => $dispatch->load_test_run_id,
+                'benchmark_context_id' => $dispatch->benchmark_context_id,
                 'workflow_id' => $dispatch->workflow_id,
                 'effect_id' => $job->effect_id,
                 'user_id' => $job->user_id,

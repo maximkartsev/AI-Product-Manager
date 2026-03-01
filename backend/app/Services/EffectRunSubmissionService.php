@@ -6,6 +6,8 @@ use App\Models\AiJob;
 use App\Models\AiJobDispatch;
 use App\Models\Effect;
 use App\Models\EffectRevision;
+use App\Models\EffectVariantBinding;
+use App\Models\ExecutionEnvironment;
 use App\Models\File;
 use App\Models\User;
 use App\Models\Workflow;
@@ -15,7 +17,12 @@ use Illuminate\Support\Facades\DB;
 class EffectRunSubmissionService
 {
     /**
-     * @return array{runtime_effect: Effect, workflow_id: int, dispatch_stage: string}
+     * @return array{
+     *   runtime_effect: Effect,
+     *   workflow_id: int,
+     *   dispatch_stage: string,
+     *   selected_variant_id: string|null
+     * }
      */
     public function buildRuntimeEffectForPublicRun(Effect $effect): array
     {
@@ -34,7 +41,13 @@ class EffectRunSubmissionService
             $effect->save();
         }
 
-        $workflowId = (int) ($revision?->workflow_id ?: $effect->workflow_id);
+        $activeBinding = EffectVariantBinding::query()
+            ->where('effect_revision_id', (int) $revision->id)
+            ->where('is_active', true)
+            ->latest('id')
+            ->first();
+
+        $workflowId = (int) ($activeBinding?->workflow_id ?: ($revision?->workflow_id ?: $effect->workflow_id));
         if ($workflowId <= 0) {
             throw new \RuntimeException('Effect has no configured workflow.');
         }
@@ -44,12 +57,19 @@ class EffectRunSubmissionService
             throw new \RuntimeException('Effect has no configured workflow.');
         }
 
-        $environment = app(EffectPublicationService::class)->resolveProductionEnvironmentForEffect(
-            $effect,
-            $workflow->id
-        );
-        if (!$environment || $environment->kind !== 'prod_asg' || $environment->stage !== 'production') {
-            throw new \RuntimeException('Effect is not available for production processing.');
+        $dispatchStage = (string) ($activeBinding?->stage ?: 'production');
+        $environment = null;
+        if ($activeBinding?->execution_environment_id) {
+            $environment = ExecutionEnvironment::query()->find((int) $activeBinding->execution_environment_id);
+        }
+        if (!$environment) {
+            $environment = app(EffectPublicationService::class)->resolveProductionEnvironmentForEffect(
+                $effect,
+                $workflow->id
+            );
+        }
+        if (!$environment || !$environment->is_active || (string) $environment->stage !== $dispatchStage) {
+            throw new \RuntimeException('Effect is not available for selected runtime routing.');
         }
         if ((int) ($effect->prod_execution_environment_id ?? 0) !== (int) $environment->id) {
             $effect->prod_execution_environment_id = $environment->id;
@@ -67,7 +87,8 @@ class EffectRunSubmissionService
         return [
             'runtime_effect' => $runtimeEffect,
             'workflow_id' => $workflow->id,
-            'dispatch_stage' => $environment->stage,
+            'dispatch_stage' => $dispatchStage,
+            'selected_variant_id' => $activeBinding?->variant_id,
         ];
     }
 
@@ -104,14 +125,15 @@ class EffectRunSubmissionService
         int $tokenCost,
         ?int $videoId,
         ?int $inputFileId,
-        string $provider,
         array $preparedPayload,
         ?float $workUnits,
         ?string $workUnitKind,
         int $workflowId,
         string $dispatchStage = 'production',
         int $priority = 0,
-        array $ledgerMetadata = []
+        array $ledgerMetadata = [],
+        ?int $loadTestRunId = null,
+        ?string $benchmarkContextId = null
     ): array {
         try {
             $job = DB::connection('tenant')->transaction(function () use (
@@ -121,14 +143,12 @@ class EffectRunSubmissionService
                 $tokenCost,
                 $videoId,
                 $inputFileId,
-                $provider,
                 $preparedPayload,
                 $ledgerMetadata
             ) {
                 $aiJob = AiJob::query()->create([
                     'user_id' => $user->id,
                     'effect_id' => $effect->id,
-                    'provider' => $provider,
                     'video_id' => $videoId,
                     'input_file_id' => $inputFileId,
                     'status' => 'queued',
@@ -153,11 +173,12 @@ class EffectRunSubmissionService
                     $dispatch = $this->ensureDispatch(
                         $existing,
                         $priority,
-                        $provider,
                         $workUnits,
                         $workUnitKind,
                         $workflowId,
-                        $dispatchStage
+                        $dispatchStage,
+                        $loadTestRunId,
+                        $benchmarkContextId
                     );
 
                     return [
@@ -174,11 +195,12 @@ class EffectRunSubmissionService
         $dispatch = $this->ensureDispatch(
             $job,
             $priority,
-            $provider,
             $workUnits,
             $workUnitKind,
             $workflowId,
-            $dispatchStage
+            $dispatchStage,
+            $loadTestRunId,
+            $benchmarkContextId
         );
 
         return [
@@ -191,20 +213,22 @@ class EffectRunSubmissionService
     public function ensureDispatchForJob(
         AiJob $job,
         int $priority = 0,
-        ?string $provider = null,
         ?float $workUnits = null,
         ?string $workUnitKind = null,
         ?int $workflowId = null,
-        string $dispatchStage = 'production'
+        string $dispatchStage = 'production',
+        ?int $loadTestRunId = null,
+        ?string $benchmarkContextId = null
     ): ?AiJobDispatch {
         return $this->ensureDispatch(
             $job,
             $priority,
-            $provider,
             $workUnits,
             $workUnitKind,
             $workflowId,
-            $dispatchStage
+            $dispatchStage,
+            $loadTestRunId,
+            $benchmarkContextId
         );
     }
 
@@ -368,19 +392,21 @@ class EffectRunSubmissionService
     private function ensureDispatch(
         AiJob $job,
         int $priority = 0,
-        ?string $provider = null,
         ?float $workUnits = null,
         ?string $workUnitKind = null,
         ?int $workflowId = null,
-        string $dispatchStage = 'production'
+        string $dispatchStage = 'production',
+        ?int $loadTestRunId = null,
+        ?string $benchmarkContextId = null
     ): ?AiJobDispatch {
         try {
-            return AiJobDispatch::query()->firstOrCreate([
+            $dispatch = AiJobDispatch::query()->firstOrCreate([
                 'tenant_id' => (string) $job->tenant_id,
                 'tenant_job_id' => $job->id,
             ], [
-                'provider' => $provider ?: ($job->provider ?: config('services.comfyui.default_provider', 'self_hosted')),
                 'workflow_id' => $workflowId,
+                'load_test_run_id' => $loadTestRunId,
+                'benchmark_context_id' => $benchmarkContextId,
                 'stage' => $dispatchStage,
                 'status' => 'queued',
                 'priority' => $priority,
@@ -388,6 +414,23 @@ class EffectRunSubmissionService
                 'work_units' => $workUnits,
                 'work_unit_kind' => $workUnitKind,
             ]);
+
+            $needsContextUpdate = false;
+            if ($loadTestRunId !== null && (int) ($dispatch->load_test_run_id ?? 0) !== $loadTestRunId) {
+                $dispatch->load_test_run_id = $loadTestRunId;
+                $needsContextUpdate = true;
+            }
+
+            if ($benchmarkContextId !== null && (string) ($dispatch->benchmark_context_id ?? '') !== $benchmarkContextId) {
+                $dispatch->benchmark_context_id = $benchmarkContextId;
+                $needsContextUpdate = true;
+            }
+
+            if ($needsContextUpdate) {
+                $dispatch->save();
+            }
+
+            return $dispatch;
         } catch (\Throwable) {
             $job->status = 'failed';
             $job->error_message = 'Failed to enqueue job for dispatch.';

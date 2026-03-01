@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -27,9 +28,16 @@ return new class extends Migration
             $table->timestamps();
             $table->softDeletes();
 
-            $table->unique(['tenant_id', 'path']);
             $table->index(['tenant_id', 'user_id']);
         });
+
+        // MySQL 8 with utf8mb4 cannot index full tenant_id(255)+path(1024) uniquely.
+        // Use a deterministic prefix unique index to keep migration portable.
+        try {
+            DB::statement('ALTER TABLE files ADD UNIQUE files_tenant_id_path_unique (tenant_id, path(191))');
+        } catch (\Throwable) {
+            // Ignore if index already exists or dialect behaves differently.
+        }
     }
 
     public function down(): void

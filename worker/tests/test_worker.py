@@ -26,10 +26,7 @@ class DummyResponse:
 
 class WorkerTests(unittest.TestCase):
     def setUp(self):
-        worker.COMFY_PROVIDER = "self_hosted"
-        worker.COMFY_PROVIDERS = ""
-        worker.COMFY_CLOUD_API_KEY = "cloud-key"
-        worker.COMFY_CLOUD_BASE_URL = "https://cloud.comfy.org"
+        worker.COMFYUI_BASE_URL = "http://localhost:8188"
 
     def test_prepare_workflow_replaces_placeholder(self):
         workflow = {"1": {"inputs": {"path": "__INPUT_PATH__"}}}
@@ -126,17 +123,6 @@ class WorkerTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             worker.run_comfyui({"node": {}}, None)
-
-    @mock.patch("comfyui_worker.requests.request")
-    def test_cloud_submit_prompt_uses_api_key(self, mock_request):
-        mock_request.return_value = DummyResponse(payload={"prompt_id": "cloud-1"})
-
-        prompt_id = worker.cloud_submit_prompt({"node": {}}, None)
-        self.assertEqual(prompt_id, "cloud-1")
-
-        args, kwargs = mock_request.call_args
-        headers = kwargs.get("headers", {})
-        self.assertEqual(headers.get("X-API-Key"), "cloud-key")
 
     def test_extract_partner_usage_events_from_structured_usage(self):
         workflow = {

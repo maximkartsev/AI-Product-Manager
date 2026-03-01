@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\BaseController;
 use App\Models\LoadTestRun;
+use App\Services\LoadTesting\EcsLoadTestTaskLauncher;
+use App\Services\LoadTesting\LoadTestRunnerService;
+use App\Services\Observability\ActionLogService;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Http\JsonResponse;
@@ -13,6 +16,13 @@ use Illuminate\Support\Facades\Validator;
 
 class StudioLoadTestRunsController extends BaseController
 {
+    public function __construct(
+        private readonly EcsLoadTestTaskLauncher $taskLauncher,
+        private readonly LoadTestRunnerService $runnerService,
+        private readonly ActionLogService $actionLogService
+    ) {
+    }
+
     public function index(Request $request): JsonResponse
     {
         $query = LoadTestRun::query()->orderByDesc('id');
@@ -48,7 +58,7 @@ class StudioLoadTestRunsController extends BaseController
             'experiment_variant_id' => 'nullable|integer|min:1|exists:experiment_variants,id',
             'fleet_config_snapshot_start_id' => 'nullable|integer|min:1|exists:fleet_config_snapshots,id',
             'fleet_config_snapshot_end_id' => 'nullable|integer|min:1|exists:fleet_config_snapshots,id',
-            'status' => 'nullable|string|in:queued,running,completed,failed',
+            'status' => 'nullable|string|in:queued,running,completed,failed,cancelled',
             'achieved_rpm' => 'nullable|numeric|min:0',
             'achieved_rps' => 'nullable|numeric|min:0',
             'success_count' => 'nullable|integer|min:0',
@@ -61,6 +71,9 @@ class StudioLoadTestRunsController extends BaseController
             'partner_cost_usd' => 'nullable|numeric|min:0',
             'margin_usd' => 'nullable|numeric',
             'metrics_json' => 'nullable|array',
+            'input_file_id' => 'nullable|integer|min:1',
+            'input_payload' => 'nullable|array',
+            'benchmark_context_id' => 'nullable|string|max:120',
             'started_at' => 'nullable|date',
             'completed_at' => 'nullable|date',
         ]);
@@ -71,12 +84,172 @@ class StudioLoadTestRunsController extends BaseController
         $validated = $validator->validated();
         $validated['status'] = $validated['status'] ?? 'queued';
         $validated['created_by_user_id'] = $request->user()?->id ? (int) $request->user()->id : null;
+        $metricsJson = is_array($validated['metrics_json'] ?? null) ? $validated['metrics_json'] : [];
+        if ($request->filled('input_file_id')) {
+            $metricsJson['input_file_id'] = (int) $request->input('input_file_id');
+        }
+        if (is_array($request->input('input_payload'))) {
+            $metricsJson['input_payload'] = $request->input('input_payload');
+        }
+        if ($request->filled('benchmark_context_id')) {
+            $metricsJson['benchmark_context_id'] = (string) $request->input('benchmark_context_id');
+        }
+        $validated['metrics_json'] = $metricsJson;
 
         $item = DB::connection('central')->transaction(function () use ($validated) {
             return LoadTestRun::query()->create($validated);
         });
 
         return $this->sendResponse($this->payload($item), 'Load test run created successfully', [], 201);
+    }
+
+    public function start(Request $request, int $id): JsonResponse
+    {
+        $item = LoadTestRun::query()->find($id);
+        if (!$item) {
+            return $this->sendError('Load test run not found.', [], 404);
+        }
+        if (in_array((string) $item->status, ['running', 'completed', 'failed', 'cancelled'], true)) {
+            return $this->sendError('Load test run cannot be started from current status.', [], 422);
+        }
+
+        $metrics = is_array($item->metrics_json) ? $item->metrics_json : [];
+        if ($request->filled('input_file_id')) {
+            $metrics['input_file_id'] = (int) $request->input('input_file_id');
+        }
+        if (is_array($request->input('input_payload'))) {
+            $metrics['input_payload'] = $request->input('input_payload');
+        }
+        if ($request->filled('benchmark_context_id')) {
+            $metrics['benchmark_context_id'] = (string) $request->input('benchmark_context_id');
+        }
+
+        if ((int) data_get($metrics, 'input_file_id', 0) <= 0) {
+            return $this->sendError('Load test run requires input_file_id before execution.', [], 422);
+        }
+        if ((int) ($item->effect_revision_id ?? 0) <= 0 || (int) ($item->execution_environment_id ?? 0) <= 0) {
+            return $this->sendError('Load test run requires effect_revision_id and execution_environment_id.', [], 422);
+        }
+
+        $item->status = 'running';
+        $item->started_at = $item->started_at ?: now();
+        $item->completed_at = null;
+        $item->metrics_json = $metrics;
+        $item->save();
+
+        $mode = (string) $request->input('mode', 'ecs');
+        if (!in_array($mode, ['ecs', 'inline'], true)) {
+            $mode = 'ecs';
+        }
+
+        if ($mode === 'inline') {
+            $result = $this->runnerService->run($item, false);
+            $this->actionLogService->log(
+                severity: 'info',
+                event: 'load_test_run_started_inline',
+                module: 'scenario_executor',
+                message: 'Load test run executed inline by operator request.',
+                telemetrySink: 'admin',
+                context: ['load_test_run_id' => $item->id]
+            );
+            return $this->sendResponse([
+                'run' => $this->payload($item->fresh()),
+                'execution' => array_merge($result, ['mode' => 'inline']),
+            ], 'Load test run executed inline successfully.');
+        }
+
+        $launch = $this->taskLauncher->launch($item);
+        $metrics = is_array($item->metrics_json) ? $item->metrics_json : [];
+        $metrics['runner'] = [
+            'mode' => 'ecs',
+            'launch' => $launch,
+            'launched_at' => now()->toIso8601String(),
+        ];
+        $item->metrics_json = $metrics;
+
+        if (!($launch['launched'] ?? false)) {
+            if ($request->boolean('allow_inline_fallback', true)) {
+                $result = $this->runnerService->run($item, false);
+                $item = $item->fresh();
+                $fallbackMetrics = is_array($item->metrics_json) ? $item->metrics_json : [];
+                $fallbackMetrics['runner']['fallback_execution'] = $result;
+                $item->metrics_json = $fallbackMetrics;
+                $item->save();
+                $this->actionLogService->log(
+                    severity: 'warn',
+                    event: 'load_test_runner_ecs_fallback',
+                    module: 'scenario_executor',
+                    message: 'ECS launch failed; inline fallback executed.',
+                    telemetrySink: 'admin',
+                    economicImpact: ['kind' => 'latency', 'estimated_usd_delta' => null],
+                    operatorAction: ['instruction' => 'Inspect ECS task configuration and network bindings.'],
+                    context: ['load_test_run_id' => $item->id, 'launch' => $launch]
+                );
+
+                return $this->sendResponse([
+                    'run' => $this->payload($item->fresh()),
+                    'execution' => array_merge($result, ['mode' => 'inline_fallback']),
+                ], 'Load test runner ECS launch failed; executed inline fallback.');
+            }
+
+            $item->status = 'failed';
+            $item->completed_at = now();
+        }
+
+        $item->save();
+        if ($launch['launched'] ?? false) {
+            $this->actionLogService->log(
+                severity: 'info',
+                event: 'load_test_runner_ecs_launched',
+                module: 'scenario_executor',
+                message: 'Load test runner ECS task launched.',
+                telemetrySink: 'cloudwatch',
+                context: ['load_test_run_id' => $item->id, 'task_arn' => $launch['task_arn'] ?? null]
+            );
+        }
+
+        return $this->sendResponse([
+            'run' => $this->payload($item->fresh()),
+            'launch' => $launch,
+        ], 'Load test run start requested successfully.');
+    }
+
+    public function cancel(int $id): JsonResponse
+    {
+        $item = LoadTestRun::query()->find($id);
+        if (!$item) {
+            return $this->sendError('Load test run not found.', [], 404);
+        }
+        if (in_array((string) $item->status, ['completed', 'failed', 'cancelled'], true)) {
+            return $this->sendError('Load test run cannot be cancelled from current status.', [], 422);
+        }
+
+        $metrics = is_array($item->metrics_json) ? $item->metrics_json : [];
+        $taskArn = data_get($metrics, 'runner.launch.task_arn');
+        $stopResult = $this->taskLauncher->stop(
+            is_string($taskArn) ? $taskArn : null,
+            'load_test_cancelled'
+        );
+
+        $metrics['runner']['stop'] = $stopResult;
+        $metrics['runner']['cancelled_at'] = now()->toIso8601String();
+
+        $item->status = 'cancelled';
+        $item->completed_at = now();
+        $item->metrics_json = $metrics;
+        $item->save();
+        $this->actionLogService->log(
+            severity: 'warn',
+            event: 'load_test_run_cancelled',
+            module: 'scenario_executor',
+            message: 'Load test run cancelled by operator.',
+            telemetrySink: 'admin',
+            economicImpact: ['kind' => 'wasted_compute', 'estimated_usd_delta' => null],
+            operatorAction: ['instruction' => 'Review cancellation reason and rerun if necessary.'],
+            context: ['load_test_run_id' => $item->id, 'stop' => $stopResult]
+        );
+
+        return $this->sendResponse($this->payload($item->fresh()), 'Load test run cancelled successfully.');
     }
 
     private function payload(LoadTestRun $item): array

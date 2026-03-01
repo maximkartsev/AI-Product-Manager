@@ -9,8 +9,9 @@ class AiJobDispatch extends CentralModel
     protected $fillable = [
         'tenant_id',
         'tenant_job_id',
-        'provider',
         'workflow_id',
+        'load_test_run_id',
+        'benchmark_context_id',
         'stage',
         'status',
         'priority',
@@ -31,6 +32,7 @@ class AiJobDispatch extends CentralModel
 
     protected $casts = [
         'workflow_id' => 'integer',
+        'load_test_run_id' => 'integer',
         'priority' => 'integer',
         'attempts' => 'integer',
         'lease_expires_at' => 'datetime',

@@ -47,7 +47,6 @@ class ComfyUiWorkerDispatchTest extends TestCase
             static::$prepared = true;
         }
 
-        config(['services.comfyui.default_provider' => 'self_hosted']);
         config(['services.comfyui.presigned_ttl_seconds' => 60]);
         config(['services.comfyui.max_attempts' => 3]);
 
@@ -795,16 +794,15 @@ class ComfyUiWorkerDispatchTest extends TestCase
             ->assertJsonPath('data.job.job_id', $highJob->id);
     }
 
-    public function test_poll_filters_by_provider(): void
+    public function test_poll_ignores_unexpected_providers_field(): void
     {
         [$user, $tenant] = $this->createUserTenant();
         $effect = $this->createEffect();
         $fileId = $this->createTenantFile($tenant->id, $user->id);
         $job = $this->createTenantJob($tenant, $user, $effect, $fileId);
+        $this->createDispatch($tenant->id, $job->id);
 
-        $this->createDispatch($tenant->id, $job->id, ['provider' => 'cloud']);
-
-        $localPoll = $this->postJson('/api/worker/poll', [
+        $response = $this->postJson('/api/worker/poll', [
             'worker_id' => 'worker-local',
             'providers' => ['self_hosted'],
             'current_load' => 0,
@@ -813,21 +811,8 @@ class ComfyUiWorkerDispatchTest extends TestCase
             'Authorization' => 'Bearer ' . $this->defaultToken,
         ]);
 
-        $localPoll->assertStatus(200)
-            ->assertJsonPath('data.job', null);
-
-        $cloudPoll = $this->postJson('/api/worker/poll', [
-            'worker_id' => 'worker-cloud',
-            'providers' => ['cloud'],
-            'current_load' => 0,
-            'max_concurrency' => 1,
-        ], [
-            'Authorization' => 'Bearer ' . $this->defaultToken,
-        ]);
-
-        $cloudPoll->assertStatus(200)
-            ->assertJsonPath('data.job.job_id', $job->id)
-            ->assertJsonPath('data.job.provider', 'cloud');
+        $response->assertStatus(200)
+            ->assertJsonPath('data.job.job_id', $job->id);
     }
 
     public function test_poll_skips_dispatch_after_max_attempts(): void
@@ -1414,7 +1399,6 @@ class ComfyUiWorkerDispatchTest extends TestCase
         $defaults = [
             'tenant_id' => $tenantId,
             'tenant_job_id' => $jobId,
-            'provider' => config('services.comfyui.default_provider', 'self_hosted'),
             'status' => 'queued',
             'priority' => 0,
             'attempts' => 0,

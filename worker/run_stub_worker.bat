@@ -23,9 +23,6 @@ set "API_BASE_URL=http://localhost:80"
 REM Must match backend COMFYUI_WORKER_TOKEN
 set "WORKER_TOKEN=local-worker-token"
 
-REM Advertise all providers so we can lease any job
-set "COMFY_PROVIDERS=local,cloud,managed"
-
 REM Optional: set a stable worker id
 set "WORKER_ID=stub-worker-%COMPUTERNAME%"
 
